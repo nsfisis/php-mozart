@@ -1,3 +1,7 @@
+use clap::Parser;
+use mozart::commands;
+
 fn main() {
-    println!("Hello, world!");
+    let cli = commands::Cli::parse();
+    commands::execute(&cli.command);
 }
