@@ -7,6 +7,6 @@ pub struct FundArgs {
     pub format: Option<String>,
 }
 
-pub fn execute(_args: &FundArgs) {
+pub fn execute(_args: &FundArgs, _cli: &super::Cli) -> anyhow::Result<()> {
     todo!()
 }

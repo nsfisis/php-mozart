@@ -90,6 +90,6 @@ pub struct RemoveArgs {
     pub apcu_autoloader_prefix: Option<String>,
 }
 
-pub fn execute(_args: &RemoveArgs) {
+pub fn execute(_args: &RemoveArgs, _cli: &super::Cli) -> anyhow::Result<()> {
     todo!()
 }

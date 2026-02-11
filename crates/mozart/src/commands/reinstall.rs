@@ -54,6 +54,6 @@ pub struct ReinstallArgs {
     pub r#type: Vec<String>,
 }
 
-pub fn execute(_args: &ReinstallArgs) {
+pub fn execute(_args: &ReinstallArgs, _cli: &super::Cli) -> anyhow::Result<()> {
     todo!()
 }

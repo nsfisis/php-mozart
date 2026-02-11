@@ -15,6 +15,6 @@ pub struct CheckPlatformReqsArgs {
     pub format: Option<String>,
 }
 
-pub fn execute(_args: &CheckPlatformReqsArgs) {
+pub fn execute(_args: &CheckPlatformReqsArgs, _cli: &super::Cli) -> anyhow::Result<()> {
     todo!()
 }

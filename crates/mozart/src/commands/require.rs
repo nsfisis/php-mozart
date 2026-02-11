@@ -118,6 +118,6 @@ pub struct RequireArgs {
     pub apcu_autoloader_prefix: Option<String>,
 }
 
-pub fn execute(_args: &RequireArgs) {
+pub fn execute(_args: &RequireArgs, _cli: &super::Cli) -> anyhow::Result<()> {
     todo!()
 }

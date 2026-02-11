@@ -21,6 +21,6 @@ pub struct ProhibitsArgs {
     pub locked: bool,
 }
 
-pub fn execute(_args: &ProhibitsArgs) {
+pub fn execute(_args: &ProhibitsArgs, _cli: &super::Cli) -> anyhow::Result<()> {
     todo!()
 }

@@ -126,6 +126,6 @@ pub struct UpdateArgs {
     pub bump_after_update: Option<Option<String>>,
 }
 
-pub fn execute(_args: &UpdateArgs) {
+pub fn execute(_args: &UpdateArgs, _cli: &super::Cli) -> anyhow::Result<()> {
     todo!()
 }

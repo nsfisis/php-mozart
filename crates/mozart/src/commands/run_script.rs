@@ -26,6 +26,6 @@ pub struct RunScriptArgs {
     pub list: bool,
 }
 
-pub fn execute(_args: &RunScriptArgs) {
+pub fn execute(_args: &RunScriptArgs, _cli: &super::Cli) -> anyhow::Result<()> {
     todo!()
 }

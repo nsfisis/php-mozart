@@ -47,6 +47,6 @@ pub struct DumpAutoloadArgs {
     pub strict_ambiguous: bool,
 }
 
-pub fn execute(_args: &DumpAutoloadArgs) {
+pub fn execute(_args: &DumpAutoloadArgs, _cli: &super::Cli) -> anyhow::Result<()> {
     todo!()
 }

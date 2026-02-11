@@ -7,6 +7,6 @@ pub struct ClearCacheArgs {
     pub gc: bool,
 }
 
-pub fn execute(_args: &ClearCacheArgs) {
+pub fn execute(_args: &ClearCacheArgs, _cli: &super::Cli) -> anyhow::Result<()> {
     todo!()
 }

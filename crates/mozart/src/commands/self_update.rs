@@ -50,6 +50,6 @@ pub struct SelfUpdateArgs {
     pub set_channel_only: bool,
 }
 
-pub fn execute(_args: &SelfUpdateArgs) {
+pub fn execute(_args: &SelfUpdateArgs, _cli: &super::Cli) -> anyhow::Result<()> {
     todo!()
 }

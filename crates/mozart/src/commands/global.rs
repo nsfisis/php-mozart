@@ -10,6 +10,6 @@ pub struct GlobalArgs {
     pub args: Vec<String>,
 }
 
-pub fn execute(_args: &GlobalArgs) {
+pub fn execute(_args: &GlobalArgs, _cli: &super::Cli) -> anyhow::Result<()> {
     todo!()
 }

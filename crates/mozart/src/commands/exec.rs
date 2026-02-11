@@ -14,6 +14,6 @@ pub struct ExecArgs {
     pub list: bool,
 }
 
-pub fn execute(_args: &ExecArgs) {
+pub fn execute(_args: &ExecArgs, _cli: &super::Cli) -> anyhow::Result<()> {
     todo!()
 }

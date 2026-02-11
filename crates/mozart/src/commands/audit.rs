@@ -27,6 +27,6 @@ pub struct AuditArgs {
     pub ignore_unreachable: bool,
 }
 
-pub fn execute(_args: &AuditArgs) {
+pub fn execute(_args: &AuditArgs, _cli: &super::Cli) -> anyhow::Result<()> {
     todo!()
 }

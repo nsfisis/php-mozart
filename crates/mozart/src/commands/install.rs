@@ -86,6 +86,6 @@ pub struct InstallArgs {
     pub ignore_platform_reqs: bool,
 }
 
-pub fn execute(_args: &InstallArgs) {
+pub fn execute(_args: &InstallArgs, _cli: &super::Cli) -> anyhow::Result<()> {
     todo!()
 }

@@ -47,6 +47,6 @@ pub struct InitArgs {
     pub autoload: Option<String>,
 }
 
-pub fn execute(_args: &InitArgs) {
+pub fn execute(_args: &InitArgs, _cli: &super::Cli) -> anyhow::Result<()> {
     todo!()
 }

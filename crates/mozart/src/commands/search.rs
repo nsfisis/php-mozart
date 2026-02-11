@@ -23,6 +23,6 @@ pub struct SearchArgs {
     pub format: Option<String>,
 }
 
-pub fn execute(_args: &SearchArgs) {
+pub fn execute(_args: &SearchArgs, _cli: &super::Cli) -> anyhow::Result<()> {
     todo!()
 }

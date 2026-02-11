@@ -14,6 +14,6 @@ pub struct BrowseArgs {
     pub show: bool,
 }
 
-pub fn execute(_args: &BrowseArgs) {
+pub fn execute(_args: &BrowseArgs, _cli: &super::Cli) -> anyhow::Result<()> {
     todo!()
 }

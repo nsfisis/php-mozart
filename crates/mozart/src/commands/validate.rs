@@ -34,6 +34,6 @@ pub struct ValidateArgs {
     pub strict: bool,
 }
 
-pub fn execute(_args: &ValidateArgs) {
+pub fn execute(_args: &ValidateArgs, _cli: &super::Cli) -> anyhow::Result<()> {
     todo!()
 }

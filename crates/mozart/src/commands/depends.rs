@@ -18,6 +18,6 @@ pub struct DependsArgs {
     pub locked: bool,
 }
 
-pub fn execute(_args: &DependsArgs) {
+pub fn execute(_args: &DependsArgs, _cli: &super::Cli) -> anyhow::Result<()> {
     todo!()
 }

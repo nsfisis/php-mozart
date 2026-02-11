@@ -26,6 +26,6 @@ pub struct SuggestsArgs {
     pub no_dev: bool,
 }
 
-pub fn execute(_args: &SuggestsArgs) {
+pub fn execute(_args: &SuggestsArgs, _cli: &super::Cli) -> anyhow::Result<()> {
     todo!()
 }

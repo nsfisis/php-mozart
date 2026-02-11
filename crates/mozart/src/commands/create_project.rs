@@ -100,6 +100,6 @@ pub struct CreateProjectArgs {
     pub ask: bool,
 }
 
-pub fn execute(_args: &CreateProjectArgs) {
+pub fn execute(_args: &CreateProjectArgs, _cli: &super::Cli) -> anyhow::Result<()> {
     todo!()
 }

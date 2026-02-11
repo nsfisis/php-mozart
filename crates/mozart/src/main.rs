@@ -1,7 +1,7 @@
 use clap::Parser;
 use mozart::commands;
 
-fn main() {
+fn main() -> anyhow::Result<()> {
     let cli = commands::Cli::parse();
-    commands::execute(&cli.command);
+    commands::execute(&cli)
 }

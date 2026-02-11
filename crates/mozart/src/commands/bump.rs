@@ -18,6 +18,6 @@ pub struct BumpArgs {
     pub dry_run: bool,
 }
 
-pub fn execute(_args: &BumpArgs) {
+pub fn execute(_args: &BumpArgs, _cli: &super::Cli) -> anyhow::Result<()> {
     todo!()
 }

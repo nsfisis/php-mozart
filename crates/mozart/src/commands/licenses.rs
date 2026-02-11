@@ -15,6 +15,6 @@ pub struct LicensesArgs {
     pub locked: bool,
 }
 
-pub fn execute(_args: &LicensesArgs) {
+pub fn execute(_args: &LicensesArgs, _cli: &super::Cli) -> anyhow::Result<()> {
     todo!()
 }

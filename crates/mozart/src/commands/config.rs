@@ -53,6 +53,6 @@ pub struct ConfigArgs {
     pub source: bool,
 }
 
-pub fn execute(_args: &ConfigArgs) {
+pub fn execute(_args: &ConfigArgs, _cli: &super::Cli) -> anyhow::Result<()> {
     todo!()
 }

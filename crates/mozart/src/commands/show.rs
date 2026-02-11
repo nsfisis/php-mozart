@@ -97,6 +97,6 @@ pub struct ShowArgs {
     pub ignore_platform_reqs: bool,
 }
 
-pub fn execute(_args: &ShowArgs) {
+pub fn execute(_args: &ShowArgs, _cli: &super::Cli) -> anyhow::Result<()> {
     todo!()
 }

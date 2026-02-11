@@ -25,6 +25,6 @@ pub struct ArchiveArgs {
     pub ignore_filters: bool,
 }
 
-pub fn execute(_args: &ArchiveArgs) {
+pub fn execute(_args: &ArchiveArgs, _cli: &super::Cli) -> anyhow::Result<()> {
     todo!()
 }
