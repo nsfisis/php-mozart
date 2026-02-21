@@ -179,6 +179,7 @@ fn render_text(root_name: &str, root_version: &str, root_license: &str, entries:
     println!("Name: {}", root_name);
     println!("Version: {}", root_version);
     println!("Licenses: {}", root_license);
+    println!("Dependencies:");
     println!();
 
     if entries.is_empty() {
@@ -186,34 +187,8 @@ fn render_text(root_name: &str, root_version: &str, root_license: &str, entries:
     }
 
     // Compute column widths
-    let name_width = entries
-        .iter()
-        .map(|e| e.name.len())
-        .max()
-        .unwrap_or(0)
-        .max("Name".len());
-    let version_width = entries
-        .iter()
-        .map(|e| e.version.len())
-        .max()
-        .unwrap_or(0)
-        .max("Version".len());
-
-    // Print header
-    println!(
-        "{:<nw$}  {:<vw$}  License",
-        "Name",
-        "Version",
-        nw = name_width,
-        vw = version_width
-    );
-    println!(
-        "{:-<nw$}  {:-<vw$}  -------",
-        "",
-        "",
-        nw = name_width,
-        vw = version_width
-    );
+    let name_width = entries.iter().map(|e| e.name.len()).max().unwrap_or(0);
+    let version_width = entries.iter().map(|e| e.version.len()).max().unwrap_or(0);
 
     for entry in entries {
         let license_str = if entry.licenses.is_empty() {
