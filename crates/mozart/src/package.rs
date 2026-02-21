@@ -494,6 +494,9 @@ pub struct RawPackageData {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub autoload: Option<RawAutoload>,
 
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub bin: Vec<String>,
+
     #[serde(flatten)]
     pub extra_fields: BTreeMap<String, serde_json::Value>,
 }
@@ -533,6 +536,7 @@ impl RawPackageData {
             require_dev: BTreeMap::new(),
             repositories: Vec::new(),
             autoload: None,
+            bin: Vec::new(),
             extra_fields: BTreeMap::new(),
         }
     }
