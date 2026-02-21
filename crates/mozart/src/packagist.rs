@@ -24,6 +24,12 @@ pub struct PackagistVersion {
     pub version_normalized: String,
     #[serde(default)]
     pub require: BTreeMap<String, String>,
+    #[serde(default)]
+    pub replace: BTreeMap<String, String>,
+    #[serde(default)]
+    pub provide: BTreeMap<String, String>,
+    #[serde(default)]
+    pub conflict: BTreeMap<String, String>,
     pub dist: Option<PackagistDist>,
     pub source: Option<PackagistSource>,
 }

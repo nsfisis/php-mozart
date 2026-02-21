@@ -173,37 +173,26 @@ mod tests {
         );
     }
 
+    fn make_pv(version: &str, version_normalized: &str) -> PackagistVersion {
+        PackagistVersion {
+            version: version.to_string(),
+            version_normalized: version_normalized.to_string(),
+            require: Default::default(),
+            replace: Default::default(),
+            provide: Default::default(),
+            conflict: Default::default(),
+            dist: None,
+            source: None,
+        }
+    }
+
     #[test]
     fn test_find_best_candidate_stable() {
         let versions = vec![
-            PackagistVersion {
-                version: "dev-master".to_string(),
-                version_normalized: "dev-master".to_string(),
-                require: Default::default(),
-                dist: None,
-                source: None,
-            },
-            PackagistVersion {
-                version: "2.0.0-beta.1".to_string(),
-                version_normalized: "2.0.0.0-beta1".to_string(),
-                require: Default::default(),
-                dist: None,
-                source: None,
-            },
-            PackagistVersion {
-                version: "1.5.0".to_string(),
-                version_normalized: "1.5.0.0".to_string(),
-                require: Default::default(),
-                dist: None,
-                source: None,
-            },
-            PackagistVersion {
-                version: "1.4.0".to_string(),
-                version_normalized: "1.4.0.0".to_string(),
-                require: Default::default(),
-                dist: None,
-                source: None,
-            },
+            make_pv("dev-master", "dev-master"),
+            make_pv("2.0.0-beta.1", "2.0.0.0-beta1"),
+            make_pv("1.5.0", "1.5.0.0"),
+            make_pv("1.4.0", "1.4.0.0"),
         ];
 
         let best = find_best_candidate(&versions, Stability::Stable).unwrap();
@@ -213,27 +202,9 @@ mod tests {
     #[test]
     fn test_find_best_candidate_beta() {
         let versions = vec![
-            PackagistVersion {
-                version: "dev-master".to_string(),
-                version_normalized: "dev-master".to_string(),
-                require: Default::default(),
-                dist: None,
-                source: None,
-            },
-            PackagistVersion {
-                version: "2.0.0-beta.1".to_string(),
-                version_normalized: "2.0.0.0-beta1".to_string(),
-                require: Default::default(),
-                dist: None,
-                source: None,
-            },
-            PackagistVersion {
-                version: "1.5.0".to_string(),
-                version_normalized: "1.5.0.0".to_string(),
-                require: Default::default(),
-                dist: None,
-                source: None,
-            },
+            make_pv("dev-master", "dev-master"),
+            make_pv("2.0.0-beta.1", "2.0.0.0-beta1"),
+            make_pv("1.5.0", "1.5.0.0"),
         ];
 
         let best = find_best_candidate(&versions, Stability::Beta).unwrap();
@@ -242,13 +213,7 @@ mod tests {
 
     #[test]
     fn test_find_best_candidate_no_match() {
-        let versions = vec![PackagistVersion {
-            version: "dev-master".to_string(),
-            version_normalized: "dev-master".to_string(),
-            require: Default::default(),
-            dist: None,
-            source: None,
-        }];
+        let versions = vec![make_pv("dev-master", "dev-master")];
 
         let best = find_best_candidate(&versions, Stability::Stable);
         assert!(best.is_none());
