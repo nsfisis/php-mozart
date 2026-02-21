@@ -51,7 +51,7 @@ impl Console {
     }
 
     pub fn error(&self, msg: &str) {
-        eprintln!("{}", console::error(msg));
+        eprintln!("{}", error(msg));
     }
 
     pub fn ask(&self, prompt: &str, default: &str) -> String {

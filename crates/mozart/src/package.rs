@@ -1,4 +1,4 @@
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::Path;
@@ -440,7 +440,7 @@ delegate_complete_package!(RootPackageData => complete);
 /// Used by `init` and `create-project` to write a new composer.json.
 /// Unlike the typed hierarchy above, all fields live at a single level
 /// and map directly to the JSON keys via serde.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RawPackageData {
     pub name: String,
 
@@ -456,25 +456,33 @@ pub struct RawPackageData {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub license: Option<String>,
 
-    #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub authors: Vec<RawAuthor>,
 
     #[serde(rename = "minimum-stability", skip_serializing_if = "Option::is_none")]
     pub minimum_stability: Option<String>,
 
+    #[serde(default)]
     pub require: BTreeMap<String, String>,
 
-    #[serde(rename = "require-dev", skip_serializing_if = "BTreeMap::is_empty")]
+    #[serde(
+        rename = "require-dev",
+        default,
+        skip_serializing_if = "BTreeMap::is_empty"
+    )]
     pub require_dev: BTreeMap<String, String>,
 
-    #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub repositories: Vec<RawRepository>,
 
     #[serde(skip_serializing_if = "Option::is_none")]
     pub autoload: Option<RawAutoload>,
+
+    #[serde(flatten)]
+    pub extra_fields: BTreeMap<String, serde_json::Value>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RawAuthor {
     pub name: String,
 
@@ -482,13 +490,13 @@ pub struct RawAuthor {
     pub email: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RawAutoload {
     #[serde(rename = "psr-4")]
     pub psr4: BTreeMap<String, String>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RawRepository {
     #[serde(rename = "type")]
     pub repo_type: String,
@@ -509,8 +517,15 @@ impl RawPackageData {
             require_dev: BTreeMap::new(),
             repositories: Vec::new(),
             autoload: None,
+            extra_fields: BTreeMap::new(),
         }
     }
+}
+
+pub fn read_from_file(path: &Path) -> anyhow::Result<RawPackageData> {
+    let content = fs::read_to_string(path)?;
+    let data: RawPackageData = serde_json::from_str(&content)?;
+    Ok(data)
 }
 
 pub fn to_json_pretty(value: &impl Serialize) -> serde_json::Result<String> {
@@ -587,6 +602,67 @@ mod tests {
         assert_eq!(parsed["require-dev"]["phpunit/phpunit"], "^10.0");
         assert_eq!(parsed["repositories"][0]["type"], "vcs");
         assert_eq!(parsed["autoload"]["psr-4"]["Acme\\Full\\"], "src/");
+    }
+
+    #[test]
+    fn raw_deserialize_minimal() {
+        let json = r#"{"name": "test/pkg"}"#;
+        let raw: RawPackageData = serde_json::from_str(json).unwrap();
+        assert_eq!(raw.name, "test/pkg");
+        assert!(raw.description.is_none());
+        assert!(raw.require.is_empty());
+        assert!(raw.require_dev.is_empty());
+        assert!(raw.authors.is_empty());
+        assert!(raw.extra_fields.is_empty());
+    }
+
+    #[test]
+    fn raw_roundtrip_preserves_all_fields() {
+        let mut raw = RawPackageData::new("acme/roundtrip".to_string());
+        raw.description = Some("Test roundtrip".to_string());
+        raw.require.insert("php".to_string(), ">=8.1".to_string());
+        raw.require_dev
+            .insert("phpunit/phpunit".to_string(), "^10.0".to_string());
+
+        let json1 = to_json_pretty(&raw).unwrap();
+        let deserialized: RawPackageData = serde_json::from_str(&json1).unwrap();
+        let json2 = to_json_pretty(&deserialized).unwrap();
+        assert_eq!(json1, json2);
+    }
+
+    #[test]
+    fn raw_extra_fields_preserved() {
+        let json = r#"{
+            "name": "test/extra",
+            "require": {},
+            "scripts": {"post-install-cmd": ["echo hello"]},
+            "config": {"sort-packages": true},
+            "extra": {"custom-key": "custom-value"}
+        }"#;
+        let raw: RawPackageData = serde_json::from_str(json).unwrap();
+        assert_eq!(raw.name, "test/extra");
+        assert!(raw.extra_fields.contains_key("scripts"));
+        assert!(raw.extra_fields.contains_key("config"));
+        assert!(raw.extra_fields.contains_key("extra"));
+
+        // Roundtrip: extra fields should be preserved in output
+        let output = to_json_pretty(&raw).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&output).unwrap();
+        assert!(parsed["scripts"].is_object());
+        assert!(parsed["config"].is_object());
+        assert!(parsed["extra"].is_object());
+    }
+
+    #[test]
+    fn raw_read_from_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("composer.json");
+        let content = r#"{"name": "test/file", "require": {"php": ">=8.0"}}"#;
+        std::fs::write(&path, content).unwrap();
+
+        let raw = read_from_file(&path).unwrap();
+        assert_eq!(raw.name, "test/file");
+        assert_eq!(raw.require.get("php").unwrap(), ">=8.0");
     }
 
     #[test]

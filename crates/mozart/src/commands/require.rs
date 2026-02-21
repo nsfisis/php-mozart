@@ -1,3 +1,8 @@
+use crate::console;
+use crate::package::{self, Stability};
+use crate::packagist;
+use crate::validation;
+use crate::version;
 use clap::Args;
 
 #[derive(Args)]
@@ -118,6 +123,149 @@ pub struct RequireArgs {
     pub apcu_autoloader_prefix: Option<String>,
 }
 
-pub fn execute(_args: &RequireArgs, _cli: &super::Cli) -> anyhow::Result<()> {
-    todo!()
+pub fn execute(args: &RequireArgs, cli: &super::Cli) -> anyhow::Result<()> {
+    if args.packages.is_empty() {
+        anyhow::bail!("Not enough arguments (missing: \"packages\").");
+    }
+
+    // Resolve working directory
+    let working_dir = if let Some(ref dir) = cli.working_dir {
+        std::path::PathBuf::from(dir)
+    } else {
+        std::env::current_dir()?
+    };
+
+    let composer_path = working_dir.join("composer.json");
+    if !composer_path.exists() {
+        anyhow::bail!(
+            "composer.json not found in {}. Run `mozart init` to create one.",
+            working_dir.display()
+        );
+    }
+
+    // Read existing composer.json
+    let mut raw = package::read_from_file(&composer_path)?;
+
+    // Determine preferred stability from composer.json's minimum-stability
+    let preferred_stability = raw
+        .minimum_stability
+        .as_deref()
+        .map(|s| match s.to_lowercase().as_str() {
+            "dev" => Stability::Dev,
+            "alpha" => Stability::Alpha,
+            "beta" => Stability::Beta,
+            "rc" | "RC" => Stability::RC,
+            _ => Stability::Stable,
+        })
+        .unwrap_or(Stability::Stable);
+
+    // Process each package argument
+    let mut additions: Vec<(String, String, bool)> = Vec::new(); // (name, constraint, is_dev)
+
+    for pkg_arg in &args.packages {
+        // Try to parse as "vendor/package:constraint"
+        let (name, constraint) = match validation::parse_require_string(pkg_arg) {
+            Ok((n, v)) => (n.to_lowercase(), v),
+            Err(_) => {
+                // No version specified — resolve from Packagist
+                let name = pkg_arg.trim().to_lowercase();
+                if !validation::validate_package_name(&name) {
+                    anyhow::bail!("Invalid package name: \"{name}\"");
+                }
+
+                println!(
+                    "{}",
+                    console::info(&format!(
+                        "Using version constraint for {name} from Packagist..."
+                    ))
+                );
+
+                let versions = packagist::fetch_package_versions(&name)?;
+                let best = version::find_best_candidate(&versions, preferred_stability)
+                    .ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "Could not find a version of package \"{name}\" matching your minimum-stability ({preferred_stability:?}). \
+                             Try requiring it with an explicit version constraint."
+                        )
+                    })?;
+
+                let stability = version::stability_of(&best.version_normalized);
+                let constraint = if args.fixed {
+                    best.version.clone()
+                } else {
+                    version::find_recommended_require_version(
+                        &best.version,
+                        &best.version_normalized,
+                        stability,
+                    )
+                };
+
+                println!(
+                    "{}",
+                    console::info(&format!("Using version {constraint} for {name}"))
+                );
+
+                (name, constraint)
+            }
+        };
+
+        additions.push((name, constraint, args.dev));
+    }
+
+    // Apply changes
+    for (name, constraint, is_dev) in &additions {
+        let section_name = if *is_dev { "require-dev" } else { "require" };
+        let target = if *is_dev {
+            &mut raw.require_dev
+        } else {
+            &mut raw.require
+        };
+
+        if let Some(existing) = target.get(name) {
+            println!(
+                "{}",
+                console::comment(&format!(
+                    "Updating {name} from {existing} to {constraint} in {section_name}"
+                ))
+            );
+        } else {
+            println!(
+                "{}",
+                console::info(&format!("Adding {name} ({constraint}) to {section_name}"))
+            );
+        }
+
+        target.insert(name.clone(), constraint.clone());
+    }
+
+    // Sort packages if requested
+    if args.sort_packages {
+        let sorted_require: std::collections::BTreeMap<_, _> = raw.require.clone();
+        raw.require = sorted_require;
+        let sorted_dev: std::collections::BTreeMap<_, _> = raw.require_dev.clone();
+        raw.require_dev = sorted_dev;
+    }
+
+    // Write back
+    if args.dry_run {
+        println!(
+            "{}",
+            console::comment("Dry run: composer.json not modified.")
+        );
+    } else {
+        package::write_to_file(&raw, &composer_path)?;
+    }
+
+    // Dependency resolution / install notice
+    if !args.no_update && !args.no_install {
+        println!(
+            "{}",
+            console::comment(
+                "Dependency resolution and installation are not yet implemented. \
+                 The composer.json has been updated."
+            )
+        );
+    }
+
+    Ok(())
 }

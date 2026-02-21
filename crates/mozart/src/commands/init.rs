@@ -1,14 +1,12 @@
-use std::collections::BTreeMap;
-use std::path::{Path, PathBuf};
-use std::process::Command;
+use crate::console;
+use crate::package::{self, RawAuthor, RawAutoload, RawPackageData, RawRepository};
+use crate::validation;
 use anyhow::{Context, bail};
 use clap::Args;
 use colored::Colorize;
-use crate::console;
-use crate::package::{
-    self, RawAuthor, RawAutoload, RawPackageData, RawRepository,
-};
-use crate::validation;
+use std::collections::BTreeMap;
+use std::path::{Path, PathBuf};
+use std::process::Command;
 
 #[derive(Args)]
 pub struct InitArgs {
@@ -103,8 +101,7 @@ pub fn execute(args: &InitArgs, cli: &super::Cli) -> anyhow::Result<()> {
         console.info(&format!("Writing {}", composer_file.display()));
     }
 
-    package::write_to_file(&composer, &composer_file)
-        .context("Failed to write composer.json")?;
+    package::write_to_file(&composer, &composer_file).context("Failed to write composer.json")?;
 
     // Create autoload directory if specified
     if let Some(ref autoload) = composer.autoload {
