@@ -1,5 +1,9 @@
 pub mod commands;
 pub mod console;
+pub mod constraint;
+pub mod downloader;
+pub mod installed;
+pub mod lockfile;
 pub mod package;
 pub mod packagist;
 pub mod validation;
