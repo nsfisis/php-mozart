@@ -417,6 +417,7 @@ pub fn install_from_lock(
                 vendor_dir,
                 &pkg.name,
                 Some(&mut progress),
+                None,
             )?;
 
             progress.finish();

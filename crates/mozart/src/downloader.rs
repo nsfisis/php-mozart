@@ -1,3 +1,4 @@
+use crate::cache::Cache;
 use sha1::{Digest, Sha1};
 use std::collections::HashSet;
 use std::fs;
@@ -76,11 +77,37 @@ impl DownloadProgress {
 /// If `expected_shasum` is provided and non-empty, verifies SHA-1 of the downloaded bytes.
 /// If `progress` is provided, increments it as bytes are received and sets the total from
 /// the `Content-Length` response header.
+/// If `files_cache` is provided, the downloaded bytes are cached by URL; cache hits skip
+/// the network request entirely.
 pub fn download_dist(
     url: &str,
     expected_shasum: Option<&str>,
     progress: Option<&mut DownloadProgress>,
+    files_cache: Option<&Cache>,
 ) -> anyhow::Result<Vec<u8>> {
+    // Build a cache key from the URL
+    let cache_key = Cache::sanitize_key(url);
+
+    // Check cache first
+    if let Some(cache) = files_cache
+        && let Some(cached_bytes) = cache.read_bytes(&cache_key)
+    {
+        // Verify checksum against cache hit if provided
+        if let Some(shasum) = expected_shasum
+            && !shasum.is_empty()
+        {
+            let mut hasher = Sha1::new();
+            hasher.update(&cached_bytes);
+            let computed = format!("{:x}", hasher.finalize());
+            if computed == shasum {
+                return Ok(cached_bytes);
+            }
+            // Checksum mismatch — discard cache, re-download
+        } else {
+            return Ok(cached_bytes);
+        }
+    }
+
     let response = reqwest::blocking::get(url)?;
 
     if !response.status().is_success() {
@@ -124,6 +151,11 @@ pub fn download_dist(
         if computed != shasum {
             anyhow::bail!("SHA-1 checksum mismatch for {url}: expected {shasum}, got {computed}");
         }
+    }
+
+    // Write to cache
+    if let Some(cache) = files_cache {
+        let _ = cache.write_bytes(&cache_key, &bytes);
     }
 
     Ok(bytes)
@@ -292,6 +324,7 @@ pub fn extract_tar_gz(data: &[u8], target_dir: &Path) -> anyhow::Result<()> {
 /// - `vendor_dir`: path to `vendor/` directory
 /// - `package_name`: e.g. `"monolog/monolog"`
 /// - `progress`: optional mutable progress tracker to update during download
+/// - `files_cache`: optional files cache; if provided, the archive bytes are cached by URL
 pub fn install_package(
     dist_url: &str,
     dist_type: &str,
@@ -299,6 +332,7 @@ pub fn install_package(
     vendor_dir: &Path,
     package_name: &str,
     progress: Option<&mut DownloadProgress>,
+    files_cache: Option<&Cache>,
 ) -> anyhow::Result<()> {
     let target = vendor_dir.join(package_name);
 
@@ -308,7 +342,7 @@ pub fn install_package(
     }
     fs::create_dir_all(&target)?;
 
-    let bytes = download_dist(dist_url, dist_shasum, progress)?;
+    let bytes = download_dist(dist_url, dist_shasum, progress, files_cache)?;
 
     match dist_type {
         "zip" => extract_zip(&bytes, &target)?,

@@ -1,4 +1,5 @@
 pub mod autoload;
+pub mod cache;
 pub mod commands;
 pub mod console;
 pub mod constraint;

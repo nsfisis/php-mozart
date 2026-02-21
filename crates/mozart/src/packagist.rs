@@ -1,3 +1,4 @@
+use crate::cache::Cache;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
@@ -123,7 +124,25 @@ pub fn parse_p2_response(json: &str, package_name: &str) -> anyhow::Result<Vec<P
 }
 
 /// Fetch package version metadata from the Packagist p2 API.
-pub fn fetch_package_versions(package_name: &str) -> anyhow::Result<Vec<PackagistVersion>> {
+///
+/// If `repo_cache` is provided, the JSON response is cached on disk under the
+/// key `"provider-{vendor}~{package}.json"`. Subsequent calls for the same
+/// package are served from cache without a network request.
+pub fn fetch_package_versions(
+    package_name: &str,
+    repo_cache: Option<&Cache>,
+) -> anyhow::Result<Vec<PackagistVersion>> {
+    // Build cache key: replace `/` with `~` per cache key convention
+    let cache_key = format!("provider-{}.json", package_name.replace('/', "~"));
+
+    // Check cache first
+    if let Some(cache) = repo_cache
+        && let Some(cached) = cache.read(&cache_key)
+    {
+        return parse_p2_response(&cached, package_name);
+    }
+
+    // Cache miss — fetch from Packagist
     let url = format!("https://repo.packagist.org/p2/{package_name}.json");
     let response = reqwest::blocking::get(&url)?;
 
@@ -135,6 +154,12 @@ pub fn fetch_package_versions(package_name: &str) -> anyhow::Result<Vec<Packagis
     }
 
     let body = response.text()?;
+
+    // Write to cache
+    if let Some(cache) = repo_cache {
+        let _ = cache.write(&cache_key, &body);
+    }
+
     parse_p2_response(&body, package_name)
 }
 

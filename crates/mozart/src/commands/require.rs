@@ -276,7 +276,7 @@ fn interactive_search_packages(
                 ))
             );
 
-            match packagist::fetch_package_versions(&package_name) {
+            match packagist::fetch_package_versions(&package_name, None) {
                 Ok(versions) => {
                     match version::find_best_candidate(&versions, preferred_stability) {
                         Some(best) => {
@@ -469,7 +469,7 @@ pub fn execute(args: &RequireArgs, cli: &super::Cli) -> anyhow::Result<()> {
                     ))
                 );
 
-                let versions = packagist::fetch_package_versions(&name)?;
+                let versions = packagist::fetch_package_versions(&name, None)?;
                 let best = version::find_best_candidate(&versions, preferred_stability)
                     .ok_or_else(|| {
                         anyhow::anyhow!(
@@ -596,6 +596,7 @@ pub fn execute(args: &RequireArgs, cli: &super::Cli) -> anyhow::Result<()> {
         platform: PlatformConfig::new(),
         ignore_platform_reqs: args.ignore_platform_reqs,
         ignore_platform_req_list: args.ignore_platform_req.clone(),
+        repo_cache: None,
     };
 
     // Print header messages
@@ -673,6 +674,7 @@ pub fn execute(args: &RequireArgs, cli: &super::Cli) -> anyhow::Result<()> {
         composer_json_content: composer_json_content.clone(),
         composer_json: raw.clone(),
         include_dev: dev_mode,
+        repo_cache: None,
     })?;
 
     // Compute and print change report
@@ -934,6 +936,7 @@ mod tests {
             platform: PlatformConfig::new(),
             ignore_platform_reqs: false,
             ignore_platform_req_list: vec![],
+            repo_cache: None,
         };
 
         let resolved = resolver::resolve(&request).expect("Resolution should succeed");
@@ -945,6 +948,7 @@ mod tests {
             composer_json_content: composer_json_content.to_string(),
             composer_json,
             include_dev: false,
+            repo_cache: None,
         })
         .expect("Lock file generation should succeed");
 
@@ -980,6 +984,7 @@ mod tests {
             platform: PlatformConfig::new(),
             ignore_platform_reqs: false,
             ignore_platform_req_list: vec![],
+            repo_cache: None,
         };
 
         let resolved = resolver::resolve(&request).expect("Resolution should succeed");
@@ -988,6 +993,7 @@ mod tests {
             composer_json_content: content.to_string(),
             composer_json: raw,
             include_dev: false,
+            repo_cache: None,
         })
         .expect("Lock file generation should succeed");
 

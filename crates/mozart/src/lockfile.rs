@@ -1,3 +1,4 @@
+use crate::cache::Cache;
 use crate::package::{RawPackageData, to_json_pretty};
 use crate::packagist::{self, PackagistDist, PackagistSource, PackagistVersion};
 use crate::resolver::ResolvedPackage;
@@ -241,6 +242,8 @@ pub struct LockFileGenerationRequest {
     pub composer_json: RawPackageData,
     /// Whether require-dev was included in resolution.
     pub include_dev: bool,
+    /// Optional repo cache for Packagist API calls made during generation.
+    pub repo_cache: Option<Cache>,
 }
 
 /// Convert a `PackagistSource` to a `LockedSource`.
@@ -393,7 +396,7 @@ pub fn generate_lock_file(request: &LockFileGenerationRequest) -> anyhow::Result
     // 1. Fetch full metadata for all resolved packages
     let mut package_metadata: HashMap<String, PackagistVersion> = HashMap::new();
     for pkg in &request.resolved_packages {
-        let versions = packagist::fetch_package_versions(&pkg.name)?;
+        let versions = packagist::fetch_package_versions(&pkg.name, request.repo_cache.as_ref())?;
         // Find the exact version matching pkg.version_normalized
         let matching = versions
             .into_iter()
@@ -921,6 +924,7 @@ mod tests {
             composer_json_content: composer_json_content.clone(),
             composer_json,
             include_dev: true,
+            repo_cache: None,
         };
 
         let lock = generate_lock_file(&request).unwrap();
@@ -1024,6 +1028,7 @@ mod tests {
             platform: PlatformConfig::new(),
             ignore_platform_reqs: false,
             ignore_platform_req_list: vec![],
+            repo_cache: None,
         };
 
         let resolved = resolve(&resolve_request).expect("Resolution should succeed");
@@ -1038,6 +1043,7 @@ mod tests {
             composer_json_content: composer_json_content.clone(),
             composer_json,
             include_dev: false,
+            repo_cache: None,
         };
 
         let lock = generate_lock_file(&gen_request).expect("Lock file generation should succeed");

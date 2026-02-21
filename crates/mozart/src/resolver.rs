@@ -13,6 +13,7 @@ use pubgrub::{
     PackageResolutionStatistics, PubGrubError, Ranges, Reporter,
 };
 
+use crate::cache::Cache;
 use crate::constraint::{Constraint, VersionConstraint};
 use crate::package::Stability;
 use crate::packagist;
@@ -588,6 +589,9 @@ pub struct MozartProvider {
     /// Cache of fetched package metadata. Populated lazily from Packagist.
     package_cache: RefCell<HashMap<String, PackageVersions>>,
 
+    /// Optional on-disk repo cache for Packagist API responses.
+    repo_cache: Option<Cache>,
+
     /// Platform packages (php, ext-*, lib-*) with their fixed versions.
     platform_packages: HashMap<String, ComposerVersion>,
 
@@ -627,8 +631,12 @@ impl MozartProvider {
             }
         }
 
-        // Fetch from Packagist
-        let packagist_versions = packagist::fetch_package_versions(package_name).map_err(|e| {
+        // Fetch from Packagist (with optional on-disk repo cache)
+        let packagist_versions = packagist::fetch_package_versions(
+            package_name,
+            self.repo_cache.as_ref(),
+        )
+        .map_err(|e| {
             ResolverError::PackagistError(format!("Failed to fetch {}: {}", package_name, e))
         })?;
 
@@ -944,6 +952,8 @@ pub struct ResolveRequest {
     pub ignore_platform_reqs: bool,
     /// Specific platform requirements to ignore.
     pub ignore_platform_req_list: Vec<String>,
+    /// Optional on-disk repo cache for Packagist API responses.
+    pub repo_cache: Option<Cache>,
 }
 
 /// A single package in the resolution output.
@@ -1005,6 +1015,7 @@ pub fn resolve(request: &ResolveRequest) -> Result<Vec<ResolvedPackage>, Resolve
     // 2. Build the provider
     let provider = MozartProvider {
         package_cache: RefCell::new(HashMap::new()),
+        repo_cache: request.repo_cache.clone(),
         platform_packages: request.platform.to_versions(),
         minimum_stability: request.minimum_stability,
         stability_flags: request.stability_flags.clone(),
@@ -1531,6 +1542,7 @@ mod tests {
             root_conflicts: vec![],
             ignore_platform_reqs: false,
             ignore_platform_req_list: vec![],
+            repo_cache: None,
         };
 
         let stable_v = ComposerVersion::stable(1, 0, 0, 0);
@@ -1583,6 +1595,7 @@ mod tests {
             root_conflicts: vec![],
             ignore_platform_reqs: false,
             ignore_platform_req_list: vec![],
+            repo_cache: None,
         };
 
         let stable_v = ComposerVersion::stable(1, 0, 0, 0);
@@ -1627,6 +1640,7 @@ mod tests {
             root_conflicts: vec![],
             ignore_platform_reqs: false,
             ignore_platform_req_list: vec![],
+            repo_cache: None,
         };
 
         let dev_v = ComposerVersion {
@@ -1652,6 +1666,7 @@ mod tests {
             root_conflicts: vec![],
             ignore_platform_reqs: true,
             ignore_platform_req_list: vec![],
+            repo_cache: None,
         };
 
         assert!(provider.should_skip_platform_dep("php"));
@@ -1672,6 +1687,7 @@ mod tests {
             root_conflicts: vec![],
             ignore_platform_reqs: false,
             ignore_platform_req_list: vec!["ext-intl".to_string()],
+            repo_cache: None,
         };
 
         assert!(provider.should_skip_platform_dep("ext-intl"));
@@ -1693,6 +1709,7 @@ mod tests {
             root_conflicts: vec![],
             ignore_platform_reqs: false,
             ignore_platform_req_list: vec![],
+            repo_cache: None,
         };
 
         let root = PackageName::root();
@@ -1719,6 +1736,7 @@ mod tests {
             root_conflicts: vec![],
             ignore_platform_reqs: false,
             ignore_platform_req_list: vec![],
+            repo_cache: None,
         };
 
         let php = PackageName("php".to_string());
@@ -1880,6 +1898,7 @@ mod tests {
             platform: PlatformConfig::new(),
             ignore_platform_reqs: false,
             ignore_platform_req_list: vec![],
+            repo_cache: None,
         };
 
         let result = resolve(&request);

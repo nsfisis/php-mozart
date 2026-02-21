@@ -332,7 +332,7 @@ fn fetch_latest_version(name: &str) -> anyhow::Result<PackageInfo> {
     use crate::package::Stability;
     use crate::version::find_best_candidate;
 
-    let versions = crate::packagist::fetch_package_versions(name)?;
+    let versions = crate::packagist::fetch_package_versions(name, None)?;
     let best = find_best_candidate(&versions, Stability::Stable)
         .ok_or_else(|| anyhow::anyhow!("No stable version found for {name}"))?;
 

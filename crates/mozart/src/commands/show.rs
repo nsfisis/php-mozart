@@ -468,7 +468,7 @@ fn fetch_latest_for_package(name: &str) -> anyhow::Result<LatestInfo> {
     use crate::package::Stability;
     use crate::version::find_best_candidate;
 
-    let versions = crate::packagist::fetch_package_versions(name)?;
+    let versions = crate::packagist::fetch_package_versions(name, None)?;
     let best = find_best_candidate(&versions, Stability::Stable)
         .ok_or_else(|| anyhow::anyhow!("No stable version found for {name}"))?;
 
@@ -1447,7 +1447,7 @@ fn show_available(args: &ShowArgs, working_dir: &Path) -> anyhow::Result<()> {
             if is_platform_package(&pkg.name) {
                 continue;
             }
-            match crate::packagist::fetch_package_versions(&pkg.name) {
+            match crate::packagist::fetch_package_versions(&pkg.name, None) {
                 Ok(versions) => {
                     let version_strings: Vec<String> =
                         versions.iter().map(|v| v.version.clone()).collect();
@@ -1482,7 +1482,7 @@ fn show_available(args: &ShowArgs, working_dir: &Path) -> anyhow::Result<()> {
 }
 
 fn show_available_versions(pkg_name: &str, args: &ShowArgs) -> anyhow::Result<()> {
-    let versions = crate::packagist::fetch_package_versions(pkg_name)?;
+    let versions = crate::packagist::fetch_package_versions(pkg_name, None)?;
     if versions.is_empty() {
         println!("No versions found for {pkg_name}");
         return Ok(());
@@ -1510,7 +1510,7 @@ fn show_available_versions(pkg_name: &str, args: &ShowArgs) -> anyhow::Result<()
 }
 
 fn show_available_versions_inline(pkg_name: &str) {
-    match crate::packagist::fetch_package_versions(pkg_name) {
+    match crate::packagist::fetch_package_versions(pkg_name, None) {
         Ok(versions) => {
             if versions.is_empty() {
                 println!("{}: no versions found", crate::console::info(pkg_name));

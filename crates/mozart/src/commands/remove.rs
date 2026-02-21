@@ -268,6 +268,7 @@ pub fn execute(args: &RemoveArgs, cli: &super::Cli) -> anyhow::Result<()> {
         platform: PlatformConfig::new(),
         ignore_platform_reqs: args.ignore_platform_reqs,
         ignore_platform_req_list: args.ignore_platform_req.clone(),
+        repo_cache: None,
     };
 
     // Print header messages
@@ -365,6 +366,7 @@ pub fn execute(args: &RemoveArgs, cli: &super::Cli) -> anyhow::Result<()> {
         composer_json_content: composer_json_content.clone(),
         composer_json: raw.clone(),
         include_dev: dev_mode,
+        repo_cache: None,
     })?;
 
     // Compute and print change report
@@ -701,6 +703,7 @@ mod tests {
             platform: crate::resolver::PlatformConfig::new(),
             ignore_platform_reqs: false,
             ignore_platform_req_list: vec![],
+            repo_cache: None,
         };
         let resolved = resolve(&request).expect("initial resolution should succeed");
         let initial_lock = generate_lock_file(&LockFileGenerationRequest {
@@ -708,6 +711,7 @@ mod tests {
             composer_json_content: content.to_string(),
             composer_json: raw.clone(),
             include_dev: false,
+            repo_cache: None,
         })
         .expect("initial lock file generation should succeed");
         initial_lock
@@ -730,6 +734,7 @@ mod tests {
             platform: crate::resolver::PlatformConfig::new(),
             ignore_platform_reqs: false,
             ignore_platform_req_list: vec![],
+            repo_cache: None,
         };
         let resolved2 = resolve(&request2).expect("post-remove resolution should succeed");
 
@@ -739,6 +744,7 @@ mod tests {
             composer_json_content: composer_json_content2,
             composer_json: raw,
             include_dev: false,
+            repo_cache: None,
         })
         .expect("post-remove lock file generation should succeed");
 
