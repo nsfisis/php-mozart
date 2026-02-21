@@ -110,6 +110,10 @@ pub struct InstallConfig {
     pub optimize_autoloader: bool,
     /// Use classmap-only autoloading (implies optimize_autoloader).
     pub classmap_authoritative: bool,
+    /// Use APCu to cache found/not-found classes.
+    pub apcu_autoloader: bool,
+    /// Custom prefix for APCu autoloader cache.
+    pub apcu_autoloader_prefix: Option<String>,
 }
 
 impl Default for InstallConfig {
@@ -123,6 +127,8 @@ impl Default for InstallConfig {
             ignore_platform_req: vec![],
             optimize_autoloader: false,
             classmap_authoritative: false,
+            apcu_autoloader: false,
+            apcu_autoloader_prefix: None,
         }
     }
 }
@@ -474,6 +480,12 @@ pub fn install_from_lock(
                 dev_mode,
                 suffix,
                 classmap_authoritative: config.classmap_authoritative,
+                optimize: config.optimize_autoloader,
+                apcu: config.apcu_autoloader,
+                apcu_prefix: config.apcu_autoloader_prefix.clone(),
+                strict_psr: false,
+                platform_check: crate::autoload::PlatformCheckMode::Full,
+                ignore_platform_reqs: config.ignore_platform_reqs,
             })?;
 
             eprintln!("Generated autoload files");
@@ -586,6 +598,8 @@ pub fn execute(args: &InstallArgs, cli: &super::Cli) -> anyhow::Result<()> {
             ignore_platform_req: args.ignore_platform_req.clone(),
             optimize_autoloader: args.optimize_autoloader,
             classmap_authoritative: args.classmap_authoritative,
+            apcu_autoloader: args.apcu_autoloader,
+            apcu_autoloader_prefix: args.apcu_autoloader_prefix.clone(),
         },
     )
 }

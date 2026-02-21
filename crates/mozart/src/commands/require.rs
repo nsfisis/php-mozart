@@ -778,6 +778,8 @@ pub fn execute(args: &RequireArgs, cli: &super::Cli) -> anyhow::Result<()> {
                 ignore_platform_req: args.ignore_platform_req.clone(),
                 optimize_autoloader: args.optimize_autoloader,
                 classmap_authoritative: args.classmap_authoritative,
+                apcu_autoloader: false,
+                apcu_autoloader_prefix: None,
             },
         )?;
     }

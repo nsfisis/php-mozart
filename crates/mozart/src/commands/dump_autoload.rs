@@ -71,6 +71,12 @@ pub fn execute(args: &DumpAutoloadArgs, cli: &super::Cli) -> anyhow::Result<()> 
         dev_mode,
         suffix,
         classmap_authoritative: args.classmap_authoritative,
+        optimize: args.optimize,
+        apcu: args.apcu,
+        apcu_prefix: args.apcu_prefix.clone(),
+        strict_psr: args.strict_psr,
+        platform_check: crate::autoload::PlatformCheckMode::Full,
+        ignore_platform_reqs: args.ignore_platform_reqs,
     })?;
 
     eprintln!("Generated autoload files");
