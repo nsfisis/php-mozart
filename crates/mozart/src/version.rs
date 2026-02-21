@@ -183,6 +183,21 @@ mod tests {
             conflict: Default::default(),
             dist: None,
             source: None,
+            require_dev: Default::default(),
+            suggest: None,
+            package_type: None,
+            autoload: None,
+            autoload_dev: None,
+            license: None,
+            description: None,
+            homepage: None,
+            keywords: None,
+            authors: None,
+            support: None,
+            funding: None,
+            time: None,
+            extra: None,
+            notification_url: None,
         }
     }
 

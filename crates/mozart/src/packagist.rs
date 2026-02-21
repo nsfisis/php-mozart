@@ -32,6 +32,41 @@ pub struct PackagistVersion {
     pub conflict: BTreeMap<String, String>,
     pub dist: Option<PackagistDist>,
     pub source: Option<PackagistSource>,
+
+    #[serde(rename = "require-dev", default)]
+    pub require_dev: BTreeMap<String, String>,
+
+    #[serde(default)]
+    pub suggest: Option<BTreeMap<String, String>>,
+
+    #[serde(rename = "type")]
+    pub package_type: Option<String>,
+
+    pub autoload: Option<serde_json::Value>,
+
+    #[serde(rename = "autoload-dev")]
+    pub autoload_dev: Option<serde_json::Value>,
+
+    pub license: Option<Vec<String>>,
+
+    pub description: Option<String>,
+
+    pub homepage: Option<String>,
+
+    pub keywords: Option<Vec<String>>,
+
+    pub authors: Option<Vec<serde_json::Value>>,
+
+    pub support: Option<serde_json::Value>,
+
+    pub funding: Option<Vec<serde_json::Value>>,
+
+    pub time: Option<String>,
+
+    pub extra: Option<serde_json::Value>,
+
+    #[serde(rename = "notification-url")]
+    pub notification_url: Option<String>,
 }
 
 /// Parse a Packagist p2 API JSON response.
