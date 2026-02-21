@@ -1,0 +1,18 @@
+{
+    "packages": [
+        {
+            "name": "psr/log",
+            "version": "3.0.2",
+            "version_normalized": "3.0.2.0",
+            "type": "library",
+            "install-path": "../psr/log",
+            "autoload": {
+                "psr-4": {
+                    "Psr\\Log\\": "src"
+                }
+            }
+        }
+    ],
+    "dev-package-names": [],
+    "dev": true
+}

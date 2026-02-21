@@ -1,0 +1,8 @@
+{
+    "name": "test/minimal-project",
+    "description": "A minimal test project",
+    "license": "MIT",
+    "require": {
+        "php": ">=8.1"
+    }
+}

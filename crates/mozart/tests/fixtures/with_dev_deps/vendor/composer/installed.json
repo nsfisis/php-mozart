@@ -1,0 +1,32 @@
+{
+    "packages": [
+        {
+            "name": "phpunit/phpunit",
+            "version": "11.0.0",
+            "version_normalized": "11.0.0.0",
+            "type": "library",
+            "install-path": "../phpunit/phpunit",
+            "autoload": {
+                "psr-4": {
+                    "PHPUnit\\": "src/"
+                }
+            }
+        },
+        {
+            "name": "psr/log",
+            "version": "3.0.2",
+            "version_normalized": "3.0.2.0",
+            "type": "library",
+            "install-path": "../psr/log",
+            "autoload": {
+                "psr-4": {
+                    "Psr\\Log\\": "src"
+                }
+            }
+        }
+    ],
+    "dev-package-names": [
+        "phpunit/phpunit"
+    ],
+    "dev": true
+}
