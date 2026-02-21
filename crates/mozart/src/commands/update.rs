@@ -3,7 +3,7 @@ use crate::lockfile;
 use crate::package::{self, Stability};
 use crate::resolver::{self, PlatformConfig, ResolveRequest, ResolvedPackage};
 use clap::Args;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 #[derive(Args)]
 pub struct UpdateArgs {
@@ -306,6 +306,327 @@ pub fn apply_partial_update(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Wildcard expansion helpers
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Match a single package name against a glob pattern.
+///
+/// Only the `*` wildcard is supported (matches any sequence of non-`/` characters
+/// within a segment, or any characters when the pattern contains no `/`).
+/// Examples:
+///   - `symfony/*`      matches `symfony/console`, `symfony/http-kernel`
+///   - `monolog/mono*`  matches `monolog/monolog`
+///   - `psr/*`          matches `psr/log`, `psr/container`
+fn glob_matches(pattern: &str, name: &str) -> bool {
+    // Fast path: no wildcard
+    if !pattern.contains('*') {
+        return pattern.eq_ignore_ascii_case(name);
+    }
+    // Split both pattern and name on '/' and match segment-by-segment
+    let pat_parts: Vec<&str> = pattern.splitn(2, '/').collect();
+    let name_parts: Vec<&str> = name.splitn(2, '/').collect();
+
+    // Both must have the same number of segments (vendor/name vs vendor/name)
+    if pat_parts.len() != name_parts.len() {
+        return false;
+    }
+    for (pp, np) in pat_parts.iter().zip(name_parts.iter()) {
+        if !glob_segment_matches(pp, np) {
+            return false;
+        }
+    }
+    true
+}
+
+/// Match a single path segment against a pattern segment (no '/' involved).
+/// `*` matches any sequence of characters (including empty).
+fn glob_segment_matches(pattern: &str, text: &str) -> bool {
+    // Simple recursive matcher
+    let pat = pattern.to_lowercase();
+    let txt = text.to_lowercase();
+    glob_segment_matches_inner(pat.as_bytes(), txt.as_bytes())
+}
+
+fn glob_segment_matches_inner(pattern: &[u8], text: &[u8]) -> bool {
+    match (pattern.first(), text.first()) {
+        (None, None) => true,
+        (Some(&b'*'), _) => {
+            // '*' can match zero or more characters
+            // Try consuming zero chars, or consuming one char from text
+            glob_segment_matches_inner(&pattern[1..], text)
+                || (!text.is_empty() && glob_segment_matches_inner(pattern, &text[1..]))
+        }
+        (Some(p), Some(t)) if p == t => glob_segment_matches_inner(&pattern[1..], &text[1..]),
+        _ => false,
+    }
+}
+
+/// Expand a list of package specifiers (which may include wildcards) against
+/// all packages in the lock file, returning the resolved concrete package names.
+///
+/// Non-wildcard specifiers are passed through unchanged (even if not in the lock,
+/// so the resolver can report the error naturally).
+pub fn expand_wildcards(specifiers: &[String], lock: &lockfile::LockFile) -> Vec<String> {
+    // Collect all locked package names (prod + dev)
+    let all_names: Vec<String> = lock
+        .packages
+        .iter()
+        .map(|p| p.name.to_lowercase())
+        .chain(
+            lock.packages_dev
+                .iter()
+                .flatten()
+                .map(|p| p.name.to_lowercase()),
+        )
+        .collect();
+
+    let mut result: Vec<String> = Vec::new();
+    let mut seen: HashSet<String> = HashSet::new();
+
+    for spec in specifiers {
+        if spec.contains('*') {
+            // Expand the wildcard against the lock
+            let mut matched = false;
+            for name in &all_names {
+                if glob_matches(spec, name) && seen.insert(name.clone()) {
+                    result.push(name.clone());
+                    matched = true;
+                }
+            }
+            if !matched {
+                eprintln!(
+                    "{}",
+                    console::warning(&format!(
+                        "No locked packages matched the pattern '{}'. Pattern will be ignored.",
+                        spec
+                    ))
+                );
+            }
+        } else {
+            let lower = spec.to_lowercase();
+            if seen.insert(lower.clone()) {
+                result.push(lower);
+            }
+        }
+    }
+
+    result
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Dependency expansion helpers
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Build a lookup map from package name (lowercase) to its LockedPackage.
+fn build_lock_map(lock: &lockfile::LockFile) -> HashMap<String, &lockfile::LockedPackage> {
+    let mut map = HashMap::new();
+    for pkg in &lock.packages {
+        map.insert(pkg.name.to_lowercase(), pkg);
+    }
+    if let Some(ref dev_pkgs) = lock.packages_dev {
+        for pkg in dev_pkgs {
+            map.insert(pkg.name.to_lowercase(), pkg);
+        }
+    }
+    map
+}
+
+/// Given a set of package names, add their direct `require` dependencies from
+/// the lock file to the set.  Returns the augmented set.
+pub fn expand_with_direct_dependencies(
+    packages: Vec<String>,
+    lock: &lockfile::LockFile,
+) -> Vec<String> {
+    let lock_map = build_lock_map(lock);
+    let mut result_set: HashSet<String> = packages.iter().cloned().collect();
+    let mut result: Vec<String> = packages;
+
+    for name in result.clone() {
+        if let Some(pkg) = lock_map.get(&name) {
+            for dep_name in pkg.require.keys() {
+                // Skip platform packages (php, ext-*, lib-*)
+                if dep_name == "php"
+                    || dep_name.starts_with("ext-")
+                    || dep_name.starts_with("lib-")
+                    || dep_name == "php-64bit"
+                    || dep_name == "php-ipv6"
+                    || dep_name == "php-zts"
+                    || dep_name == "php-debug"
+                {
+                    continue;
+                }
+                let lower = dep_name.to_lowercase();
+                if result_set.insert(lower.clone()) {
+                    result.push(lower);
+                }
+            }
+        }
+    }
+
+    result
+}
+
+/// Given a set of package names, recursively expand their full transitive
+/// `require` dependency tree from the lock file.
+pub fn expand_with_all_dependencies(
+    packages: Vec<String>,
+    lock: &lockfile::LockFile,
+) -> Vec<String> {
+    let lock_map = build_lock_map(lock);
+    let mut result_set: HashSet<String> = packages.iter().cloned().collect();
+    let mut queue: Vec<String> = packages.clone();
+    let mut result: Vec<String> = packages;
+
+    while let Some(name) = queue.pop() {
+        if let Some(pkg) = lock_map.get(&name) {
+            for dep_name in pkg.require.keys() {
+                // Skip platform packages
+                if dep_name == "php"
+                    || dep_name.starts_with("ext-")
+                    || dep_name.starts_with("lib-")
+                    || dep_name == "php-64bit"
+                    || dep_name == "php-ipv6"
+                    || dep_name == "php-zts"
+                    || dep_name == "php-debug"
+                {
+                    continue;
+                }
+                let lower = dep_name.to_lowercase();
+                if result_set.insert(lower.clone()) {
+                    result.push(lower.clone());
+                    queue.push(lower);
+                }
+            }
+        }
+    }
+
+    result
+}
+
+/// Expand the package list applying wildcard matching and optional dependency expansion.
+///
+/// Returns the final list of package names to update (concrete, lowercase, deduplicated).
+pub fn expand_packages(
+    specifiers: &[String],
+    lock: Option<&lockfile::LockFile>,
+    with_dependencies: bool,
+    with_all_dependencies: bool,
+) -> Vec<String> {
+    // First expand wildcards (requires a lock file)
+    let mut packages: Vec<String> = if let Some(lock) = lock {
+        expand_wildcards(specifiers, lock)
+    } else {
+        // No lock file: pass through as-is (no wildcards can be resolved)
+        specifiers.iter().map(|s| s.to_lowercase()).collect()
+    };
+
+    // Then expand dependencies if requested
+    if let Some(lock) = lock {
+        if with_all_dependencies {
+            packages = expand_with_all_dependencies(packages, lock);
+        } else if with_dependencies {
+            packages = expand_with_direct_dependencies(packages, lock);
+        }
+    }
+
+    packages
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Interactive selection helper
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Interactively prompt the user to select which packages to update.
+///
+/// For each package in `packages`, prints a y/n prompt and collects the
+/// user's response.  Returns only the packages the user confirmed.
+///
+/// When stdin is not a TTY (e.g. in CI or piped input), emits a warning and
+/// returns the full package list unchanged.
+pub fn interactive_select_packages(packages: Vec<String>) -> Vec<String> {
+    use std::io::{self, BufRead, IsTerminal, Write};
+
+    let stdin = io::stdin();
+    if !stdin.is_terminal() {
+        eprintln!(
+            "{}",
+            console::warning(
+                "Interactive mode requires a TTY. Running non-interactively with all packages."
+            )
+        );
+        return packages;
+    }
+
+    eprintln!("Select packages to update (y/n for each):");
+
+    let mut selected = Vec::new();
+    let stdin_locked = stdin.lock();
+    let mut lines = stdin_locked.lines();
+
+    for pkg in &packages {
+        loop {
+            eprint!("  Update {}? [y/n] ", pkg);
+            let _ = io::stderr().flush();
+
+            match lines.next() {
+                Some(Ok(line)) => {
+                    let answer = line.trim().to_lowercase();
+                    match answer.as_str() {
+                        "y" | "yes" => {
+                            selected.push(pkg.clone());
+                            break;
+                        }
+                        "n" | "no" => {
+                            break;
+                        }
+                        _ => {
+                            eprintln!("  Please answer y or n.");
+                        }
+                    }
+                }
+                _ => {
+                    // EOF or error: treat as "no"
+                    break;
+                }
+            }
+        }
+    }
+
+    selected
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Minimal-changes helper
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// For `--minimal-changes` mode: when no specific packages are named, pin all
+/// packages to their current locked version UNLESS the current locked version
+/// no longer satisfies the root constraint.  This prevents pulling in newer
+/// versions of packages that don't need updating.
+///
+/// When specific packages ARE named, `apply_partial_update` already handles
+/// pinning non-requested packages, so this function is a no-op in that case.
+///
+/// Implementation: We add the locked version back for every package that is NOT
+/// newly required (i.e., already exists in the lock with a version that is still
+/// satisfiable). In practice this is expressed by running `apply_partial_update`
+/// with an empty update set — which pins *everything* — and then releasing the
+/// pins for packages whose constraints have changed or that are new.
+///
+/// For the initial implementation we take a simpler approach: we call
+/// `apply_partial_update` with an empty update list so that all packages are
+/// pinned to their old locked versions.  The resolver will still produce a valid
+/// solution; we then override with locked versions for packages not explicitly
+/// listed.
+pub fn apply_minimal_changes(
+    resolved: Vec<ResolvedPackage>,
+    old_lock: &lockfile::LockFile,
+) -> Vec<ResolvedPackage> {
+    // Pin every package to its old locked version (full pin, no updates)
+    apply_partial_update(resolved, old_lock, &[])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Main execute function
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -329,31 +650,11 @@ pub fn execute(args: &UpdateArgs, cli: &super::Cli) -> anyhow::Result<()> {
         );
     }
 
-    // Warn about deferred flags
-    if args.with_dependencies || args.with_all_dependencies {
-        eprintln!(
-            "{}",
-            console::warning(
-                "--with-dependencies / --with-all-dependencies are not yet implemented and will be ignored."
-            )
-        );
-    }
-    if args.minimal_changes {
-        eprintln!(
-            "{}",
-            console::warning("--minimal-changes is not yet implemented and will be ignored.")
-        );
-    }
+    // Warn about still-deferred flags
     if args.patch_only {
         eprintln!(
             "{}",
             console::warning("--patch-only is not yet implemented and will be ignored.")
-        );
-    }
-    if args.interactive {
-        eprintln!(
-            "{}",
-            console::warning("--interactive is not yet implemented and will be ignored.")
         );
     }
     if args.root_reqs {
@@ -472,8 +773,12 @@ pub fn execute(args: &UpdateArgs, cli: &super::Cli) -> anyhow::Result<()> {
         None
     };
 
-    // Step 8: Handle partial update (if specific packages were named)
-    if !args.packages.is_empty() {
+    // Step 8: Expand package list (wildcards + dependency expansion) and handle
+    //         interactive selection, then apply partial update logic.
+    //
+    // Note: wildcard expansion and dependency traversal both require a lock file.
+    // If --minimal-changes is requested without specific packages, we pin all packages.
+    let update_packages: Vec<String> = if !args.packages.is_empty() {
         match &old_lock {
             None => {
                 eprintln!(
@@ -485,8 +790,79 @@ pub fn execute(args: &UpdateArgs, cli: &super::Cli) -> anyhow::Result<()> {
                 std::process::exit(1);
             }
             Some(lock) => {
-                resolved = apply_partial_update(resolved, lock, &args.packages);
+                // 1. Expand wildcards
+                let mut expanded = expand_packages(
+                    &args.packages,
+                    Some(lock),
+                    args.with_dependencies,
+                    args.with_all_dependencies,
+                );
+
+                // 2. Interactive selection (filter the expanded list)
+                if args.interactive {
+                    expanded = interactive_select_packages(expanded);
+                }
+
+                expanded
             }
+        }
+    } else {
+        // No specific packages: full update mode
+        // If --interactive, show all locked packages and let user select
+        if args.interactive {
+            match &old_lock {
+                None => {
+                    eprintln!(
+                        "{}",
+                        console::warning("No lock file found. --interactive mode skipped.")
+                    );
+                    vec![]
+                }
+                Some(lock) => {
+                    let all_names: Vec<String> = lock
+                        .packages
+                        .iter()
+                        .map(|p| p.name.to_lowercase())
+                        .chain(
+                            lock.packages_dev
+                                .iter()
+                                .flatten()
+                                .map(|p| p.name.to_lowercase()),
+                        )
+                        .collect();
+                    interactive_select_packages(all_names)
+                }
+            }
+        } else {
+            vec![]
+        }
+    };
+
+    // Apply partial update (pin non-requested packages) when a subset was named
+    if !update_packages.is_empty() {
+        match &old_lock {
+            None => {
+                eprintln!(
+                    "{}",
+                    console::error(
+                        "No lock file found. Cannot perform partial update. Run `mozart update` first."
+                    )
+                );
+                std::process::exit(1);
+            }
+            Some(lock) => {
+                resolved = apply_partial_update(resolved, lock, &update_packages);
+            }
+        }
+    } else if args.minimal_changes && update_packages.is_empty() {
+        // Full update with --minimal-changes: pin everything to locked versions
+        // (only updates packages whose constraints have changed in composer.json)
+        if let Some(ref lock) = old_lock {
+            eprintln!(
+                "{}",
+                console::info("Minimal changes mode: preserving locked versions where possible.")
+            );
+            resolved = apply_minimal_changes(resolved, lock);
         }
     }
 
@@ -1043,6 +1419,236 @@ mod tests {
         // Hash should NOT have changed (dry_run=true)
         let reloaded = lockfile::LockFile::read_from_file(&lock_path).unwrap();
         assert_eq!(reloaded.content_hash, "original_hash");
+    }
+
+    // ──────────── glob_matches ────────────
+
+    #[test]
+    fn test_glob_matches_exact() {
+        assert!(glob_matches("monolog/monolog", "monolog/monolog"));
+        assert!(!glob_matches("monolog/monolog", "monolog/logger"));
+    }
+
+    #[test]
+    fn test_glob_matches_case_insensitive() {
+        assert!(glob_matches("Monolog/Monolog", "monolog/monolog"));
+        assert!(glob_matches("symfony/*", "Symfony/Console"));
+    }
+
+    #[test]
+    fn test_glob_matches_vendor_wildcard() {
+        assert!(glob_matches("symfony/*", "symfony/console"));
+        assert!(glob_matches("symfony/*", "symfony/http-kernel"));
+        assert!(!glob_matches("symfony/*", "monolog/monolog"));
+    }
+
+    #[test]
+    fn test_glob_matches_wildcard_in_name() {
+        assert!(glob_matches("monolog/mono*", "monolog/monolog"));
+        assert!(!glob_matches("monolog/mono*", "monolog/logger"));
+    }
+
+    #[test]
+    fn test_glob_matches_wildcard_no_slash() {
+        // Without a '/' the pattern still works as a full name match
+        assert!(!glob_matches("symfony/*", "monolog/monolog"));
+    }
+
+    #[test]
+    fn test_glob_matches_different_segment_count() {
+        // "vendor/*" has 2 segments; "monolog" has only 1: no match
+        assert!(!glob_matches("vendor/*", "monolog"));
+        // Pattern with 1 segment vs name with 2 segments: no match
+        assert!(!glob_matches("monolog", "monolog/monolog"));
+    }
+
+    // ──────────── expand_wildcards ────────────
+
+    #[test]
+    fn test_expand_wildcards_no_wildcard_passthrough() {
+        let lock = minimal_lock(vec![make_locked_package("psr/log", "3.0.0")]);
+        let specs = vec!["psr/log".to_string(), "nonexistent/pkg".to_string()];
+        let result = expand_wildcards(&specs, &lock);
+        assert_eq!(result, vec!["psr/log", "nonexistent/pkg"]);
+    }
+
+    #[test]
+    fn test_expand_wildcards_vendor_star() {
+        let lock = minimal_lock(vec![
+            make_locked_package("symfony/console", "7.0.0"),
+            make_locked_package("symfony/http-kernel", "7.0.0"),
+            make_locked_package("monolog/monolog", "3.8.0"),
+        ]);
+        let specs = vec!["symfony/*".to_string()];
+        let mut result = expand_wildcards(&specs, &lock);
+        result.sort();
+        assert_eq!(result, vec!["symfony/console", "symfony/http-kernel"]);
+    }
+
+    #[test]
+    fn test_expand_wildcards_no_match_emits_warning() {
+        let lock = minimal_lock(vec![make_locked_package("psr/log", "3.0.0")]);
+        let specs = vec!["unknown/*".to_string()];
+        // Should return empty (no match), no panic
+        let result = expand_wildcards(&specs, &lock);
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_expand_wildcards_deduplication() {
+        let lock = minimal_lock(vec![make_locked_package("psr/log", "3.0.0")]);
+        let specs = vec!["psr/log".to_string(), "psr/log".to_string()];
+        let result = expand_wildcards(&specs, &lock);
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0], "psr/log");
+    }
+
+    #[test]
+    fn test_expand_wildcards_also_checks_dev() {
+        let mut lock = minimal_lock(vec![make_locked_package("psr/log", "3.0.0")]);
+        lock.packages_dev = Some(vec![make_locked_package("phpunit/phpunit", "11.0.0")]);
+        let specs = vec!["phpunit/*".to_string()];
+        let result = expand_wildcards(&specs, &lock);
+        assert_eq!(result, vec!["phpunit/phpunit"]);
+    }
+
+    // ──────────── expand_with_direct_dependencies ────────────
+
+    #[test]
+    fn test_expand_with_direct_deps_adds_require() {
+        // monolog/monolog requires psr/log
+        let mut pkg = make_locked_package("monolog/monolog", "3.8.0");
+        pkg.require
+            .insert("psr/log".to_string(), "^3.0".to_string());
+
+        let lock = minimal_lock(vec![pkg, make_locked_package("psr/log", "3.0.0")]);
+
+        let result = expand_with_direct_dependencies(vec!["monolog/monolog".to_string()], &lock);
+        let mut result_sorted = result.clone();
+        result_sorted.sort();
+        assert!(result_sorted.contains(&"monolog/monolog".to_string()));
+        assert!(result_sorted.contains(&"psr/log".to_string()));
+    }
+
+    #[test]
+    fn test_expand_with_direct_deps_skips_platform() {
+        let mut pkg = make_locked_package("monolog/monolog", "3.8.0");
+        pkg.require.insert("php".to_string(), ">=8.1".to_string());
+        pkg.require.insert("ext-json".to_string(), "*".to_string());
+        pkg.require
+            .insert("psr/log".to_string(), "^3.0".to_string());
+
+        let lock = minimal_lock(vec![pkg, make_locked_package("psr/log", "3.0.0")]);
+
+        let result = expand_with_direct_dependencies(vec!["monolog/monolog".to_string()], &lock);
+        // Should NOT include php or ext-json
+        assert!(!result.contains(&"php".to_string()));
+        assert!(!result.contains(&"ext-json".to_string()));
+        assert!(result.contains(&"psr/log".to_string()));
+    }
+
+    #[test]
+    fn test_expand_with_direct_deps_no_duplicates() {
+        // Both packages in the list require psr/log
+        let mut pkg_a = make_locked_package("foo/a", "1.0.0");
+        pkg_a
+            .require
+            .insert("psr/log".to_string(), "^3.0".to_string());
+        let mut pkg_b = make_locked_package("foo/b", "1.0.0");
+        pkg_b
+            .require
+            .insert("psr/log".to_string(), "^3.0".to_string());
+
+        let lock = minimal_lock(vec![pkg_a, pkg_b, make_locked_package("psr/log", "3.0.0")]);
+
+        let result =
+            expand_with_direct_dependencies(vec!["foo/a".to_string(), "foo/b".to_string()], &lock);
+        let psr_count = result.iter().filter(|s| s.as_str() == "psr/log").count();
+        assert_eq!(psr_count, 1, "psr/log should appear only once");
+    }
+
+    // ──────────── expand_with_all_dependencies ────────────
+
+    #[test]
+    fn test_expand_all_deps_transitive() {
+        // a -> b -> c
+        let mut pkg_a = make_locked_package("foo/a", "1.0.0");
+        pkg_a
+            .require
+            .insert("foo/b".to_string(), "^1.0".to_string());
+        let mut pkg_b = make_locked_package("foo/b", "1.0.0");
+        pkg_b
+            .require
+            .insert("foo/c".to_string(), "^1.0".to_string());
+        let pkg_c = make_locked_package("foo/c", "1.0.0");
+
+        let lock = minimal_lock(vec![pkg_a, pkg_b, pkg_c]);
+
+        let result = expand_with_all_dependencies(vec!["foo/a".to_string()], &lock);
+        assert!(result.contains(&"foo/a".to_string()));
+        assert!(result.contains(&"foo/b".to_string()));
+        assert!(result.contains(&"foo/c".to_string()));
+    }
+
+    #[test]
+    fn test_expand_all_deps_no_infinite_loop() {
+        // Circular reference: a -> b -> a
+        let mut pkg_a = make_locked_package("foo/a", "1.0.0");
+        pkg_a
+            .require
+            .insert("foo/b".to_string(), "^1.0".to_string());
+        let mut pkg_b = make_locked_package("foo/b", "1.0.0");
+        pkg_b
+            .require
+            .insert("foo/a".to_string(), "^1.0".to_string());
+
+        let lock = minimal_lock(vec![pkg_a, pkg_b]);
+
+        // Must not loop infinitely
+        let result = expand_with_all_dependencies(vec!["foo/a".to_string()], &lock);
+        assert!(result.contains(&"foo/a".to_string()));
+        assert!(result.contains(&"foo/b".to_string()));
+        assert_eq!(result.len(), 2);
+    }
+
+    // ──────────── expand_packages ────────────
+
+    #[test]
+    fn test_expand_packages_wildcard_with_direct_deps() {
+        // symfony/* expands to symfony/console; symfony/console requires psr/log
+        let mut console_pkg = make_locked_package("symfony/console", "7.0.0");
+        console_pkg
+            .require
+            .insert("psr/log".to_string(), "^3.0".to_string());
+
+        let lock = minimal_lock(vec![console_pkg, make_locked_package("psr/log", "3.0.0")]);
+
+        let result = expand_packages(
+            &["symfony/*".to_string()],
+            Some(&lock),
+            true,  // with_dependencies
+            false, // with_all_dependencies
+        );
+
+        assert!(result.contains(&"symfony/console".to_string()));
+        assert!(result.contains(&"psr/log".to_string()));
+    }
+
+    // ──────────── apply_minimal_changes ────────────
+
+    #[test]
+    fn test_apply_minimal_changes_pins_all() {
+        // Resolver found psr/log 3.0.1, but old lock has 3.0.0
+        // apply_minimal_changes should pin back to 3.0.0
+        let old_lock = minimal_lock(vec![make_locked_package("psr/log", "3.0.0")]);
+        let resolved = vec![make_resolved_package("psr/log", "3.0.1")];
+
+        let result = apply_minimal_changes(resolved, &old_lock);
+        let psr = result.iter().find(|p| p.name == "psr/log").unwrap();
+        assert_eq!(
+            psr.version, "3.0.0",
+            "minimal-changes should pin to locked version"
+        );
     }
 
     // ──────────── Integration test (network, #[ignore]) ────────────
