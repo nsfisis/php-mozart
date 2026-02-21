@@ -41,7 +41,7 @@ struct Suggestion {
 pub fn execute(
     args: &SuggestsArgs,
     cli: &super::Cli,
-    _console: &crate::console::Console,
+    _console: &mozart_core::console::Console,
 ) -> anyhow::Result<()> {
     let working_dir = match &cli.working_dir {
         Some(dir) => PathBuf::from(dir),
@@ -160,9 +160,10 @@ fn collect_suggestions_from_locked(
     no_dev: bool,
 ) -> anyhow::Result<Vec<Suggestion>> {
     let lock_path = working_dir.join("composer.lock");
-    let lock = crate::lockfile::LockFile::read_from_file(&lock_path)?;
+    let lock = mozart_registry::lockfile::LockFile::read_from_file(&lock_path)?;
 
-    let mut all_packages: Vec<&crate::lockfile::LockedPackage> = lock.packages.iter().collect();
+    let mut all_packages: Vec<&mozart_registry::lockfile::LockedPackage> =
+        lock.packages.iter().collect();
     if !no_dev && let Some(ref pkgs_dev) = lock.packages_dev {
         all_packages.extend(pkgs_dev.iter());
     }
@@ -187,7 +188,7 @@ fn collect_suggestions_from_installed(
     no_dev: bool,
 ) -> anyhow::Result<Vec<Suggestion>> {
     let vendor_dir = working_dir.join("vendor");
-    let installed = crate::installed::InstalledPackages::read(&vendor_dir)?;
+    let installed = mozart_registry::installed::InstalledPackages::read(&vendor_dir)?;
 
     if installed.packages.is_empty() {
         let installed_json = vendor_dir.join("composer/installed.json");
@@ -233,7 +234,7 @@ fn collect_suggestions_from_root(working_dir: &Path) -> anyhow::Result<Vec<Sugge
         return Ok(vec![]);
     }
 
-    let root = crate::package::read_from_file(&composer_json_path)?;
+    let root = mozart_core::package::read_from_file(&composer_json_path)?;
 
     // suggest is in extra_fields since RawPackageData doesn't model it explicitly
     let suggest_val = root.extra_fields.get("suggest");
@@ -264,11 +265,12 @@ fn collect_installed_names_from_lock(
     no_dev: bool,
 ) -> anyhow::Result<HashSet<String>> {
     let lock_path = working_dir.join("composer.lock");
-    let lock = crate::lockfile::LockFile::read_from_file(&lock_path)?;
+    let lock = mozart_registry::lockfile::LockFile::read_from_file(&lock_path)?;
 
     let mut names: HashSet<String> = HashSet::new();
 
-    let mut all_packages: Vec<&crate::lockfile::LockedPackage> = lock.packages.iter().collect();
+    let mut all_packages: Vec<&mozart_registry::lockfile::LockedPackage> =
+        lock.packages.iter().collect();
     if !no_dev && let Some(ref pkgs_dev) = lock.packages_dev {
         all_packages.extend(pkgs_dev.iter());
     }
@@ -299,7 +301,7 @@ fn collect_installed_names_from_installed(
     no_dev: bool,
 ) -> anyhow::Result<HashSet<String>> {
     let vendor_dir = working_dir.join("vendor");
-    let installed = crate::installed::InstalledPackages::read(&vendor_dir)?;
+    let installed = mozart_registry::installed::InstalledPackages::read(&vendor_dir)?;
 
     let dev_names: HashSet<String> = installed
         .dev_package_names
@@ -330,7 +332,7 @@ fn collect_installed_names_from_installed(
     // Add platform packages from require/require-dev in composer.json
     let composer_json_path = working_dir.join("composer.json");
     if composer_json_path.exists()
-        && let Ok(root) = crate::package::read_from_file(&composer_json_path)
+        && let Ok(root) = mozart_core::package::read_from_file(&composer_json_path)
     {
         for name in root.require.keys().chain(root.require_dev.keys()) {
             if is_platform_package(name) {
@@ -342,7 +344,10 @@ fn collect_installed_names_from_installed(
     Ok(names)
 }
 
-fn add_platform_names_from_lock(lock: &crate::lockfile::LockFile, names: &mut HashSet<String>) {
+fn add_platform_names_from_lock(
+    lock: &mozart_registry::lockfile::LockFile,
+    names: &mut HashSet<String>,
+) {
     // Collect platform keys from the lock's platform and platform_dev objects
     if let Some(obj) = lock.platform.as_object() {
         for key in obj.keys() {
@@ -372,7 +377,7 @@ fn compute_direct_deps(working_dir: &Path) -> anyhow::Result<HashSet<String>> {
     if !composer_json_path.exists() {
         return Ok(HashSet::new());
     }
-    let root = crate::package::read_from_file(&composer_json_path)?;
+    let root = mozart_core::package::read_from_file(&composer_json_path)?;
     let mut deps: HashSet<String> = HashSet::new();
     for name in root.require.keys().chain(root.require_dev.keys()) {
         deps.insert(name.to_lowercase());
@@ -447,8 +452,8 @@ mod tests {
     fn make_locked_package(
         name: &str,
         suggest: Option<BTreeMap<String, String>>,
-    ) -> crate::lockfile::LockedPackage {
-        crate::lockfile::LockedPackage {
+    ) -> mozart_registry::lockfile::LockedPackage {
+        mozart_registry::lockfile::LockedPackage {
             name: name.to_string(),
             version: "1.0.0".to_string(),
             version_normalized: None,
@@ -476,7 +481,7 @@ mod tests {
     fn make_installed_entry(
         name: &str,
         suggest: Option<BTreeMap<String, String>>,
-    ) -> crate::installed::InstalledPackageEntry {
+    ) -> mozart_registry::installed::InstalledPackageEntry {
         let mut extra_fields: BTreeMap<String, serde_json::Value> = BTreeMap::new();
         if let Some(s) = suggest {
             let map: serde_json::Map<String, serde_json::Value> = s
@@ -485,7 +490,7 @@ mod tests {
                 .collect();
             extra_fields.insert("suggest".to_string(), serde_json::Value::Object(map));
         }
-        crate::installed::InstalledPackageEntry {
+        mozart_registry::installed::InstalledPackageEntry {
             name: name.to_string(),
             version: "1.0.0".to_string(),
             version_normalized: None,
@@ -500,11 +505,11 @@ mod tests {
     }
 
     fn minimal_lock(
-        packages: Vec<crate::lockfile::LockedPackage>,
-        packages_dev: Option<Vec<crate::lockfile::LockedPackage>>,
-    ) -> crate::lockfile::LockFile {
-        crate::lockfile::LockFile {
-            readme: crate::lockfile::LockFile::default_readme(),
+        packages: Vec<mozart_registry::lockfile::LockedPackage>,
+        packages_dev: Option<Vec<mozart_registry::lockfile::LockedPackage>>,
+    ) -> mozart_registry::lockfile::LockFile {
+        mozart_registry::lockfile::LockFile {
+            readme: mozart_registry::lockfile::LockFile::default_readme(),
             content_hash: "abc123".to_string(),
             packages,
             packages_dev,
@@ -687,7 +692,7 @@ mod tests {
         let mut suggest = BTreeMap::new();
         suggest.insert("ext-redis".to_string(), "For Redis caching".to_string());
 
-        let mut installed = crate::installed::InstalledPackages::new();
+        let mut installed = mozart_registry::installed::InstalledPackages::new();
         installed.upsert(make_installed_entry("vendor/cache", Some(suggest)));
         installed.upsert(make_installed_entry("vendor/other", None));
         installed.write(&vendor_dir).unwrap();

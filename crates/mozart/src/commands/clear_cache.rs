@@ -1,5 +1,5 @@
-use crate::cache::{Cache, build_cache_config};
 use clap::Args;
+use mozart_registry::cache::{Cache, build_cache_config};
 
 #[derive(Args)]
 pub struct ClearCacheArgs {
@@ -11,9 +11,9 @@ pub struct ClearCacheArgs {
 pub fn execute(
     args: &ClearCacheArgs,
     cli: &super::Cli,
-    console: &crate::console::Console,
+    console: &mozart_core::console::Console,
 ) -> anyhow::Result<()> {
-    let config = build_cache_config(cli);
+    let config = build_cache_config(cli.no_cache);
 
     if args.gc {
         // Run GC only (probabilistic under normal circumstances, but forced here)

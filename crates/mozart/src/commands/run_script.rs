@@ -49,7 +49,7 @@ const INTERNAL_ONLY_EVENTS: &[&str] = &[
 pub fn execute(
     args: &RunScriptArgs,
     cli: &super::Cli,
-    _console: &crate::console::Console,
+    _console: &mozart_core::console::Console,
 ) -> anyhow::Result<()> {
     let working_dir = match &cli.working_dir {
         Some(dir) => PathBuf::from(dir),

@@ -1,8 +1,8 @@
-use crate::console;
-use crate::lockfile;
-use crate::package::{self, Stability};
-use crate::resolver::{self, PlatformConfig, ResolveRequest, ResolvedPackage};
 use clap::Args;
+use mozart_core::console;
+use mozart_core::package::{self, Stability};
+use mozart_registry::lockfile;
+use mozart_registry::resolver::{self, PlatformConfig, ResolveRequest, ResolvedPackage};
 use std::collections::{HashMap, HashSet};
 
 #[derive(Args)]
@@ -633,7 +633,7 @@ pub fn apply_minimal_changes(
 pub fn execute(
     args: &UpdateArgs,
     cli: &super::Cli,
-    console: &crate::console::Console,
+    console: &mozart_core::console::Console,
 ) -> anyhow::Result<()> {
     // Step 1: Resolve the working directory
     let working_dir = super::install::resolve_working_dir(cli);
@@ -670,8 +670,8 @@ pub fn execute(
     // Step 3: Read composer.json
     let composer_json_path = working_dir.join("composer.json");
     if !composer_json_path.exists() {
-        return Err(crate::exit_code::bail(
-            crate::exit_code::GENERAL_ERROR,
+        return Err(mozart_core::exit_code::bail(
+            mozart_core::exit_code::GENERAL_ERROR,
             format!(
                 "Composer could not find a composer.json file in {}",
                 working_dir.display()
@@ -746,8 +746,8 @@ pub fn execute(
     let mut resolved = match resolver::resolve(&request) {
         Ok(packages) => packages,
         Err(e) => {
-            return Err(crate::exit_code::bail(
-                crate::exit_code::DEPENDENCY_RESOLUTION_FAILED,
+            return Err(mozart_core::exit_code::bail(
+                mozart_core::exit_code::DEPENDENCY_RESOLUTION_FAILED,
                 e.to_string(),
             ));
         }
@@ -777,8 +777,8 @@ pub fn execute(
     let update_packages: Vec<String> = if !args.packages.is_empty() {
         match &old_lock {
             None => {
-                return Err(crate::exit_code::bail(
-                    crate::exit_code::NO_LOCK_FILE_FOR_PARTIAL_UPDATE,
+                return Err(mozart_core::exit_code::bail(
+                    mozart_core::exit_code::NO_LOCK_FILE_FOR_PARTIAL_UPDATE,
                     "No lock file found. Cannot perform partial update. Run `mozart update` first.",
                 ));
             }
@@ -834,8 +834,8 @@ pub fn execute(
     if !update_packages.is_empty() {
         match &old_lock {
             None => {
-                return Err(crate::exit_code::bail(
-                    crate::exit_code::NO_LOCK_FILE_FOR_PARTIAL_UPDATE,
+                return Err(mozart_core::exit_code::bail(
+                    mozart_core::exit_code::NO_LOCK_FILE_FOR_PARTIAL_UPDATE,
                     "No lock file found. Cannot perform partial update. Run `mozart update` first.",
                 ));
             }
@@ -947,7 +947,7 @@ pub fn execute(
                 .map(|s| s.eq_ignore_ascii_case("source"))
                 .unwrap_or(false);
         if prefer_source {
-            console.info(&crate::console::warning(
+            console.info(&mozart_core::console::warning(
                 "Warning: Source installs are not yet supported. Falling back to dist.",
             ));
         }
@@ -986,11 +986,11 @@ fn handle_lock_mode(
     lock_path: &std::path::Path,
     composer_json_content: &str,
     dry_run: bool,
-    console: &crate::console::Console,
+    console: &mozart_core::console::Console,
 ) -> anyhow::Result<()> {
     if !lock_path.exists() {
-        return Err(crate::exit_code::bail(
-            crate::exit_code::LOCK_FILE_INVALID,
+        return Err(mozart_core::exit_code::bail(
+            mozart_core::exit_code::LOCK_FILE_INVALID,
             "No lock file found. Run `mozart update` to generate one.",
         ));
     }
@@ -1360,9 +1360,9 @@ mod tests {
         // Composer.json content that will produce a different hash
         let composer_json_content = r#"{"name": "test/project", "require": {"psr/log": "^3.0"}}"#;
 
-        let console = crate::console::Console {
+        let console = mozart_core::console::Console {
             interactive: false,
-            verbosity: crate::console::Verbosity::Normal,
+            verbosity: mozart_core::console::Verbosity::Normal,
             decorated: false,
         };
         let result = handle_lock_mode(&lock_path, composer_json_content, false, &console);
@@ -1388,9 +1388,9 @@ mod tests {
         lock.content_hash = correct_hash.clone();
         lock.write_to_file(&lock_path).unwrap();
 
-        let console = crate::console::Console {
+        let console = mozart_core::console::Console {
             interactive: false,
-            verbosity: crate::console::Verbosity::Normal,
+            verbosity: mozart_core::console::Verbosity::Normal,
             decorated: false,
         };
         let result = handle_lock_mode(&lock_path, composer_json_content, false, &console);
@@ -1412,9 +1412,9 @@ mod tests {
 
         let composer_json_content = r#"{"name": "test/project", "require": {"psr/log": "^3.0"}}"#;
 
-        let console = crate::console::Console {
+        let console = mozart_core::console::Console {
             interactive: false,
-            verbosity: crate::console::Verbosity::Normal,
+            verbosity: mozart_core::console::Verbosity::Normal,
             decorated: false,
         };
         let result = handle_lock_mode(&lock_path, composer_json_content, true, &console);
@@ -1660,9 +1660,9 @@ mod tests {
     #[test]
     #[ignore]
     fn test_update_full_e2e() {
-        use crate::lockfile::{LockFileGenerationRequest, generate_lock_file};
-        use crate::package::RawPackageData;
-        use crate::resolver::{ResolveRequest, resolve};
+        use mozart_core::package::RawPackageData;
+        use mozart_registry::lockfile::{LockFileGenerationRequest, generate_lock_file};
+        use mozart_registry::resolver::{ResolveRequest, resolve};
 
         let composer_json_content =
             r#"{"name": "test/project", "require": {"monolog/monolog": "^3.0"}}"#;
@@ -1717,9 +1717,9 @@ mod tests {
         let expected_hash =
             lockfile::LockFile::compute_content_hash(composer_json_content).unwrap();
 
-        let console = crate::console::Console {
+        let console = mozart_core::console::Console {
             interactive: false,
-            verbosity: crate::console::Verbosity::Normal,
+            verbosity: mozart_core::console::Verbosity::Normal,
             decorated: false,
         };
         handle_lock_mode(&lock_path, composer_json_content, false, &console).unwrap();

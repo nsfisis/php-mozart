@@ -1,8 +1,8 @@
-use crate::console;
-use crate::downloader;
-use crate::installed;
-use crate::lockfile;
 use clap::Args;
+use mozart_core::console;
+use mozart_registry::downloader;
+use mozart_registry::installed;
+use mozart_registry::lockfile;
 use std::collections::{BTreeMap, HashSet};
 use std::path::{Path, PathBuf};
 
@@ -475,7 +475,7 @@ pub fn install_from_lock(
 
             let suffix = lock.content_hash.clone();
 
-            crate::autoload::generate(&crate::autoload::AutoloadConfig {
+            mozart_autoload::autoload::generate(&mozart_autoload::autoload::AutoloadConfig {
                 project_dir: working_dir.to_path_buf(),
                 vendor_dir: vendor_dir.to_path_buf(),
                 dev_mode,
@@ -485,7 +485,7 @@ pub fn install_from_lock(
                 apcu: config.apcu_autoloader,
                 apcu_prefix: config.apcu_autoloader_prefix.clone(),
                 strict_psr: false,
-                platform_check: crate::autoload::PlatformCheckMode::Full,
+                platform_check: mozart_autoload::autoload::PlatformCheckMode::Full,
                 ignore_platform_reqs: config.ignore_platform_reqs,
             })?;
 
@@ -499,7 +499,7 @@ pub fn install_from_lock(
 pub fn execute(
     args: &InstallArgs,
     cli: &super::Cli,
-    console: &crate::console::Console,
+    console: &mozart_core::console::Console,
 ) -> anyhow::Result<()> {
     // Step 1: Resolve the working directory
     let working_dir = resolve_working_dir(cli);
@@ -507,8 +507,8 @@ pub fn execute(
     // Step 2: Validate arguments
     if !args.packages.is_empty() {
         let pkgs = args.packages.join(" ");
-        return Err(crate::exit_code::bail(
-            crate::exit_code::GENERAL_ERROR,
+        return Err(mozart_core::exit_code::bail(
+            mozart_core::exit_code::GENERAL_ERROR,
             format!(
                 "Invalid argument {pkgs}. Use \"mozart require {pkgs}\" instead to add packages to your composer.json."
             ),
@@ -516,8 +516,8 @@ pub fn execute(
     }
 
     if args.no_install {
-        return Err(crate::exit_code::bail(
-            crate::exit_code::GENERAL_ERROR,
+        return Err(mozart_core::exit_code::bail(
+            mozart_core::exit_code::GENERAL_ERROR,
             "Invalid option \"--no-install\". Use \"mozart update --no-install\" instead if you are trying to update the composer.lock file.",
         ));
     }
@@ -537,8 +537,8 @@ pub fn execute(
     // Step 3: Read composer.lock
     let lock_path = working_dir.join("composer.lock");
     if !lock_path.exists() {
-        return Err(crate::exit_code::bail(
-            crate::exit_code::LOCK_FILE_INVALID,
+        return Err(mozart_core::exit_code::bail(
+            mozart_core::exit_code::LOCK_FILE_INVALID,
             "No composer.lock file present. Run \"mozart update\" to generate one.",
         ));
     }

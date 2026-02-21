@@ -85,9 +85,9 @@ impl Drop for PackageMeta {
 pub fn execute(
     args: &ArchiveArgs,
     cli: &super::Cli,
-    console: &crate::console::Console,
+    console: &mozart_core::console::Console,
 ) -> anyhow::Result<()> {
-    use crate::archiver::{
+    use mozart_archiver::{
         ArchiveFormat, collect_archivable_files, create_archive, generate_archive_filename,
         parse_composer_excludes, parse_gitattributes, parse_gitignore_pattern,
         self_exclusion_patterns,
@@ -154,7 +154,7 @@ pub fn execute(
         if !composer_json_path.exists() {
             anyhow::bail!("No composer.json found in {}", working_dir.display());
         }
-        let root = crate::package::read_from_file(&composer_json_path)?;
+        let root = mozart_core::package::read_from_file(&composer_json_path)?;
         let (archive_name, archive_excludes) = read_archive_config(&composer_json_path)?;
         let version = root
             .extra_fields
@@ -243,11 +243,11 @@ fn resolve_remote_package(
     package_name: &str,
     version_constraint: Option<&str>,
 ) -> anyhow::Result<PackageMeta> {
-    use crate::package::Stability;
-    use crate::version::find_best_candidate;
+    use mozart_core::package::Stability;
+    use mozart_registry::version::find_best_candidate;
 
     // Fetch versions from Packagist
-    let versions = crate::packagist::fetch_package_versions(package_name, None)?;
+    let versions = mozart_registry::packagist::fetch_package_versions(package_name, None)?;
     if versions.is_empty() {
         anyhow::bail!("No versions found for package \"{}\"", package_name);
     }
@@ -292,11 +292,12 @@ fn resolve_remote_package(
     let temp_dir = temp_base.join(&unique);
     std::fs::create_dir_all(&temp_dir)?;
 
-    let bytes = crate::downloader::download_dist(&dist.url, dist.shasum.as_deref(), None, None)?;
+    let bytes =
+        mozart_registry::downloader::download_dist(&dist.url, dist.shasum.as_deref(), None, None)?;
 
     match dist.dist_type.as_str() {
-        "zip" => crate::downloader::extract_zip(&bytes, &temp_dir)?,
-        "tar" | "tar.gz" | "tgz" => crate::downloader::extract_tar_gz(&bytes, &temp_dir)?,
+        "zip" => mozart_registry::downloader::extract_zip(&bytes, &temp_dir)?,
+        "tar" | "tar.gz" | "tgz" => mozart_registry::downloader::extract_tar_gz(&bytes, &temp_dir)?,
         other => {
             let _ = std::fs::remove_dir_all(&temp_dir);
             anyhow::bail!("Unsupported dist type: {}", other);

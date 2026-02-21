@@ -2,7 +2,7 @@ use clap::Args;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use crate::packagist::SecurityAdvisory;
+use mozart_registry::packagist::SecurityAdvisory;
 
 #[derive(Args)]
 pub struct AuditArgs {
@@ -73,7 +73,7 @@ struct AuditResult {
 pub fn execute(
     args: &AuditArgs,
     cli: &super::Cli,
-    _console: &crate::console::Console,
+    _console: &mozart_core::console::Console,
 ) -> anyhow::Result<()> {
     // Validate format
     let format = args.format.as_str();
@@ -111,7 +111,7 @@ pub fn execute(
 
     // Fetch advisories
     let names: Vec<&str> = packages.iter().map(|p| p.name.as_str()).collect();
-    let all_advisories = match crate::packagist::fetch_security_advisories(&names) {
+    let all_advisories = match mozart_registry::packagist::fetch_security_advisories(&names) {
         Ok(a) => a,
         Err(e) => {
             if args.ignore_unreachable {
@@ -186,7 +186,7 @@ fn load_packages(
 
 fn load_installed_packages(working_dir: &Path, no_dev: bool) -> anyhow::Result<Vec<PackageEntry>> {
     let vendor_dir = working_dir.join("vendor");
-    let installed = crate::installed::InstalledPackages::read(&vendor_dir)?;
+    let installed = mozart_registry::installed::InstalledPackages::read(&vendor_dir)?;
 
     let dev_names: std::collections::HashSet<String> = installed
         .dev_package_names
@@ -225,9 +225,10 @@ fn load_locked_packages(working_dir: &Path, no_dev: bool) -> anyhow::Result<Vec<
         );
     }
 
-    let lock = crate::lockfile::LockFile::read_from_file(&lock_path)?;
+    let lock = mozart_registry::lockfile::LockFile::read_from_file(&lock_path)?;
 
-    let mut all_packages: Vec<&crate::lockfile::LockedPackage> = lock.packages.iter().collect();
+    let mut all_packages: Vec<&mozart_registry::lockfile::LockedPackage> =
+        lock.packages.iter().collect();
 
     if !no_dev && let Some(ref pkgs_dev) = lock.packages_dev {
         all_packages.extend(pkgs_dev.iter());
@@ -272,7 +273,7 @@ fn filter_advisories(
             .as_deref()
             .unwrap_or(pkg.version.as_str());
 
-        let installed_ver = match crate::constraint::Version::parse(version_str) {
+        let installed_ver = match mozart_constraint::Version::parse(version_str) {
             Ok(v) => v,
             Err(_) => {
                 eprintln!(
@@ -297,7 +298,7 @@ fn filter_advisories(
             // Normalize single-pipe OR separators (`|`) to double-pipe (`||`)
             // since the Packagist API may use either form.
             let normalized_constraint = normalize_or_separator(&advisory.affected_versions);
-            let constraint = match crate::constraint::VersionConstraint::parse(
+            let constraint = match mozart_constraint::VersionConstraint::parse(
                 &normalized_constraint,
             ) {
                 Ok(c) => c,
@@ -391,7 +392,7 @@ fn render_table(result: &AuditResult) {
     if result.total_advisory_count == 0 && result.abandoned.is_empty() {
         println!(
             "{}",
-            crate::console::info("No security vulnerability advisories found.")
+            mozart_core::console::info("No security vulnerability advisories found.")
         );
         return;
     }
@@ -406,7 +407,7 @@ fn render_table(result: &AuditResult) {
             "Found {} security vulnerability {} affecting {} package(s):",
             result.total_advisory_count, advisory_word, result.affected_package_count
         );
-        println!("{}", crate::console::highlight(&header));
+        println!("{}", mozart_core::console::highlight(&header));
         println!();
 
         for advisories in result.advisories.values() {
@@ -456,7 +457,7 @@ fn render_table(result: &AuditResult) {
 
     if !result.abandoned.is_empty() {
         let header = format!("Found {} abandoned package(s):", result.abandoned.len());
-        println!("{}", crate::console::highlight(&header));
+        println!("{}", mozart_core::console::highlight(&header));
         println!();
 
         let label_width = 20usize;
@@ -605,7 +606,7 @@ fn render_summary(result: &AuditResult) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::packagist::{AdvisorySource, SecurityAdvisory};
+    use mozart_registry::packagist::{AdvisorySource, SecurityAdvisory};
     use std::collections::BTreeMap;
 
     fn make_advisory(
@@ -782,8 +783,8 @@ mod tests {
         let working_dir = dir.path();
         let vendor_dir = working_dir.join("vendor");
 
-        let mut installed = crate::installed::InstalledPackages::new();
-        installed.upsert(crate::installed::InstalledPackageEntry {
+        let mut installed = mozart_registry::installed::InstalledPackages::new();
+        installed.upsert(mozart_registry::installed::InstalledPackageEntry {
             name: "monolog/monolog".to_string(),
             version: "1.5.0".to_string(),
             version_normalized: Some("1.5.0.0".to_string()),
@@ -811,8 +812,8 @@ mod tests {
         let working_dir = dir.path();
         let vendor_dir = working_dir.join("vendor");
 
-        let mut installed = crate::installed::InstalledPackages::new();
-        installed.upsert(crate::installed::InstalledPackageEntry {
+        let mut installed = mozart_registry::installed::InstalledPackages::new();
+        installed.upsert(mozart_registry::installed::InstalledPackageEntry {
             name: "monolog/monolog".to_string(),
             version: "1.5.0".to_string(),
             version_normalized: None,
@@ -824,7 +825,7 @@ mod tests {
             aliases: vec![],
             extra_fields: BTreeMap::new(),
         });
-        installed.upsert(crate::installed::InstalledPackageEntry {
+        installed.upsert(mozart_registry::installed::InstalledPackageEntry {
             name: "phpunit/phpunit".to_string(),
             version: "10.0.0".to_string(),
             version_normalized: None,
@@ -848,7 +849,7 @@ mod tests {
 
     #[test]
     fn test_load_locked_packages() {
-        use crate::lockfile::{LockFile, LockedPackage};
+        use mozart_registry::lockfile::{LockFile, LockedPackage};
         use tempfile::tempdir;
 
         let dir = tempdir().unwrap();
@@ -902,7 +903,7 @@ mod tests {
 
     #[test]
     fn test_load_locked_packages_no_dev() {
-        use crate::lockfile::{LockFile, LockedPackage};
+        use mozart_registry::lockfile::{LockFile, LockedPackage};
         use tempfile::tempdir;
 
         let dir = tempdir().unwrap();

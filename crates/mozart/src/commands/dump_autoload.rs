@@ -51,7 +51,7 @@ pub struct DumpAutoloadArgs {
 pub fn execute(
     args: &DumpAutoloadArgs,
     cli: &super::Cli,
-    console: &crate::console::Console,
+    console: &mozart_core::console::Console,
 ) -> anyhow::Result<()> {
     let working_dir = match &cli.working_dir {
         Some(dir) => PathBuf::from(dir),
@@ -62,14 +62,14 @@ pub fn execute(
     let dev_mode = !args.no_dev;
 
     // Determine suffix: read from existing autoload.php, or from lock file, or generate
-    let suffix = crate::autoload::determine_suffix(&working_dir, &vendor_dir)?;
+    let suffix = mozart_autoload::autoload::determine_suffix(&working_dir, &vendor_dir)?;
 
     if args.dry_run {
         console.info("Dry run: would generate autoload files");
         return Ok(());
     }
 
-    crate::autoload::generate(&crate::autoload::AutoloadConfig {
+    mozart_autoload::autoload::generate(&mozart_autoload::autoload::AutoloadConfig {
         project_dir: working_dir,
         vendor_dir,
         dev_mode,
@@ -79,7 +79,7 @@ pub fn execute(
         apcu: args.apcu,
         apcu_prefix: args.apcu_prefix.clone(),
         strict_psr: args.strict_psr,
-        platform_check: crate::autoload::PlatformCheckMode::Full,
+        platform_check: mozart_autoload::autoload::PlatformCheckMode::Full,
         ignore_platform_reqs: args.ignore_platform_reqs,
     })?;
 

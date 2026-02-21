@@ -514,7 +514,7 @@ fn write_json_file(path: &Path, value: &serde_json::Value) -> anyhow::Result<()>
     {
         std::fs::create_dir_all(parent)?;
     }
-    crate::package::write_to_file(value, path)?;
+    mozart_core::package::write_to_file(value, path)?;
     Ok(())
 }
 
@@ -606,7 +606,7 @@ fn render_value(v: &serde_json::Value) -> String {
 pub fn execute(
     args: &ConfigArgs,
     cli: &super::Cli,
-    _console: &crate::console::Console,
+    _console: &mozart_core::console::Console,
 ) -> anyhow::Result<()> {
     // 1. Handle --editor mode
     if args.editor {
@@ -1025,7 +1025,7 @@ fn execute_read(
         None => {
             eprintln!(
                 "{}",
-                crate::console::error(
+                mozart_core::console::error(
                     "No command specified. Use --list to show all config values, \
                      or provide a setting key."
                 )

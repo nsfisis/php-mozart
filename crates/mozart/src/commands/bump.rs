@@ -25,7 +25,7 @@ pub struct BumpArgs {
 pub fn execute(
     args: &BumpArgs,
     cli: &super::Cli,
-    console: &crate::console::Console,
+    console: &mozart_core::console::Console,
 ) -> anyhow::Result<()> {
     let working_dir = match &cli.working_dir {
         Some(dir) => PathBuf::from(dir),
@@ -44,7 +44,8 @@ pub fn execute(
     let composer_json_content = std::fs::read_to_string(&composer_json_path)?;
 
     // Parse composer.json
-    let mut root: crate::package::RawPackageData = serde_json::from_str(&composer_json_content)?;
+    let mut root: mozart_core::package::RawPackageData =
+        serde_json::from_str(&composer_json_content)?;
 
     // Warn if package is not a project (libraries shouldn't bump)
     if let Some(ref pkg_type) = root.package_type
@@ -52,7 +53,7 @@ pub fn execute(
     {
         console.info(&format!(
             "{}",
-            crate::console::warning(&format!(
+            mozart_core::console::warning(&format!(
                 "Warning: Bumping constraints for a non-project package (type=\"{pkg_type}\"). \
                  Libraries should not pin their dependencies."
             ))
@@ -65,12 +66,12 @@ pub fn execute(
     }
 
     // Read and parse lock file
-    let lock = crate::lockfile::LockFile::read_from_file(&lock_path)?;
+    let lock = mozart_registry::lockfile::LockFile::read_from_file(&lock_path)?;
 
     // Check lock file freshness
     if !lock.is_fresh(&composer_json_content) {
-        return Err(crate::exit_code::bail(
-            crate::exit_code::LOCK_FILE_INVALID,
+        return Err(mozart_core::exit_code::bail(
+            mozart_core::exit_code::LOCK_FILE_INVALID,
             "composer.lock is not up to date with composer.json. \
              Run `mozart install` or `mozart update` to refresh it.",
         ));
@@ -107,7 +108,7 @@ pub fn execute(
             }
             if let Some((pretty_version, version_normalized)) =
                 locked_versions.get(&pkg_name.to_lowercase())
-                && let Some(new_constraint) = crate::version_bumper::bump_requirement(
+                && let Some(new_constraint) = mozart_core::version_bumper::bump_requirement(
                     constraint,
                     pretty_version,
                     version_normalized.as_deref(),
@@ -131,7 +132,7 @@ pub fn execute(
             }
             if let Some((pretty_version, version_normalized)) =
                 locked_versions.get(&pkg_name.to_lowercase())
-                && let Some(new_constraint) = crate::version_bumper::bump_requirement(
+                && let Some(new_constraint) = mozart_core::version_bumper::bump_requirement(
                     constraint,
                     pretty_version,
                     version_normalized.as_deref(),
@@ -154,16 +155,16 @@ pub fn execute(
         if args.dry_run {
             println!(
                 "{}: {} → {}",
-                crate::console::info(name),
+                mozart_core::console::info(name),
                 old,
-                crate::console::comment(new)
+                mozart_core::console::comment(new)
             );
         } else {
             println!(
                 "Bumping {} from {} to {}",
-                crate::console::info(name),
+                mozart_core::console::info(name),
                 old,
-                crate::console::comment(new)
+                mozart_core::console::comment(new)
             );
         }
     }
@@ -182,18 +183,19 @@ pub fn execute(
     }
 
     // Write updated composer.json
-    crate::package::write_to_file(&root, &composer_json_path)?;
+    mozart_core::package::write_to_file(&root, &composer_json_path)?;
 
     // Update the lock file content-hash to match the new composer.json
     let new_composer_json_content = std::fs::read_to_string(&composer_json_path)?;
-    let new_hash = crate::lockfile::LockFile::compute_content_hash(&new_composer_json_content)?;
+    let new_hash =
+        mozart_registry::lockfile::LockFile::compute_content_hash(&new_composer_json_content)?;
     let mut updated_lock = lock;
     updated_lock.content_hash = new_hash;
     updated_lock.write_to_file(&lock_path)?;
 
     println!(
         "\n{}",
-        crate::console::info(&format!(
+        mozart_core::console::info(&format!(
             "{} constraint(s) bumped successfully.",
             total_changes
         ))
@@ -206,7 +208,7 @@ pub fn execute(
 
 /// Build a map of lowercase package names to (pretty_version, version_normalized) from composer.lock.
 fn build_locked_versions_map(
-    lock: &crate::lockfile::LockFile,
+    lock: &mozart_registry::lockfile::LockFile,
 ) -> HashMap<String, (String, Option<String>)> {
     let mut map: HashMap<String, (String, Option<String>)> = HashMap::new();
 
@@ -242,7 +244,7 @@ fn is_platform_package(name: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::lockfile::{LockFile, LockedPackage};
+    use mozart_registry::lockfile::{LockFile, LockedPackage};
     use std::collections::BTreeMap;
     use tempfile::tempdir;
 
@@ -344,9 +346,9 @@ mod tests {
             dry_run: false,
         };
         let cli = make_cli(dir.path());
-        let console = crate::console::Console {
+        let console = mozart_core::console::Console {
             interactive: false,
-            verbosity: crate::console::Verbosity::Normal,
+            verbosity: mozart_core::console::Verbosity::Normal,
             decorated: false,
         };
         execute(&args, &cli, &console).unwrap();
@@ -380,9 +382,9 @@ mod tests {
             dry_run: true,
         };
         let cli = make_cli(dir.path());
-        let console = crate::console::Console {
+        let console = mozart_core::console::Console {
             interactive: false,
-            verbosity: crate::console::Verbosity::Normal,
+            verbosity: mozart_core::console::Verbosity::Normal,
             decorated: false,
         };
         execute(&args, &cli, &console).unwrap();
@@ -417,9 +419,9 @@ mod tests {
             dry_run: false,
         };
         let cli = make_cli(dir.path());
-        let console = crate::console::Console {
+        let console = mozart_core::console::Console {
             interactive: false,
-            verbosity: crate::console::Verbosity::Normal,
+            verbosity: mozart_core::console::Verbosity::Normal,
             decorated: false,
         };
         execute(&args, &cli, &console).unwrap();
@@ -460,9 +462,9 @@ mod tests {
             dry_run: false,
         };
         let cli = make_cli(dir.path());
-        let console = crate::console::Console {
+        let console = mozart_core::console::Console {
             interactive: false,
-            verbosity: crate::console::Verbosity::Normal,
+            verbosity: mozart_core::console::Verbosity::Normal,
             decorated: false,
         };
         execute(&args, &cli, &console).unwrap();
@@ -505,9 +507,9 @@ mod tests {
             dry_run: false,
         };
         let cli = make_cli(dir.path());
-        let console = crate::console::Console {
+        let console = mozart_core::console::Console {
             interactive: false,
-            verbosity: crate::console::Verbosity::Normal,
+            verbosity: mozart_core::console::Verbosity::Normal,
             decorated: false,
         };
         execute(&args, &cli, &console).unwrap();
@@ -589,9 +591,9 @@ mod tests {
             dry_run: false,
         };
         let cli = make_cli(dir.path());
-        let console = crate::console::Console {
+        let console = mozart_core::console::Console {
             interactive: false,
-            verbosity: crate::console::Verbosity::Normal,
+            verbosity: mozart_core::console::Verbosity::Normal,
             decorated: false,
         };
         execute(&args, &cli, &console).unwrap();
@@ -636,9 +638,9 @@ mod tests {
             dry_run: false,
         };
         let cli = make_cli(dir.path());
-        let console = crate::console::Console {
+        let console = mozart_core::console::Console {
             interactive: false,
-            verbosity: crate::console::Verbosity::Normal,
+            verbosity: mozart_core::console::Verbosity::Normal,
             decorated: false,
         };
         execute(&args, &cli, &console).unwrap();

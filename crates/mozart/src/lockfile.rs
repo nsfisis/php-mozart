@@ -1,7 +1,7 @@
-use crate::cache::Cache;
-use crate::package::{RawPackageData, to_json_pretty};
-use crate::packagist::{self, PackagistDist, PackagistSource, PackagistVersion};
-use crate::resolver::ResolvedPackage;
+use mozart_registry::cache::Cache;
+use mozart_core::package::{RawPackageData, to_json_pretty};
+use mozart_registry::packagist::{self, PackagistDist, PackagistSource, PackagistVersion};
+use mozart_registry::resolver::ResolvedPackage;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::fs;
@@ -613,13 +613,13 @@ mod tests {
             replace: BTreeMap::new(),
             provide: BTreeMap::new(),
             conflict: BTreeMap::new(),
-            dist: Some(crate::packagist::PackagistDist {
+            dist: Some(mozart_registry::packagist::PackagistDist {
                 dist_type: "zip".to_string(),
                 url: format!("https://example.com/{version}.zip"),
                 reference: Some("deadbeef".to_string()),
                 shasum: Some("abc123".to_string()),
             }),
-            source: Some(crate::packagist::PackagistSource {
+            source: Some(mozart_registry::packagist::PackagistSource {
                 source_type: "git".to_string(),
                 url: "https://github.com/example/pkg.git".to_string(),
                 reference: Some("deadbeef".to_string()),
@@ -1012,9 +1012,9 @@ mod tests {
     #[test]
     #[ignore]
     fn test_generate_lock_file_monolog() {
-        use crate::package::Stability;
-        use crate::resolver::PlatformConfig;
-        use crate::resolver::{ResolveRequest, resolve};
+        use mozart_core::package::Stability;
+        use mozart_registry::resolver::PlatformConfig;
+        use mozart_registry::resolver::{ResolveRequest, resolve};
 
         // Resolve monolog/monolog ^3.0
         let resolve_request = ResolveRequest {

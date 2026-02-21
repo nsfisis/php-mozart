@@ -1,9 +1,9 @@
-use crate::console;
-use crate::package::{self, RawAuthor, RawAutoload, RawPackageData, RawRepository};
-use crate::validation;
 use anyhow::{Context, bail};
 use clap::Args;
 use colored::Colorize;
+use mozart_core::console;
+use mozart_core::package::{self, RawAuthor, RawAutoload, RawPackageData, RawRepository};
+use mozart_core::validation;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -211,7 +211,7 @@ fn build_interactive(
     let name = console.ask_validated(
         &format!(
             "Package name (<vendor>/<name>) [{}]",
-            crate::console::comment(&default_name),
+            mozart_core::console::comment(&default_name),
         ),
         &default_name,
         |val| {
@@ -229,7 +229,10 @@ fn build_interactive(
     // Description
     let default_desc = args.description.clone().unwrap_or_default();
     let description = console.ask(
-        &format!("Description [{}]", crate::console::comment(&default_desc)),
+        &format!(
+            "Description [{}]",
+            mozart_core::console::comment(&default_desc)
+        ),
         &default_desc,
     );
     let description = if description.is_empty() {
@@ -248,7 +251,7 @@ fn build_interactive(
         &format!(
             "Author [{}n to skip]",
             if !default_author.is_empty() {
-                format!("{}, ", crate::console::comment(&default_author))
+                format!("{}, ", mozart_core::console::comment(&default_author))
             } else {
                 String::new()
             }
@@ -272,7 +275,7 @@ fn build_interactive(
     let stability_input = console.ask(
         &format!(
             "Minimum Stability [{}]",
-            crate::console::comment(&default_stability),
+            mozart_core::console::comment(&default_stability),
         ),
         &default_stability,
     );
@@ -292,7 +295,7 @@ fn build_interactive(
     let type_input = console.ask(
         &format!(
             "Package Type (e.g. library, project, metapackage, composer-plugin) [{}]",
-            crate::console::comment(&default_type),
+            mozart_core::console::comment(&default_type),
         ),
         &default_type,
     );
@@ -305,7 +308,10 @@ fn build_interactive(
     // License
     let default_license = args.license.clone().unwrap_or_default();
     let license_input = console.ask(
-        &format!("License [{}]", crate::console::comment(&default_license),),
+        &format!(
+            "License [{}]",
+            mozart_core::console::comment(&default_license),
+        ),
         &default_license,
     );
     let license = if license_input.is_empty() {
@@ -319,7 +325,7 @@ fn build_interactive(
     console.info("");
     console.info(&format!(
         "{}",
-        crate::console::info("Define your dependencies.")
+        mozart_core::console::info("Define your dependencies.")
     ));
     console.info("");
     let require = parse_requirements(&args.require)?;
@@ -335,7 +341,7 @@ fn build_interactive(
         &format!(
             "Add PSR-4 autoload mapping? Maps namespace \"{}\" to the entered relative path. [{}, n to skip]",
             namespace,
-            crate::console::comment(&default_autoload),
+            mozart_core::console::comment(&default_autoload),
         ),
         &default_autoload,
     );

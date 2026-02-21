@@ -974,9 +974,9 @@ mod tests {
             no_ansi: false,
         };
 
-        let console = crate::console::Console {
+        let console = mozart_core::console::Console {
             interactive: false,
-            verbosity: crate::console::Verbosity::Normal,
+            verbosity: mozart_core::console::Verbosity::Normal,
             decorated: false,
         };
         execute(&args, &cli, &console).unwrap();
@@ -1043,9 +1043,9 @@ mod tests {
             no_ansi: false,
         };
 
-        let console = crate::console::Console {
+        let console = mozart_core::console::Console {
             interactive: false,
-            verbosity: crate::console::Verbosity::Normal,
+            verbosity: mozart_core::console::Verbosity::Normal,
             decorated: false,
         };
         execute(&args, &cli, &console).unwrap();
@@ -1098,9 +1098,9 @@ mod tests {
             no_ansi: false,
         };
 
-        let console = crate::console::Console {
+        let console = mozart_core::console::Console {
             interactive: false,
-            verbosity: crate::console::Verbosity::Normal,
+            verbosity: mozart_core::console::Verbosity::Normal,
             decorated: false,
         };
         execute(&args, &cli, &console).unwrap();
@@ -1152,9 +1152,9 @@ mod tests {
             no_ansi: false,
         };
 
-        let console = crate::console::Console {
+        let console = mozart_core::console::Console {
             interactive: false,
-            verbosity: crate::console::Verbosity::Normal,
+            verbosity: mozart_core::console::Verbosity::Normal,
             decorated: false,
         };
         execute(&args, &cli, &console).unwrap();
@@ -1210,9 +1210,9 @@ mod tests {
             no_ansi: false,
         };
 
-        let console = crate::console::Console {
+        let console = mozart_core::console::Console {
             interactive: false,
-            verbosity: crate::console::Verbosity::Normal,
+            verbosity: mozart_core::console::Verbosity::Normal,
             decorated: false,
         };
         execute(&args, &cli, &console).unwrap();
@@ -1280,9 +1280,9 @@ mod tests {
             no_ansi: false,
         };
 
-        let console = crate::console::Console {
+        let console = mozart_core::console::Console {
             interactive: false,
-            verbosity: crate::console::Verbosity::Normal,
+            verbosity: mozart_core::console::Verbosity::Normal,
             decorated: false,
         };
         execute(&args, &cli, &console).unwrap();
@@ -1351,9 +1351,9 @@ mod tests {
             no_ansi: false,
         };
 
-        let console = crate::console::Console {
+        let console = mozart_core::console::Console {
             interactive: false,
-            verbosity: crate::console::Verbosity::Normal,
+            verbosity: mozart_core::console::Verbosity::Normal,
             decorated: false,
         };
         execute(&args, &cli, &console).unwrap();
@@ -1418,9 +1418,9 @@ mod tests {
             no_ansi: false,
         };
 
-        let console = crate::console::Console {
+        let console = mozart_core::console::Console {
             interactive: false,
-            verbosity: crate::console::Verbosity::Normal,
+            verbosity: mozart_core::console::Verbosity::Normal,
             decorated: false,
         };
         let result = execute(&args, &cli, &console);

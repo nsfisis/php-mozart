@@ -1,5 +1,5 @@
-use crate::package::Stability;
-use crate::packagist::PackagistVersion;
+use mozart_core::package::Stability;
+use mozart_registry::packagist::PackagistVersion;
 use std::cmp::Ordering;
 
 /// Determine the stability of a normalized version string.

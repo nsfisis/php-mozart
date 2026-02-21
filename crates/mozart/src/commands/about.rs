@@ -1,5 +1,5 @@
-use crate::console;
 use clap::Args;
+use mozart_core::console;
 
 #[derive(Args)]
 pub struct AboutArgs {}

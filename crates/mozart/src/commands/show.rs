@@ -102,7 +102,7 @@ pub struct ShowArgs {
 pub fn execute(
     args: &ShowArgs,
     cli: &super::Cli,
-    _console: &crate::console::Console,
+    _console: &mozart_core::console::Console,
 ) -> anyhow::Result<()> {
     let working_dir = match &cli.working_dir {
         Some(dir) => PathBuf::from(dir),
@@ -142,17 +142,17 @@ pub fn execute(
 
 fn execute_installed(args: &ShowArgs, working_dir: &Path) -> anyhow::Result<()> {
     let vendor_dir = working_dir.join("vendor");
-    let installed = crate::installed::InstalledPackages::read(&vendor_dir)?;
+    let installed = mozart_registry::installed::InstalledPackages::read(&vendor_dir)?;
 
     if installed.packages.is_empty() {
         // Warn if composer.json has requirements but nothing is installed
         let composer_json_path = working_dir.join("composer.json");
         if composer_json_path.exists() {
-            let root = crate::package::read_from_file(&composer_json_path)?;
+            let root = mozart_core::package::read_from_file(&composer_json_path)?;
             if !root.require.is_empty() || !root.require_dev.is_empty() {
                 eprintln!(
                     "{}",
-                    crate::console::warning(
+                    mozart_core::console::warning(
                         "No dependencies installed. Try running mozart install or update."
                     )
                 );
@@ -216,11 +216,11 @@ fn execute_installed(args: &ShowArgs, working_dir: &Path) -> anyhow::Result<()> 
 }
 
 fn filter_installed_packages<'a>(
-    installed: &'a crate::installed::InstalledPackages,
+    installed: &'a mozart_registry::installed::InstalledPackages,
     args: &ShowArgs,
     working_dir: &Path,
-) -> anyhow::Result<Vec<&'a crate::installed::InstalledPackageEntry>> {
-    let mut packages: Vec<&crate::installed::InstalledPackageEntry> =
+) -> anyhow::Result<Vec<&'a mozart_registry::installed::InstalledPackageEntry>> {
+    let mut packages: Vec<&mozart_registry::installed::InstalledPackageEntry> =
         installed.packages.iter().collect();
 
     // --no-dev: exclude dev packages
@@ -237,7 +237,7 @@ fn filter_installed_packages<'a>(
     if args.direct {
         let composer_json_path = working_dir.join("composer.json");
         if composer_json_path.exists() {
-            let root = crate::package::read_from_file(&composer_json_path)?;
+            let root = mozart_core::package::read_from_file(&composer_json_path)?;
             let mut direct_names: HashSet<String> =
                 root.require.keys().map(|k| k.to_lowercase()).collect();
             if !args.no_dev {
@@ -254,7 +254,7 @@ fn filter_installed_packages<'a>(
 }
 
 fn show_installed_package_list(
-    packages: &[&crate::installed::InstalledPackageEntry],
+    packages: &[&mozart_registry::installed::InstalledPackageEntry],
     args: &ShowArgs,
     _vendor_dir: &Path,
 ) -> anyhow::Result<()> {
@@ -297,7 +297,7 @@ fn show_installed_package_list(
         // --outdated: skip packages that are up-to-date
         if args.outdated {
             if let Some(ref li) = latest_info {
-                use crate::version::compare_normalized_versions;
+                use mozart_registry::version::compare_normalized_versions;
                 use std::cmp::Ordering;
                 if compare_normalized_versions(&li.version_normalized, &version_normalized)
                     != Ordering::Greater
@@ -362,20 +362,24 @@ fn show_installed_package_list(
             .map(|li| classify_update_category(&entry.version_normalized, &li.version_normalized));
 
         let name_str = match category {
-            Some(ListUpdateKind::Compatible) => {
-                crate::console::highlight(&format!("{:<width$}", entry.name, width = name_width))
-                    .to_string()
-            }
-            Some(ListUpdateKind::Incompatible) => {
-                crate::console::comment(&format!("{:<width$}", entry.name, width = name_width))
-                    .to_string()
-            }
-            _ => crate::console::info(&format!("{:<width$}", entry.name, width = name_width))
+            Some(ListUpdateKind::Compatible) => mozart_core::console::highlight(&format!(
+                "{:<width$}",
+                entry.name,
+                width = name_width
+            ))
+            .to_string(),
+            Some(ListUpdateKind::Incompatible) => mozart_core::console::comment(&format!(
+                "{:<width$}",
+                entry.name,
+                width = name_width
+            ))
+            .to_string(),
+            _ => mozart_core::console::info(&format!("{:<width$}", entry.name, width = name_width))
                 .to_string(),
         };
 
         let version_str =
-            crate::console::comment(&format!("{:<width$}", version, width = version_width))
+            mozart_core::console::comment(&format!("{:<width$}", version, width = version_width))
                 .to_string();
 
         if show_latest {
@@ -383,20 +387,20 @@ fn show_installed_package_list(
                 Some(li) => {
                     let lv = format_version(&li.version);
                     match category {
-                        Some(ListUpdateKind::Compatible) => crate::console::highlight(&format!(
+                        Some(ListUpdateKind::Compatible) => mozart_core::console::highlight(
+                            &format!("{:<width$}", lv, width = latest_width),
+                        )
+                        .to_string(),
+                        Some(ListUpdateKind::Incompatible) => mozart_core::console::comment(
+                            &format!("{:<width$}", lv, width = latest_width),
+                        )
+                        .to_string(),
+                        _ => mozart_core::console::info(&format!(
                             "{:<width$}",
                             lv,
                             width = latest_width
                         ))
                         .to_string(),
-                        Some(ListUpdateKind::Incompatible) => crate::console::comment(&format!(
-                            "{:<width$}",
-                            lv,
-                            width = latest_width
-                        ))
-                        .to_string(),
-                        _ => crate::console::info(&format!("{:<width$}", lv, width = latest_width))
-                            .to_string(),
                     }
                 }
                 None => format!("{:<width$}", "", width = latest_width),
@@ -439,7 +443,7 @@ enum ListUpdateKind {
 }
 
 fn classify_update_category(current_normalized: &str, latest_normalized: &str) -> ListUpdateKind {
-    use crate::version::compare_normalized_versions;
+    use mozart_registry::version::compare_normalized_versions;
     use std::cmp::Ordering;
 
     if compare_normalized_versions(latest_normalized, current_normalized) != Ordering::Greater {
@@ -469,10 +473,10 @@ fn extract_major(version_normalized: &str) -> u64 {
 }
 
 fn fetch_latest_for_package(name: &str) -> anyhow::Result<LatestInfo> {
-    use crate::package::Stability;
-    use crate::version::find_best_candidate;
+    use mozart_core::package::Stability;
+    use mozart_registry::version::find_best_candidate;
 
-    let versions = crate::packagist::fetch_package_versions(name, None)?;
+    let versions = mozart_registry::packagist::fetch_package_versions(name, None)?;
     let best = find_best_candidate(&versions, Stability::Stable)
         .ok_or_else(|| anyhow::anyhow!("No stable version found for {name}"))?;
 
@@ -513,7 +517,7 @@ fn render_installed_json(entries: &[InstalledListEntry]) -> anyhow::Result<()> {
 }
 
 fn show_installed_package_detail(
-    installed: &crate::installed::InstalledPackages,
+    installed: &mozart_registry::installed::InstalledPackages,
     package_name: &str,
     working_dir: &Path,
 ) -> anyhow::Result<()> {
@@ -535,36 +539,36 @@ fn show_installed_package_detail(
 
     let vendor_dir = working_dir.join("vendor");
 
-    println!("{} : {}", crate::console::info("name"), pkg.name);
+    println!("{} : {}", mozart_core::console::info("name"), pkg.name);
     println!(
         "{} : {}",
-        crate::console::info("descrip."),
+        mozart_core::console::info("descrip."),
         get_installed_description(pkg)
     );
     println!(
         "{} : {}",
-        crate::console::info("keywords"),
+        mozart_core::console::info("keywords"),
         get_installed_keywords(pkg)
     );
     println!(
         "{} : {}",
-        crate::console::info("versions"),
+        mozart_core::console::info("versions"),
         format_version_highlight(&pkg.version)
     );
     println!(
         "{} : {}",
-        crate::console::info("type"),
+        mozart_core::console::info("type"),
         pkg.package_type.as_deref().unwrap_or("library")
     );
 
     // License
     if let Some(licenses) = get_installed_license(pkg) {
-        println!("{} : {}", crate::console::info("license"), licenses);
+        println!("{} : {}", mozart_core::console::info("license"), licenses);
     }
 
     // Homepage
     if let Some(homepage) = get_installed_homepage(pkg) {
-        println!("{} : {}", crate::console::info("homepage"), homepage);
+        println!("{} : {}", mozart_core::console::info("homepage"), homepage);
     }
 
     // Source
@@ -577,9 +581,9 @@ fn show_installed_package_detail(
             .unwrap_or("");
         println!(
             "{} : [{}] {} {}",
-            crate::console::info("source"),
+            mozart_core::console::info("source"),
             source_type,
-            crate::console::comment(source_url),
+            mozart_core::console::comment(source_url),
             source_ref
         );
     }
@@ -591,9 +595,9 @@ fn show_installed_package_detail(
         let dist_ref = dist.get("reference").and_then(|v| v.as_str()).unwrap_or("");
         println!(
             "{} : [{}] {} {}",
-            crate::console::info("dist"),
+            mozart_core::console::info("dist"),
             dist_type,
-            crate::console::comment(dist_url),
+            mozart_core::console::comment(dist_url),
             dist_ref
         );
     }
@@ -603,7 +607,7 @@ fn show_installed_package_detail(
     if install_path.exists() {
         println!(
             "{} : {}",
-            crate::console::info("path"),
+            mozart_core::console::info("path"),
             install_path.display()
         );
     }
@@ -613,10 +617,10 @@ fn show_installed_package_detail(
         && !requires.is_empty()
     {
         println!();
-        println!("{}", crate::console::info("requires"));
+        println!("{}", mozart_core::console::info("requires"));
         for (name, constraint) in requires {
             let c = constraint.as_str().unwrap_or("");
-            println!("{} {}", name, crate::console::comment(c));
+            println!("{} {}", name, mozart_core::console::comment(c));
         }
     }
 
@@ -628,10 +632,10 @@ fn show_installed_package_detail(
         && !requires_dev.is_empty()
     {
         println!();
-        println!("{}", crate::console::info("requires (dev)"));
+        println!("{}", mozart_core::console::info("requires (dev)"));
         for (name, constraint) in requires_dev {
             let c = constraint.as_str().unwrap_or("");
-            println!("{} {}", name, crate::console::comment(c));
+            println!("{} {}", name, mozart_core::console::comment(c));
         }
     }
 
@@ -648,10 +652,11 @@ fn execute_locked(args: &ShowArgs, working_dir: &Path) -> anyhow::Result<()> {
         );
     }
 
-    let lock = crate::lockfile::LockFile::read_from_file(&lock_path)?;
+    let lock = mozart_registry::lockfile::LockFile::read_from_file(&lock_path)?;
 
     // Combine packages and packages-dev
-    let mut packages: Vec<&crate::lockfile::LockedPackage> = lock.packages.iter().collect();
+    let mut packages: Vec<&mozart_registry::lockfile::LockedPackage> =
+        lock.packages.iter().collect();
 
     if let Some(ref pkgs_dev) = lock.packages_dev
         && !args.no_dev
@@ -663,7 +668,7 @@ fn execute_locked(args: &ShowArgs, working_dir: &Path) -> anyhow::Result<()> {
     if args.direct {
         let composer_json_path = working_dir.join("composer.json");
         if composer_json_path.exists() {
-            let root = crate::package::read_from_file(&composer_json_path)?;
+            let root = mozart_core::package::read_from_file(&composer_json_path)?;
             let mut direct_names: HashSet<String> =
                 root.require.keys().map(|k| k.to_lowercase()).collect();
             if !args.no_dev {
@@ -691,7 +696,7 @@ fn execute_locked(args: &ShowArgs, working_dir: &Path) -> anyhow::Result<()> {
 }
 
 fn show_locked_package_list(
-    packages: &[&crate::lockfile::LockedPackage],
+    packages: &[&mozart_registry::lockfile::LockedPackage],
     args: &ShowArgs,
 ) -> anyhow::Result<()> {
     let show_latest = args.latest || args.outdated;
@@ -732,7 +737,7 @@ fn show_locked_package_list(
         // --outdated: skip packages that are up-to-date
         if args.outdated {
             if let Some(ref li) = latest_info {
-                use crate::version::compare_normalized_versions;
+                use mozart_registry::version::compare_normalized_versions;
                 use std::cmp::Ordering;
                 if compare_normalized_versions(&li.version_normalized, &version_normalized)
                     != Ordering::Greater
@@ -795,20 +800,24 @@ fn show_locked_package_list(
             .map(|li| classify_update_category(&entry.version_normalized, &li.version_normalized));
 
         let name_str = match category {
-            Some(ListUpdateKind::Compatible) => {
-                crate::console::highlight(&format!("{:<width$}", entry.name, width = name_width))
-                    .to_string()
-            }
-            Some(ListUpdateKind::Incompatible) => {
-                crate::console::comment(&format!("{:<width$}", entry.name, width = name_width))
-                    .to_string()
-            }
-            _ => crate::console::info(&format!("{:<width$}", entry.name, width = name_width))
+            Some(ListUpdateKind::Compatible) => mozart_core::console::highlight(&format!(
+                "{:<width$}",
+                entry.name,
+                width = name_width
+            ))
+            .to_string(),
+            Some(ListUpdateKind::Incompatible) => mozart_core::console::comment(&format!(
+                "{:<width$}",
+                entry.name,
+                width = name_width
+            ))
+            .to_string(),
+            _ => mozart_core::console::info(&format!("{:<width$}", entry.name, width = name_width))
                 .to_string(),
         };
 
         let version_str =
-            crate::console::comment(&format!("{:<width$}", version, width = version_width))
+            mozart_core::console::comment(&format!("{:<width$}", version, width = version_width))
                 .to_string();
 
         if show_latest {
@@ -816,20 +825,20 @@ fn show_locked_package_list(
                 Some(li) => {
                     let lv = format_version(&li.version);
                     match category {
-                        Some(ListUpdateKind::Compatible) => crate::console::highlight(&format!(
+                        Some(ListUpdateKind::Compatible) => mozart_core::console::highlight(
+                            &format!("{:<width$}", lv, width = latest_width),
+                        )
+                        .to_string(),
+                        Some(ListUpdateKind::Incompatible) => mozart_core::console::comment(
+                            &format!("{:<width$}", lv, width = latest_width),
+                        )
+                        .to_string(),
+                        _ => mozart_core::console::info(&format!(
                             "{:<width$}",
                             lv,
                             width = latest_width
                         ))
                         .to_string(),
-                        Some(ListUpdateKind::Incompatible) => crate::console::comment(&format!(
-                            "{:<width$}",
-                            lv,
-                            width = latest_width
-                        ))
-                        .to_string(),
-                        _ => crate::console::info(&format!("{:<width$}", lv, width = latest_width))
-                            .to_string(),
                     }
                 }
                 None => format!("{:<width$}", "", width = latest_width),
@@ -889,7 +898,7 @@ fn render_locked_json(entries: &[LockedListEntry]) -> anyhow::Result<()> {
 }
 
 fn show_locked_package_detail(
-    lock: &crate::lockfile::LockFile,
+    lock: &mozart_registry::lockfile::LockFile,
     package_name: &str,
 ) -> anyhow::Result<()> {
     // Search in both packages and packages-dev
@@ -906,10 +915,10 @@ fn show_locked_package_detail(
         }
     };
 
-    println!("{} : {}", crate::console::info("name"), pkg.name);
+    println!("{} : {}", mozart_core::console::info("name"), pkg.name);
     println!(
         "{} : {}",
-        crate::console::info("descrip."),
+        mozart_core::console::info("descrip."),
         pkg.description.as_deref().unwrap_or("")
     );
 
@@ -919,16 +928,16 @@ fn show_locked_package_detail(
         .as_ref()
         .map(|kw| kw.join(", "))
         .unwrap_or_default();
-    println!("{} : {}", crate::console::info("keywords"), keywords);
+    println!("{} : {}", mozart_core::console::info("keywords"), keywords);
 
     println!(
         "{} : * {}",
-        crate::console::info("versions"),
+        mozart_core::console::info("versions"),
         format_version(&pkg.version)
     );
     println!(
         "{} : {}",
-        crate::console::info("type"),
+        mozart_core::console::info("type"),
         pkg.package_type.as_deref().unwrap_or("library")
     );
 
@@ -936,23 +945,23 @@ fn show_locked_package_detail(
     if let Some(ref licenses) = pkg.license {
         println!(
             "{} : {}",
-            crate::console::info("license"),
+            mozart_core::console::info("license"),
             licenses.join(", ")
         );
     }
 
     // Homepage
     if let Some(ref homepage) = pkg.homepage {
-        println!("{} : {}", crate::console::info("homepage"), homepage);
+        println!("{} : {}", mozart_core::console::info("homepage"), homepage);
     }
 
     // Source
     if let Some(ref source) = pkg.source {
         println!(
             "{} : [{}] {} {}",
-            crate::console::info("source"),
+            mozart_core::console::info("source"),
             source.source_type,
-            crate::console::comment(&source.url),
+            mozart_core::console::comment(&source.url),
             source.reference.as_deref().unwrap_or("")
         );
     }
@@ -961,9 +970,9 @@ fn show_locked_package_detail(
     if let Some(ref dist) = pkg.dist {
         println!(
             "{} : [{}] {} {}",
-            crate::console::info("dist"),
+            mozart_core::console::info("dist"),
             dist.dist_type,
-            crate::console::comment(&dist.url),
+            mozart_core::console::comment(&dist.url),
             dist.reference.as_deref().unwrap_or("")
         );
     }
@@ -971,18 +980,18 @@ fn show_locked_package_detail(
     // Requires
     if !pkg.require.is_empty() {
         println!();
-        println!("{}", crate::console::info("requires"));
+        println!("{}", mozart_core::console::info("requires"));
         for (name, constraint) in &pkg.require {
-            println!("{} {}", name, crate::console::comment(constraint));
+            println!("{} {}", name, mozart_core::console::comment(constraint));
         }
     }
 
     // Requires (dev)
     if !pkg.require_dev.is_empty() {
         println!();
-        println!("{}", crate::console::info("requires (dev)"));
+        println!("{}", mozart_core::console::info("requires (dev)"));
         for (name, constraint) in &pkg.require_dev {
-            println!("{} {}", name, crate::console::comment(constraint));
+            println!("{} {}", name, mozart_core::console::comment(constraint));
         }
     }
 
@@ -991,9 +1000,9 @@ fn show_locked_package_detail(
         && !suggests.is_empty()
     {
         println!();
-        println!("{}", crate::console::info("suggests"));
+        println!("{}", mozart_core::console::info("suggests"));
         for (name, reason) in suggests {
-            println!("{} {}", name, crate::console::comment(reason));
+            println!("{} {}", name, mozart_core::console::comment(reason));
         }
     }
 
@@ -1007,46 +1016,46 @@ fn show_self(args: &ShowArgs, working_dir: &Path) -> anyhow::Result<()> {
     if !composer_json_path.exists() {
         anyhow::bail!("No composer.json found in {}", working_dir.display());
     }
-    let root = crate::package::read_from_file(&composer_json_path)?;
+    let root = mozart_core::package::read_from_file(&composer_json_path)?;
 
     if args.name_only {
         println!("{}", root.name);
         return Ok(());
     }
 
-    println!("{} : {}", crate::console::info("name"), root.name);
+    println!("{} : {}", mozart_core::console::info("name"), root.name);
     println!(
         "{} : {}",
-        crate::console::info("descrip."),
+        mozart_core::console::info("descrip."),
         root.description.as_deref().unwrap_or("")
     );
     println!(
         "{} : {}",
-        crate::console::info("type"),
+        mozart_core::console::info("type"),
         root.package_type.as_deref().unwrap_or("project")
     );
     if let Some(ref license) = root.license {
-        println!("{} : {}", crate::console::info("license"), license);
+        println!("{} : {}", mozart_core::console::info("license"), license);
     }
     if let Some(ref homepage) = root.homepage {
-        println!("{} : {}", crate::console::info("homepage"), homepage);
+        println!("{} : {}", mozart_core::console::info("homepage"), homepage);
     }
 
     // Requires
     if !root.require.is_empty() {
         println!();
-        println!("{}", crate::console::info("requires"));
+        println!("{}", mozart_core::console::info("requires"));
         for (name, constraint) in &root.require {
-            println!("{} {}", name, crate::console::comment(constraint));
+            println!("{} {}", name, mozart_core::console::comment(constraint));
         }
     }
 
     // Requires (dev)
     if !root.require_dev.is_empty() {
         println!();
-        println!("{}", crate::console::info("requires (dev)"));
+        println!("{}", mozart_core::console::info("requires (dev)"));
         for (name, constraint) in &root.require_dev {
-            println!("{} {}", name, crate::console::comment(constraint));
+            println!("{} {}", name, mozart_core::console::comment(constraint));
         }
     }
 
@@ -1063,13 +1072,13 @@ fn show_tree(args: &ShowArgs, working_dir: &Path) -> anyhow::Result<()> {
         anyhow::bail!("No composer.json found in {}", working_dir.display());
     }
 
-    let root = crate::package::read_from_file(&composer_json_path)?;
+    let root = mozart_core::package::read_from_file(&composer_json_path)?;
 
     // Load all locked packages into a map for quick lookup
-    let pkg_map: HashMap<String, &crate::lockfile::LockedPackage>;
+    let pkg_map: HashMap<String, &mozart_registry::lockfile::LockedPackage>;
     let lock_storage;
     if lock_path.exists() {
-        lock_storage = crate::lockfile::LockFile::read_from_file(&lock_path)?;
+        lock_storage = mozart_registry::lockfile::LockFile::read_from_file(&lock_path)?;
         pkg_map = lock_storage
             .packages
             .iter()
@@ -1101,8 +1110,8 @@ fn show_tree(args: &ShowArgs, working_dir: &Path) -> anyhow::Result<()> {
     // Print root
     println!(
         "{} {}",
-        crate::console::info(&root.name),
-        crate::console::comment(root.description.as_deref().unwrap_or(""))
+        mozart_core::console::info(&root.name),
+        mozart_core::console::comment(root.description.as_deref().unwrap_or(""))
     );
 
     // Render each root dependency as a tree
@@ -1130,7 +1139,7 @@ fn show_tree(args: &ShowArgs, working_dir: &Path) -> anyhow::Result<()> {
 fn print_tree_node(
     pkg_name: &str,
     constraint: &str,
-    pkg_map: &HashMap<String, &crate::lockfile::LockedPackage>,
+    pkg_map: &HashMap<String, &mozart_registry::lockfile::LockedPackage>,
     prefix: &str,
     child_prefix: &str,
     visited: &mut HashSet<String>,
@@ -1148,8 +1157,8 @@ fn print_tree_node(
         println!(
             "{} {} {} {}",
             prefix,
-            crate::console::info(pkg_name),
-            crate::console::comment(&version),
+            mozart_core::console::info(pkg_name),
+            mozart_core::console::comment(&version),
             description
         );
 
@@ -1206,7 +1215,7 @@ fn print_tree_node(
             println!(
                 "{} {} {} (not installed)",
                 prefix,
-                crate::console::comment(pkg_name),
+                mozart_core::console::comment(pkg_name),
                 constraint
             );
         }
@@ -1233,12 +1242,12 @@ fn show_platform(args: &ShowArgs, working_dir: &Path) -> anyhow::Result<()> {
     let mut platform_packages: Vec<(String, String, String)> = Vec::new(); // (name, version, source)
 
     // Try to detect PHP from the system
-    let php_version = crate::platform::detect_php_version();
+    let php_version = mozart_core::platform::detect_php_version();
 
     // Load platform requirements from lock file if available
     let lock_path = working_dir.join("composer.lock");
     if lock_path.exists() {
-        let lock = crate::lockfile::LockFile::read_from_file(&lock_path)?;
+        let lock = mozart_registry::lockfile::LockFile::read_from_file(&lock_path)?;
 
         // Collect platform entries from lock's platform field
         if let Some(obj) = lock.platform.as_object() {
@@ -1268,7 +1277,7 @@ fn show_platform(args: &ShowArgs, working_dir: &Path) -> anyhow::Result<()> {
     }
 
     // Detect PHP extensions if PHP is available
-    let extensions = crate::platform::detect_php_extensions();
+    let extensions = mozart_core::platform::detect_php_extensions();
     for ext in &extensions {
         let ext_name = format!("ext-{ext}");
         if !platform_packages.iter().any(|(n, _, _)| *n == ext_name) {
@@ -1327,8 +1336,8 @@ fn show_platform(args: &ShowArgs, working_dir: &Path) -> anyhow::Result<()> {
     for (name, version, _source) in &platform_packages {
         println!(
             "{} {}",
-            crate::console::info(&format!("{:<width$}", name, width = name_width)),
-            crate::console::comment(&format!("{:<width$}", version, width = version_width)),
+            mozart_core::console::info(&format!("{:<width$}", name, width = name_width)),
+            mozart_core::console::comment(&format!("{:<width$}", version, width = version_width)),
         );
     }
 
@@ -1346,7 +1355,7 @@ fn show_available(args: &ShowArgs, working_dir: &Path) -> anyhow::Result<()> {
     // Otherwise, show all installed packages with their available (latest) versions
     // by querying Packagist for each installed package
     let vendor_dir = working_dir.join("vendor");
-    let installed = crate::installed::InstalledPackages::read(&vendor_dir);
+    let installed = mozart_registry::installed::InstalledPackages::read(&vendor_dir);
 
     let installed = match installed {
         Ok(i) if !i.packages.is_empty() => i,
@@ -1354,16 +1363,16 @@ fn show_available(args: &ShowArgs, working_dir: &Path) -> anyhow::Result<()> {
             // Try lock file
             let lock_path = working_dir.join("composer.lock");
             if lock_path.exists() {
-                let lock = crate::lockfile::LockFile::read_from_file(&lock_path)?;
+                let lock = mozart_registry::lockfile::LockFile::read_from_file(&lock_path)?;
                 println!(
                     "{}",
-                    crate::console::info(
+                    mozart_core::console::info(
                         "Available versions for locked packages (from Packagist):"
                     )
                 );
                 println!();
 
-                let mut all_packages: Vec<&crate::lockfile::LockedPackage> =
+                let mut all_packages: Vec<&mozart_registry::lockfile::LockedPackage> =
                     lock.packages.iter().collect();
                 if !args.no_dev
                     && let Some(ref dev_pkgs) = lock.packages_dev
@@ -1382,7 +1391,7 @@ fn show_available(args: &ShowArgs, working_dir: &Path) -> anyhow::Result<()> {
 
             eprintln!(
                 "{}",
-                crate::console::warning(
+                mozart_core::console::warning(
                     "No dependencies installed. Try running mozart install or update."
                 )
             );
@@ -1392,7 +1401,7 @@ fn show_available(args: &ShowArgs, working_dir: &Path) -> anyhow::Result<()> {
 
     println!(
         "{}",
-        crate::console::info("Available versions for installed packages (from Packagist):")
+        mozart_core::console::info("Available versions for installed packages (from Packagist):")
     );
     println!();
 
@@ -1404,7 +1413,7 @@ fn show_available(args: &ShowArgs, working_dir: &Path) -> anyhow::Result<()> {
             if is_platform_package(&pkg.name) {
                 continue;
             }
-            match crate::packagist::fetch_package_versions(&pkg.name, None) {
+            match mozart_registry::packagist::fetch_package_versions(&pkg.name, None) {
                 Ok(versions) => {
                     let version_strings: Vec<String> =
                         versions.iter().map(|v| v.version.clone()).collect();
@@ -1439,7 +1448,7 @@ fn show_available(args: &ShowArgs, working_dir: &Path) -> anyhow::Result<()> {
 }
 
 fn show_available_versions(pkg_name: &str, args: &ShowArgs) -> anyhow::Result<()> {
-    let versions = crate::packagist::fetch_package_versions(pkg_name, None)?;
+    let versions = mozart_registry::packagist::fetch_package_versions(pkg_name, None)?;
     if versions.is_empty() {
         println!("No versions found for {pkg_name}");
         return Ok(());
@@ -1458,19 +1467,22 @@ fn show_available_versions(pkg_name: &str, args: &ShowArgs) -> anyhow::Result<()
 
     println!(
         "{}",
-        crate::console::info(&format!("Available versions for {pkg_name}:"))
+        mozart_core::console::info(&format!("Available versions for {pkg_name}:"))
     );
     for v in &versions {
-        println!("  {}", crate::console::comment(&v.version));
+        println!("  {}", mozart_core::console::comment(&v.version));
     }
     Ok(())
 }
 
 fn show_available_versions_inline(pkg_name: &str) {
-    match crate::packagist::fetch_package_versions(pkg_name, None) {
+    match mozart_registry::packagist::fetch_package_versions(pkg_name, None) {
         Ok(versions) => {
             if versions.is_empty() {
-                println!("{}: no versions found", crate::console::info(pkg_name));
+                println!(
+                    "{}: no versions found",
+                    mozart_core::console::info(pkg_name)
+                );
                 return;
             }
             // Show up to 5 most recent versions
@@ -1486,15 +1498,15 @@ fn show_available_versions_inline(pkg_name: &str) {
             };
             println!(
                 "{}: {}{}",
-                crate::console::info(pkg_name),
-                crate::console::comment(&shown.join(", ")),
+                mozart_core::console::info(pkg_name),
+                mozart_core::console::comment(&shown.join(", ")),
                 rest
             );
         }
         Err(_) => {
             println!(
                 "{}: (could not fetch from Packagist)",
-                crate::console::comment(pkg_name)
+                mozart_core::console::comment(pkg_name)
             );
         }
     }
@@ -1513,7 +1525,7 @@ fn format_version_highlight(version: &str) -> String {
 }
 
 /// Extract description from an InstalledPackageEntry's extra_fields.
-fn get_installed_description(pkg: &crate::installed::InstalledPackageEntry) -> String {
+fn get_installed_description(pkg: &mozart_registry::installed::InstalledPackageEntry) -> String {
     pkg.extra_fields
         .get("description")
         .and_then(|v| v.as_str())
@@ -1522,7 +1534,7 @@ fn get_installed_description(pkg: &crate::installed::InstalledPackageEntry) -> S
 }
 
 /// Extract keywords from an InstalledPackageEntry's extra_fields.
-fn get_installed_keywords(pkg: &crate::installed::InstalledPackageEntry) -> String {
+fn get_installed_keywords(pkg: &mozart_registry::installed::InstalledPackageEntry) -> String {
     pkg.extra_fields
         .get("keywords")
         .and_then(|v| v.as_array())
@@ -1536,7 +1548,9 @@ fn get_installed_keywords(pkg: &crate::installed::InstalledPackageEntry) -> Stri
 }
 
 /// Extract license from an InstalledPackageEntry's extra_fields.
-fn get_installed_license(pkg: &crate::installed::InstalledPackageEntry) -> Option<String> {
+fn get_installed_license(
+    pkg: &mozart_registry::installed::InstalledPackageEntry,
+) -> Option<String> {
     pkg.extra_fields.get("license").and_then(|v| {
         v.as_array().map(|arr| {
             arr.iter()
@@ -1548,7 +1562,9 @@ fn get_installed_license(pkg: &crate::installed::InstalledPackageEntry) -> Optio
 }
 
 /// Extract homepage from an InstalledPackageEntry's extra_fields.
-fn get_installed_homepage(pkg: &crate::installed::InstalledPackageEntry) -> Option<String> {
+fn get_installed_homepage(
+    pkg: &mozart_registry::installed::InstalledPackageEntry,
+) -> Option<String> {
     pkg.extra_fields
         .get("homepage")
         .and_then(|v| v.as_str())
@@ -1711,7 +1727,7 @@ mod tests {
             "description".to_string(),
             serde_json::Value::String("A logging library".to_string()),
         );
-        let pkg = crate::installed::InstalledPackageEntry {
+        let pkg = mozart_registry::installed::InstalledPackageEntry {
             name: "monolog/monolog".to_string(),
             version: "3.0.0".to_string(),
             version_normalized: None,
@@ -1729,7 +1745,7 @@ mod tests {
     #[test]
     fn test_get_installed_description_absent() {
         use std::collections::BTreeMap;
-        let pkg = crate::installed::InstalledPackageEntry {
+        let pkg = mozart_registry::installed::InstalledPackageEntry {
             name: "psr/log".to_string(),
             version: "3.0.0".to_string(),
             version_normalized: None,
@@ -1754,7 +1770,7 @@ mod tests {
             "keywords".to_string(),
             serde_json::json!(["log", "psr3", "logging"]),
         );
-        let pkg = crate::installed::InstalledPackageEntry {
+        let pkg = mozart_registry::installed::InstalledPackageEntry {
             name: "psr/log".to_string(),
             version: "3.0.0".to_string(),
             version_normalized: None,

@@ -1,11 +1,11 @@
-use crate::console;
-use crate::lockfile;
-use crate::package::{self, Stability};
-use crate::packagist;
-use crate::resolver::{self, PlatformConfig, ResolveRequest};
-use crate::validation;
-use crate::version;
 use clap::Args;
+use mozart_core::console;
+use mozart_core::package::{self, Stability};
+use mozart_core::validation;
+use mozart_registry::lockfile;
+use mozart_registry::packagist;
+use mozart_registry::resolver::{self, PlatformConfig, ResolveRequest};
+use mozart_registry::version;
 use std::collections::HashMap;
 use std::io::{BufRead, IsTerminal, Write};
 
@@ -346,7 +346,7 @@ fn interactive_search_packages(
 pub fn execute(
     args: &RequireArgs,
     cli: &super::Cli,
-    console: &crate::console::Console,
+    console: &mozart_core::console::Console,
 ) -> anyhow::Result<()> {
     // Collect the effective list of packages to add.
     // If none were provided on the CLI, try interactive search (unless --no-interaction).
@@ -609,8 +609,8 @@ pub fn execute(
     let mut resolved = match resolver::resolve(&request) {
         Ok(packages) => packages,
         Err(e) => {
-            return Err(crate::exit_code::bail(
-                crate::exit_code::DEPENDENCY_RESOLUTION_FAILED,
+            return Err(mozart_core::exit_code::bail(
+                mozart_core::exit_code::DEPENDENCY_RESOLUTION_FAILED,
                 e.to_string(),
             ));
         }
@@ -758,7 +758,7 @@ pub fn execute(
                 .map(|s| s.eq_ignore_ascii_case("source"))
                 .unwrap_or(false);
         if prefer_source {
-            console.info(&crate::console::warning(
+            console.info(&mozart_core::console::warning(
                 "Warning: Source installs are not yet supported. Falling back to dist.",
             ));
         }
@@ -836,7 +836,7 @@ mod tests {
     /// Verify that --sort-packages sorts both require and require-dev maps.
     #[test]
     fn test_sort_packages_sorts_both_sections() {
-        use crate::package::RawPackageData;
+        use mozart_core::package::RawPackageData;
 
         let mut raw = RawPackageData::new("test/project".to_string());
         raw.require
@@ -915,8 +915,8 @@ mod tests {
     #[test]
     #[ignore]
     fn test_require_full_e2e() {
-        use crate::lockfile::{LockFileGenerationRequest, generate_lock_file};
-        use crate::package::RawPackageData;
+        use mozart_core::package::RawPackageData;
+        use mozart_registry::lockfile::{LockFileGenerationRequest, generate_lock_file};
 
         let composer_json_content = r#"{"name": "test/project", "require": {"psr/log": "^3.0"}}"#;
         let composer_json: RawPackageData = serde_json::from_str(composer_json_content).unwrap();
@@ -956,7 +956,7 @@ mod tests {
     #[test]
     #[ignore]
     fn test_require_no_install_writes_lock_only() {
-        use crate::package::RawPackageData;
+        use mozart_core::package::RawPackageData;
         use tempfile::tempdir;
 
         let dir = tempdir().unwrap();

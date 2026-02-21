@@ -47,7 +47,7 @@ struct PackageStatus {
 pub fn execute(
     args: &StatusArgs,
     cli: &super::Cli,
-    _console: &crate::console::Console,
+    _console: &mozart_core::console::Console,
 ) -> anyhow::Result<()> {
     let working_dir = match &cli.working_dir {
         Some(dir) => PathBuf::from(dir),
@@ -55,15 +55,15 @@ pub fn execute(
     };
 
     let vendor_dir = working_dir.join("vendor");
-    let installed = crate::installed::InstalledPackages::read(&vendor_dir)?;
+    let installed = mozart_registry::installed::InstalledPackages::read(&vendor_dir)?;
 
     if installed.packages.is_empty() {
         println!("No packages installed.");
         return Ok(());
     }
 
-    let cache_config = crate::cache::build_cache_config(cli);
-    let files_cache = crate::cache::Cache::files(&cache_config);
+    let cache_config = mozart_registry::cache::build_cache_config(cli.no_cache);
+    let files_cache = mozart_registry::cache::Cache::files(&cache_config);
 
     let show_files = args.verbose || cli.verbose > 0;
 
@@ -99,7 +99,7 @@ pub fn execute(
 
         // Download original archive to a temp dir
         let tmp_dir = make_temp_dir(&pkg.name)?;
-        let downloaded = crate::downloader::download_dist(
+        let downloaded = mozart_registry::downloader::download_dist(
             &dist.url,
             dist.shasum.as_deref(),
             None,
@@ -117,8 +117,10 @@ pub fn execute(
 
         // Extract archive to temp dir
         let extract_result = match dist.dist_type.as_str() {
-            "zip" => crate::downloader::extract_zip(&bytes, &tmp_dir),
-            "tar" | "tar.gz" | "tgz" => crate::downloader::extract_tar_gz(&bytes, &tmp_dir),
+            "zip" => mozart_registry::downloader::extract_zip(&bytes, &tmp_dir),
+            "tar" | "tar.gz" | "tgz" => {
+                mozart_registry::downloader::extract_tar_gz(&bytes, &tmp_dir)
+            }
             other => {
                 eprintln!(
                     "  Warning: unsupported dist type '{}' for {}",
@@ -184,7 +186,7 @@ pub fn execute(
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 /// Extract dist info from an installed package entry.
-fn extract_dist_info(pkg: &crate::installed::InstalledPackageEntry) -> Option<DistInfo> {
+fn extract_dist_info(pkg: &mozart_registry::installed::InstalledPackageEntry) -> Option<DistInfo> {
     // Try the strongly-typed `dist` field first
     let dist_val = pkg.dist.as_ref().or_else(|| pkg.extra_fields.get("dist"))?;
 
@@ -213,7 +215,7 @@ fn extract_dist_info(pkg: &crate::installed::InstalledPackageEntry) -> Option<Di
 /// since it is a path relative to `vendor/composer/`. Falls back to
 /// `vendor/<package-name>`.
 fn resolve_install_path(
-    pkg: &crate::installed::InstalledPackageEntry,
+    pkg: &mozart_registry::installed::InstalledPackageEntry,
     vendor_dir: &Path,
 ) -> PathBuf {
     if let Some(ref rel) = pkg.install_path {
@@ -484,7 +486,7 @@ mod tests {
     fn test_extract_dist_info_from_dist_field() {
         use std::collections::BTreeMap;
 
-        let pkg = crate::installed::InstalledPackageEntry {
+        let pkg = mozart_registry::installed::InstalledPackageEntry {
             name: "vendor/pkg".to_string(),
             version: "1.0.0".to_string(),
             version_normalized: None,
@@ -512,7 +514,7 @@ mod tests {
     fn test_extract_dist_info_no_url() {
         use std::collections::BTreeMap;
 
-        let pkg = crate::installed::InstalledPackageEntry {
+        let pkg = mozart_registry::installed::InstalledPackageEntry {
             name: "vendor/pkg".to_string(),
             version: "1.0.0".to_string(),
             version_normalized: None,
@@ -536,7 +538,7 @@ mod tests {
     fn test_extract_dist_info_absent() {
         use std::collections::BTreeMap;
 
-        let pkg = crate::installed::InstalledPackageEntry {
+        let pkg = mozart_registry::installed::InstalledPackageEntry {
             name: "vendor/pkg".to_string(),
             version: "1.0.0".to_string(),
             version_normalized: None,
@@ -558,7 +560,7 @@ mod tests {
     fn test_resolve_install_path_default() {
         use std::collections::BTreeMap;
 
-        let pkg = crate::installed::InstalledPackageEntry {
+        let pkg = mozart_registry::installed::InstalledPackageEntry {
             name: "monolog/monolog".to_string(),
             version: "3.0.0".to_string(),
             version_normalized: None,
@@ -580,7 +582,7 @@ mod tests {
     fn test_resolve_install_path_with_install_path() {
         use std::collections::BTreeMap;
 
-        let pkg = crate::installed::InstalledPackageEntry {
+        let pkg = mozart_registry::installed::InstalledPackageEntry {
             name: "monolog/monolog".to_string(),
             version: "3.0.0".to_string(),
             version_normalized: None,

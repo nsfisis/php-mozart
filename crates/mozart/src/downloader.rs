@@ -1,4 +1,4 @@
-use crate::cache::Cache;
+use mozart_registry::cache::Cache;
 use sha1::{Digest, Sha1};
 use std::collections::HashSet;
 use std::fs;

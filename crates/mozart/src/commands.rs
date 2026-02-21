@@ -198,7 +198,13 @@ pub enum Commands {
 }
 
 pub fn execute(cli: &Cli) -> anyhow::Result<()> {
-    let console = crate::console::Console::from_cli(cli);
+    let console = mozart_core::console::Console::new(
+        cli.verbose,
+        cli.quiet,
+        cli.ansi,
+        cli.no_ansi,
+        cli.no_interaction,
+    );
     match &cli.command {
         Commands::About(args) => about::execute(args, cli, &console),
         Commands::Archive(args) => archive::execute(args, cli, &console),

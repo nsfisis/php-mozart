@@ -1,4 +1,4 @@
-use crate::cache::Cache;
+use mozart_registry::cache::Cache;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 

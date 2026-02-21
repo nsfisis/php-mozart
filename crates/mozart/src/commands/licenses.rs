@@ -30,7 +30,7 @@ struct LicenseEntry {
 pub fn execute(
     args: &LicensesArgs,
     cli: &super::Cli,
-    _console: &crate::console::Console,
+    _console: &mozart_core::console::Console,
 ) -> anyhow::Result<()> {
     let working_dir = match &cli.working_dir {
         Some(dir) => PathBuf::from(dir),
@@ -51,7 +51,7 @@ pub fn execute(
     if !composer_json_path.exists() {
         anyhow::bail!("No composer.json found in {}", working_dir.display());
     }
-    let root = crate::package::read_from_file(&composer_json_path)?;
+    let root = mozart_core::package::read_from_file(&composer_json_path)?;
 
     let root_name = root.name.clone();
     let root_version = root
@@ -98,7 +98,7 @@ pub fn execute(
 
 fn load_installed_licenses(working_dir: &Path, no_dev: bool) -> anyhow::Result<Vec<LicenseEntry>> {
     let vendor_dir = working_dir.join("vendor");
-    let installed = crate::installed::InstalledPackages::read(&vendor_dir)?;
+    let installed = mozart_registry::installed::InstalledPackages::read(&vendor_dir)?;
 
     let dev_names: HashSet<String> = installed
         .dev_package_names
@@ -134,9 +134,10 @@ fn load_locked_licenses(working_dir: &Path, no_dev: bool) -> anyhow::Result<Vec<
         );
     }
 
-    let lock = crate::lockfile::LockFile::read_from_file(&lock_path)?;
+    let lock = mozart_registry::lockfile::LockFile::read_from_file(&lock_path)?;
 
-    let mut all_packages: Vec<&crate::lockfile::LockedPackage> = lock.packages.iter().collect();
+    let mut all_packages: Vec<&mozart_registry::lockfile::LockedPackage> =
+        lock.packages.iter().collect();
 
     if !no_dev && let Some(ref pkgs_dev) = lock.packages_dev {
         all_packages.extend(pkgs_dev.iter());
@@ -157,7 +158,9 @@ fn load_locked_licenses(working_dir: &Path, no_dev: bool) -> anyhow::Result<Vec<
 
 // ─── License extraction ───────────────────────────────────────────────────────
 
-fn extract_installed_licenses(pkg: &crate::installed::InstalledPackageEntry) -> Vec<String> {
+fn extract_installed_licenses(
+    pkg: &mozart_registry::installed::InstalledPackageEntry,
+) -> Vec<String> {
     pkg.extra_fields
         .get("license")
         .and_then(|v| v.as_array())
@@ -205,9 +208,12 @@ fn render_text(
         root_licenses.join(", ")
     };
     // Print root package header
-    println!("Name: {}", crate::console::comment(root_name));
-    println!("Version: {}", crate::console::comment(root_version));
-    println!("Licenses: {}", crate::console::comment(&license_display));
+    println!("Name: {}", mozart_core::console::comment(root_name));
+    println!("Version: {}", mozart_core::console::comment(root_version));
+    println!(
+        "Licenses: {}",
+        mozart_core::console::comment(&license_display)
+    );
     println!("Dependencies:");
     println!();
 
@@ -312,8 +318,8 @@ mod tests {
         name: &str,
         version: &str,
         extra: BTreeMap<String, serde_json::Value>,
-    ) -> crate::installed::InstalledPackageEntry {
-        crate::installed::InstalledPackageEntry {
+    ) -> mozart_registry::installed::InstalledPackageEntry {
+        mozart_registry::installed::InstalledPackageEntry {
             name: name.to_string(),
             version: version.to_string(),
             version_normalized: None,
@@ -429,10 +435,10 @@ mod tests {
         .unwrap();
 
         // Build installed packages
-        let mut installed = crate::installed::InstalledPackages::new();
+        let mut installed = mozart_registry::installed::InstalledPackages::new();
         let mut extra = BTreeMap::new();
         extra.insert("license".to_string(), serde_json::json!(["MIT"]));
-        installed.upsert(crate::installed::InstalledPackageEntry {
+        installed.upsert(mozart_registry::installed::InstalledPackageEntry {
             name: "monolog/monolog".to_string(),
             version: "3.0.0".to_string(),
             version_normalized: None,
@@ -468,12 +474,12 @@ mod tests {
         )
         .unwrap();
 
-        let mut installed = crate::installed::InstalledPackages::new();
+        let mut installed = mozart_registry::installed::InstalledPackages::new();
 
         // Production package
         let mut extra_prod = BTreeMap::new();
         extra_prod.insert("license".to_string(), serde_json::json!(["MIT"]));
-        installed.upsert(crate::installed::InstalledPackageEntry {
+        installed.upsert(mozart_registry::installed::InstalledPackageEntry {
             name: "monolog/monolog".to_string(),
             version: "3.0.0".to_string(),
             version_normalized: None,
@@ -489,7 +495,7 @@ mod tests {
         // Dev package
         let mut extra_dev = BTreeMap::new();
         extra_dev.insert("license".to_string(), serde_json::json!(["BSD-3-Clause"]));
-        installed.upsert(crate::installed::InstalledPackageEntry {
+        installed.upsert(mozart_registry::installed::InstalledPackageEntry {
             name: "phpunit/phpunit".to_string(),
             version: "10.0.0".to_string(),
             version_normalized: None,
@@ -519,7 +525,7 @@ mod tests {
 
     #[test]
     fn test_load_locked_licenses_basic() {
-        use crate::lockfile::{LockFile, LockedPackage};
+        use mozart_registry::lockfile::{LockFile, LockedPackage};
         use tempfile::tempdir;
 
         let dir = tempdir().unwrap();

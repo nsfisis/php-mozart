@@ -25,7 +25,7 @@ pub struct ProhibitsArgs {
 pub fn execute(
     args: &ProhibitsArgs,
     cli: &super::Cli,
-    _console: &crate::console::Console,
+    _console: &mozart_core::console::Console,
 ) -> anyhow::Result<()> {
     let working_dir = match &cli.working_dir {
         Some(dir) => PathBuf::from(dir),
@@ -37,13 +37,13 @@ pub fn execute(
     if packages.is_empty() {
         println!(
             "{}",
-            crate::console::info("No packages found. Run `mozart install` first.")
+            mozart_core::console::info("No packages found. Run `mozart install` first.")
         );
         return Ok(());
     }
 
     // Parse the version constraint the user is asking about
-    let version_constraint = crate::constraint::VersionConstraint::parse(&args.version)
+    let version_constraint = mozart_constraint::VersionConstraint::parse(&args.version)
         .map_err(|e| anyhow::anyhow!("Invalid version constraint '{}': {}", args.version, e))?;
 
     let recursive = args.tree || args.recursive;
@@ -61,7 +61,7 @@ pub fn execute(
     if results.is_empty() {
         println!(
             "{}",
-            crate::console::info(&format!(
+            mozart_core::console::info(&format!(
                 "{} {} can be installed.",
                 args.package, args.version
             ))

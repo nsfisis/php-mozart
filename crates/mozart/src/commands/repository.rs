@@ -38,7 +38,7 @@ pub struct RepositoryArgs {
 pub fn execute(
     _args: &RepositoryArgs,
     _cli: &super::Cli,
-    _console: &crate::console::Console,
+    _console: &mozart_core::console::Console,
 ) -> anyhow::Result<()> {
     todo!()
 }

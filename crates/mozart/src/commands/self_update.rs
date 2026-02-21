@@ -53,7 +53,7 @@ const BACKUP_EXTENSION: &str = ".old";
 pub fn execute(
     args: &SelfUpdateArgs,
     _cli: &super::Cli,
-    _console: &crate::console::Console,
+    _console: &mozart_core::console::Console,
 ) -> anyhow::Result<()> {
     let current_exe = std::env::current_exe()
         .map_err(|e| anyhow::anyhow!("Could not determine current executable path: {e}"))?;
@@ -278,7 +278,7 @@ fn update(args: &SelfUpdateArgs, current_exe: &Path, data_dir: &Path) -> anyhow:
     if args.version.is_none() && target_version == current_version {
         println!(
             "{}",
-            crate::console::info(&format!(
+            mozart_core::console::info(&format!(
                 "Mozart is already at the latest version ({current_version})"
             ))
         );
@@ -329,14 +329,14 @@ fn update(args: &SelfUpdateArgs, current_exe: &Path, data_dir: &Path) -> anyhow:
 
     println!(
         "{}",
-        crate::console::info(&format!(
+        mozart_core::console::info(&format!(
             "Mozart updated successfully from {current_version} to {target_version}"
         ))
     );
 
     if args.clean_backups {
         clean_backups(data_dir)?;
-        println!("{}", crate::console::comment("Old backups removed."));
+        println!("{}", mozart_core::console::comment("Old backups removed."));
     }
 
     Ok(())
@@ -367,7 +367,7 @@ fn rollback(current_exe: &Path, data_dir: &Path) -> anyhow::Result<()> {
 
     println!(
         "{}",
-        crate::console::info(&format!(
+        mozart_core::console::info(&format!(
             "Rollback successful. Restored from {}",
             backup.file_name().unwrap_or_default().to_string_lossy()
         ))

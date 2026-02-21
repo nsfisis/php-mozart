@@ -70,7 +70,7 @@ impl ValidationResult {
 pub fn execute(
     args: &ValidateArgs,
     cli: &super::Cli,
-    console: &crate::console::Console,
+    console: &mozart_core::console::Console,
 ) -> anyhow::Result<()> {
     let working_dir = match &cli.working_dir {
         Some(dir) => PathBuf::from(dir),
@@ -91,7 +91,7 @@ pub fn execute(
 
     // Check file exists
     if !file.exists() {
-        return Err(crate::exit_code::bail(
+        return Err(mozart_core::exit_code::bail(
             VALIDATE_FILE_ERROR,
             format!("{} not found.", file.display()),
         ));
@@ -101,7 +101,7 @@ pub fn execute(
     let content = match std::fs::read_to_string(&file) {
         Ok(c) => c,
         Err(_) => {
-            return Err(crate::exit_code::bail(
+            return Err(mozart_core::exit_code::bail(
                 VALIDATE_FILE_ERROR,
                 format!("{} is not readable.", file.display()),
             ));
@@ -112,7 +112,7 @@ pub fn execute(
     let json_value: serde_json::Value = match serde_json::from_str(&content) {
         Ok(v) => v,
         Err(e) => {
-            return Err(crate::exit_code::bail(
+            return Err(mozart_core::exit_code::bail(
                 VALIDATE_JSON_ERROR,
                 format!("{} does not contain valid JSON: {e}", file.display()),
             ));
@@ -147,7 +147,7 @@ pub fn execute(
         args.strict,
     );
     if exit_code != 0 {
-        return Err(crate::exit_code::bail_silent(exit_code));
+        return Err(mozart_core::exit_code::bail_silent(exit_code));
     }
 
     Ok(())
@@ -208,7 +208,7 @@ fn check_name(obj: &serde_json::Map<String, serde_json::Value>, result: &mut Val
 
             // Must contain a slash (vendor/package format)
             if !name.is_empty()
-                && !crate::validation::validate_package_name(name)
+                && !mozart_core::validation::validate_package_name(name)
                 && !name.contains('/')
             {
                 result.errors.push(format!(
@@ -365,7 +365,7 @@ fn check_minimum_stability(
     result: &mut ValidationResult,
 ) {
     if let Some(stability) = obj.get("minimum-stability").and_then(|v| v.as_str())
-        && !crate::validation::validate_stability(stability)
+        && !mozart_core::validation::validate_stability(stability)
     {
         result.errors.push(format!(
             "The minimum-stability \"{stability}\" is invalid. \
@@ -391,7 +391,7 @@ fn check_lock_freshness(
         return;
     }
 
-    match crate::lockfile::LockFile::read_from_file(&lock_path) {
+    match mozart_registry::lockfile::LockFile::read_from_file(&lock_path) {
         Ok(lock) => {
             if !lock.is_fresh(composer_json_content) {
                 lock_errors.push(
@@ -422,35 +422,37 @@ fn output_result(
     if result.has_errors() {
         eprintln!(
             "{}",
-            crate::console::error(&format!(
+            mozart_core::console::error(&format!(
                 "{name} is invalid, the following errors/warnings were found:"
             ))
         );
     } else if result.has_publish_errors() && check_publish {
         eprintln!(
             "{}",
-            crate::console::info(&format!(
+            mozart_core::console::info(&format!(
                 "{name} is valid for simple usage with Composer but has"
             ))
         );
         eprintln!(
             "{}",
-            crate::console::info("strict errors that make it unable to be published as a package")
+            mozart_core::console::info(
+                "strict errors that make it unable to be published as a package"
+            )
         );
         eprintln!(
             "{}",
-            crate::console::warning(
+            mozart_core::console::warning(
                 "See https://getcomposer.org/doc/04-schema.md for details on the schema"
             )
         );
     } else if result.has_warnings() {
         eprintln!(
             "{}",
-            crate::console::info(&format!("{name} is valid, but with a few warnings"))
+            mozart_core::console::info(&format!("{name} is valid, but with a few warnings"))
         );
         eprintln!(
             "{}",
-            crate::console::warning(
+            mozart_core::console::warning(
                 "See https://getcomposer.org/doc/04-schema.md for details on the schema"
             )
         );
@@ -458,12 +460,15 @@ fn output_result(
         let kind = if check_lock { "errors" } else { "warnings" };
         println!(
             "{}",
-            crate::console::info(&format!(
+            mozart_core::console::info(&format!(
                 "{name} is valid but your composer.lock has some {kind}"
             ))
         );
     } else {
-        println!("{}", crate::console::info(&format!("{name} is valid")));
+        println!(
+            "{}",
+            mozart_core::console::info(&format!("{name} is valid"))
+        );
     }
 
     // Collect error and warning message lines
@@ -506,7 +511,7 @@ fn output_result(
     // Print errors
     for msg in &all_errors {
         if msg.starts_with('#') {
-            eprintln!("{}", crate::console::error(msg));
+            eprintln!("{}", mozart_core::console::error(msg));
         } else {
             eprintln!("{msg}");
         }
@@ -515,7 +520,7 @@ fn output_result(
     // Print warnings
     for msg in &all_warnings {
         if msg.starts_with('#') {
-            eprintln!("{}", crate::console::warning(msg));
+            eprintln!("{}", mozart_core::console::warning(msg));
         } else {
             eprintln!("{msg}");
         }
@@ -907,7 +912,7 @@ mod tests {
 
     #[test]
     fn test_check_lock_freshness_fresh_lock() {
-        use crate::lockfile::LockFile;
+        use mozart_registry::lockfile::LockFile;
         use tempfile::tempdir;
 
         let dir = tempdir().unwrap();
@@ -943,7 +948,7 @@ mod tests {
 
     #[test]
     fn test_check_lock_freshness_stale_lock() {
-        use crate::lockfile::LockFile;
+        use mozart_registry::lockfile::LockFile;
         use tempfile::tempdir;
 
         let dir = tempdir().unwrap();

@@ -4,27 +4,23 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
-anyhow = "1.0.101"
-bzip2 = "0.5"
-filetime = "0.2"
-clap = { version = "4.5.57", features = ["derive"] }
-clap_complete = "4"
-colored = "3.1.1"
-dialoguer = "0.12.0"
-flate2 = "1"
-md5 = "0.7"
-pubgrub = "0.3.0"
-regex = "1.12.3"
-reqwest = { version = "0.13.2", features = ["blocking", "json"] }
-self-replace = "1"
-serde = { version = "1.0.228", features = ["derive"] }
-serde_json = "1.0.149"
-sha1 = "0.10"
-tar = "0.4"
-tempfile = "3.25.0"
-tokio = { version = "1.49.0", features = ["full"] }
-zip = { version = "2", default-features = false, features = ["deflate"] }
+mozart-constraint.workspace = true
+mozart-archiver.workspace = true
+mozart-autoload.workspace = true
+mozart-core.workspace = true
+mozart-registry.workspace = true
+anyhow.workspace = true
+clap.workspace = true
+clap_complete.workspace = true
+colored.workspace = true
+regex.workspace = true
+reqwest.workspace = true
+self-replace.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha1.workspace = true
+tempfile.workspace = true
 
 [dev-dependencies]
-assert_cmd = "2"
-predicates = "3"
+assert_cmd.workspace = true
+predicates.workspace = true

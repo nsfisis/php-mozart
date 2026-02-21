@@ -67,7 +67,7 @@ pub fn load_packages(working_dir: &Path, locked: bool) -> Result<Vec<PackageInfo
 
     // Add the root package (composer.json) as a synthetic entry
     if composer_json_path.exists()
-        && let Ok(root) = crate::package::read_from_file(&composer_json_path)
+        && let Ok(root) = mozart_core::package::read_from_file(&composer_json_path)
     {
         // Extract conflict from extra_fields if present
         let conflict: BTreeMap<String, String> = root
@@ -98,7 +98,7 @@ fn load_from_lockfile(lock_path: &Path) -> Result<Vec<PackageInfo>> {
     if !lock_path.exists() {
         anyhow::bail!("composer.lock not found — run `mozart install` first or omit --locked");
     }
-    let lock = crate::lockfile::LockFile::read_from_file(lock_path)?;
+    let lock = mozart_registry::lockfile::LockFile::read_from_file(lock_path)?;
 
     let mut packages: Vec<PackageInfo> = Vec::new();
 
@@ -131,7 +131,7 @@ fn load_from_lockfile(lock_path: &Path) -> Result<Vec<PackageInfo>> {
 
 fn load_from_installed(working_dir: &Path) -> Result<Vec<PackageInfo>> {
     let vendor_dir = working_dir.join("vendor");
-    let installed = crate::installed::InstalledPackages::read(&vendor_dir)?;
+    let installed = mozart_registry::installed::InstalledPackages::read(&vendor_dir)?;
 
     let packages = installed
         .packages
@@ -192,7 +192,7 @@ fn load_from_installed(working_dir: &Path) -> Result<Vec<PackageInfo>> {
 pub fn get_dependents(
     packages: &[PackageInfo],
     needles: &[String],
-    constraint: Option<&crate::constraint::VersionConstraint>,
+    constraint: Option<&mozart_constraint::VersionConstraint>,
     inverted: bool,
     recursive: bool,
 ) -> Result<Vec<DependencyResult>> {
@@ -317,7 +317,7 @@ fn recurse_dependents(
 fn get_prohibitors(
     packages: &[PackageInfo],
     needles: &[String],
-    constraint: Option<&crate::constraint::VersionConstraint>,
+    constraint: Option<&mozart_constraint::VersionConstraint>,
     _recursive: bool,
 ) -> Result<Vec<DependencyResult>> {
     let mut results: Vec<DependencyResult> = Vec::new();
@@ -333,7 +333,7 @@ fn get_prohibitors(
                 .find(|(k, _)| k.to_lowercase() == needle_lower)
                 && let Some(requested_version) = constraint
                 && let Ok(pkg_constraint) =
-                    crate::constraint::VersionConstraint::parse(req_constraint_str)
+                    mozart_constraint::VersionConstraint::parse(req_constraint_str)
             {
                 // The package requires `needle` but with a different
                 // (incompatible) constraint — it blocks the requested version.
@@ -359,7 +359,7 @@ fn get_prohibitors(
                     .find(|(k, _)| k.to_lowercase() == needle_lower)
                 && let Some(requested_version) = constraint
                 && let Ok(pkg_constraint) =
-                    crate::constraint::VersionConstraint::parse(req_constraint_str)
+                    mozart_constraint::VersionConstraint::parse(req_constraint_str)
                 && constraint_prohibits(requested_version, &pkg_constraint)
             {
                 results.push(DependencyResult {
@@ -380,7 +380,7 @@ fn get_prohibitors(
                 .find(|(k, _)| k.to_lowercase() == needle_lower)
                 && let Some(requested_version) = constraint
                 && let Ok(conflict_constraint) =
-                    crate::constraint::VersionConstraint::parse(conflict_constraint_str)
+                    mozart_constraint::VersionConstraint::parse(conflict_constraint_str)
             {
                 // If the conflict constraint overlaps with (matches) the
                 // requested version range, this package conflicts with it.
@@ -408,8 +408,8 @@ fn get_prohibitors(
 /// We sample a set of "representative versions" from the requested constraint
 /// and check whether none of them satisfy the package's constraint.
 fn constraint_prohibits(
-    requested: &crate::constraint::VersionConstraint,
-    pkg_constraint: &crate::constraint::VersionConstraint,
+    requested: &mozart_constraint::VersionConstraint,
+    pkg_constraint: &mozart_constraint::VersionConstraint,
 ) -> bool {
     // We try to determine if there is any version satisfying *requested* that
     // does NOT satisfy *pkg_constraint*.
@@ -430,8 +430,8 @@ fn constraint_prohibits(
 /// That is, if the conflict constraint matches at least one version that the
 /// requested constraint also matches.
 fn constraint_overlaps(
-    requested: &crate::constraint::VersionConstraint,
-    conflict_constraint: &crate::constraint::VersionConstraint,
+    requested: &mozart_constraint::VersionConstraint,
+    conflict_constraint: &mozart_constraint::VersionConstraint,
 ) -> bool {
     let probes = sample_versions_from_constraint(requested);
     if probes.is_empty() {
@@ -446,9 +446,9 @@ fn constraint_overlaps(
 /// constraint.  These are used for the "does this constraint overlap/prohibit
 /// that constraint?" heuristic.
 fn sample_versions_from_constraint(
-    constraint: &crate::constraint::VersionConstraint,
-) -> Vec<crate::constraint::Version> {
-    use crate::constraint::Version;
+    constraint: &mozart_constraint::VersionConstraint,
+) -> Vec<mozart_constraint::Version> {
+    use mozart_constraint::Version;
 
     // Broad grid of versions to probe
     let candidates: &[&str] = &[
@@ -498,7 +498,7 @@ fn sample_versions_from_constraint(
 /// Columns: package name | version | link description | link constraint
 pub fn print_table(results: &[DependencyResult]) {
     if results.is_empty() {
-        println!("{}", crate::console::info("No relationships found."));
+        println!("{}", mozart_core::console::info("No relationships found."));
         return;
     }
 
@@ -522,10 +522,10 @@ pub fn print_table(results: &[DependencyResult]) {
     for r in results {
         println!(
             "{:<name_w$}  {:<ver_w$}  {:<desc_w$}  {}",
-            crate::console::info(&r.package_name),
-            crate::console::comment(&r.package_version),
+            mozart_core::console::info(&r.package_name),
+            mozart_core::console::comment(&r.package_version),
             r.link_description,
-            crate::console::comment(&r.link_constraint),
+            mozart_core::console::comment(&r.link_constraint),
             name_w = name_w,
             ver_w = ver_w,
             desc_w = desc_w,
@@ -544,7 +544,7 @@ pub fn print_table(results: &[DependencyResult]) {
 /// ```
 pub fn print_tree(results: &[DependencyResult], depth: usize) {
     if results.is_empty() && depth == 0 {
-        println!("{}", crate::console::info("No relationships found."));
+        println!("{}", mozart_core::console::info("No relationships found."));
         return;
     }
 
@@ -556,10 +556,10 @@ pub fn print_tree(results: &[DependencyResult], depth: usize) {
         println!(
             "{}{:<}  {}  {}  {}",
             prefix,
-            crate::console::info(&r.package_name),
-            crate::console::comment(&r.package_version),
+            mozart_core::console::info(&r.package_name),
+            mozart_core::console::comment(&r.package_version),
             r.link_description,
-            crate::console::comment(&r.link_constraint),
+            mozart_core::console::comment(&r.link_constraint),
         );
 
         if !r.children.is_empty() {
@@ -685,7 +685,7 @@ mod tests {
             make_pkg("root/project", "ROOT", &[("vendor/a", "^1.0")], &[], true),
             make_pkg("vendor/a", "1.0.0", &[], &[], false),
         ];
-        let constraint = crate::constraint::VersionConstraint::parse("2.0.0").unwrap();
+        let constraint = mozart_constraint::VersionConstraint::parse("2.0.0").unwrap();
         let needles = vec!["vendor/a".to_string()];
         let results = get_dependents(&packages, &needles, Some(&constraint), true, false).unwrap();
         assert!(!results.is_empty(), "root should prohibit vendor/a 2.0");
@@ -713,7 +713,7 @@ mod tests {
                 false,
             ),
         ];
-        let constraint = crate::constraint::VersionConstraint::parse("2.0.0").unwrap();
+        let constraint = mozart_constraint::VersionConstraint::parse("2.0.0").unwrap();
         let needles = vec!["vendor/a".to_string()];
         let results = get_dependents(&packages, &needles, Some(&constraint), true, false).unwrap();
         // vendor/b conflicts with vendor/a ^2.0 which covers 2.0.0
@@ -733,7 +733,7 @@ mod tests {
             make_pkg("root/project", "ROOT", &[("vendor/a", "^2.0")], &[], true),
             make_pkg("vendor/a", "2.0.0", &[], &[], false),
         ];
-        let constraint = crate::constraint::VersionConstraint::parse("2.5.0").unwrap();
+        let constraint = mozart_constraint::VersionConstraint::parse("2.5.0").unwrap();
         let needles = vec!["vendor/a".to_string()];
         let results = get_dependents(&packages, &needles, Some(&constraint), true, false).unwrap();
         assert!(

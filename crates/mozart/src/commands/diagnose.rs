@@ -220,7 +220,7 @@ fn check_composer_lock(working_dir: &Path) -> CheckResult {
         }
     };
 
-    let lock = match crate::lockfile::LockFile::read_from_file(&lock_path) {
+    let lock = match mozart_registry::lockfile::LockFile::read_from_file(&lock_path) {
         Ok(l) => l,
         Err(e) => return CheckResult::Fail(format!("composer.lock is invalid: {e}")),
     };
@@ -374,7 +374,7 @@ fn check_cache_dir(cache_dir: &Path) -> CheckResult {
 pub fn execute(
     _args: &DiagnoseArgs,
     cli: &super::Cli,
-    _console: &crate::console::Console,
+    _console: &mozart_core::console::Console,
 ) -> anyhow::Result<()> {
     let working_dir = match &cli.working_dir {
         Some(dir) => PathBuf::from(dir),
@@ -551,7 +551,7 @@ mod tests {
 
     #[test]
     fn test_check_composer_lock_fresh() {
-        use crate::lockfile::LockFile;
+        use mozart_registry::lockfile::LockFile;
 
         let dir = tempdir().unwrap();
 
@@ -587,7 +587,7 @@ mod tests {
 
     #[test]
     fn test_check_composer_lock_stale() {
-        use crate::lockfile::LockFile;
+        use mozart_registry::lockfile::LockFile;
 
         let dir = tempdir().unwrap();
 

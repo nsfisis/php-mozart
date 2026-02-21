@@ -1,9 +1,9 @@
-use crate::console;
-use crate::lockfile;
-use crate::package;
-use crate::resolver::{self, PlatformConfig, ResolveRequest};
-use crate::validation;
 use clap::Args;
+use mozart_core::console;
+use mozart_core::package;
+use mozart_core::validation;
+use mozart_registry::lockfile;
+use mozart_registry::resolver::{self, PlatformConfig, ResolveRequest};
 use std::collections::HashMap;
 
 #[derive(Args)]
@@ -99,7 +99,7 @@ pub struct RemoveArgs {
 pub fn execute(
     args: &RemoveArgs,
     cli: &super::Cli,
-    console: &crate::console::Console,
+    console: &mozart_core::console::Console,
 ) -> anyhow::Result<()> {
     // Step 1: Validate inputs
     if args.packages.is_empty() && !args.unused {
@@ -286,8 +286,8 @@ pub fn execute(
 
     // Run resolver
     let mut resolved = resolver::resolve(&request).map_err(|e| {
-        crate::exit_code::bail(
-            crate::exit_code::DEPENDENCY_RESOLUTION_FAILED,
+        mozart_core::exit_code::bail(
+            mozart_core::exit_code::DEPENDENCY_RESOLUTION_FAILED,
             e.to_string(),
         )
     })?;
@@ -477,8 +477,8 @@ pub fn execute(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::lockfile;
-    use crate::package::RawPackageData;
+    use mozart_core::package::RawPackageData;
+    use mozart_registry::lockfile;
     use std::collections::BTreeMap;
 
     // ──────────── Helper constructors ────────────
@@ -684,8 +684,8 @@ mod tests {
     #[test]
     #[ignore]
     fn test_remove_full_e2e() {
-        use crate::lockfile::{LockFileGenerationRequest, generate_lock_file};
-        use crate::resolver::{ResolveRequest, resolve};
+        use mozart_registry::lockfile::{LockFileGenerationRequest, generate_lock_file};
+        use mozart_registry::resolver::{ResolveRequest, resolve};
         use std::collections::HashMap;
         use tempfile::tempdir;
 
@@ -705,11 +705,11 @@ mod tests {
             require: vec![("psr/log".to_string(), "^3.0".to_string())],
             require_dev: vec![],
             include_dev: false,
-            minimum_stability: crate::package::Stability::Stable,
+            minimum_stability: mozart_core::package::Stability::Stable,
             stability_flags: HashMap::new(),
             prefer_stable: true,
             prefer_lowest: false,
-            platform: crate::resolver::PlatformConfig::new(),
+            platform: mozart_registry::resolver::PlatformConfig::new(),
             ignore_platform_reqs: false,
             ignore_platform_req_list: vec![],
             repo_cache: None,
@@ -736,11 +736,11 @@ mod tests {
             require: vec![],
             require_dev: vec![],
             include_dev: false,
-            minimum_stability: crate::package::Stability::Stable,
+            minimum_stability: mozart_core::package::Stability::Stable,
             stability_flags: HashMap::new(),
             prefer_stable: true,
             prefer_lowest: false,
-            platform: crate::resolver::PlatformConfig::new(),
+            platform: mozart_registry::resolver::PlatformConfig::new(),
             ignore_platform_reqs: false,
             ignore_platform_req_list: vec![],
             repo_cache: None,

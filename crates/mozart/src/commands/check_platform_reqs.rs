@@ -55,7 +55,7 @@ struct CheckResult {
 pub fn execute(
     args: &CheckPlatformReqsArgs,
     cli: &super::Cli,
-    _console: &crate::console::Console,
+    _console: &mozart_core::console::Console,
 ) -> anyhow::Result<()> {
     let working_dir = match &cli.working_dir {
         Some(dir) => PathBuf::from(dir),
@@ -89,7 +89,7 @@ pub fn execute(
     }
 
     // Detect real platform
-    let platform = crate::platform::detect_platform();
+    let platform = mozart_core::platform::detect_platform();
 
     // Check requirements against detected platform
     let results = check_requirements(&requirements, &platform);
@@ -146,7 +146,7 @@ fn collect_requirements(
 
     // Always include root composer.json requirements
     let composer_json_path = working_dir.join("composer.json");
-    let root = crate::package::read_from_file(&composer_json_path)?;
+    let root = mozart_core::package::read_from_file(&composer_json_path)?;
 
     add_platform_requirements_from_map(&root.require, "root", &mut requirements);
     if !args.no_dev {
@@ -161,7 +161,7 @@ fn collect_from_lock(
     no_dev: bool,
     requirements: &mut BTreeMap<String, Vec<PlatformRequirement>>,
 ) -> anyhow::Result<()> {
-    let lock = crate::lockfile::LockFile::read_from_file(lock_path)?;
+    let lock = mozart_registry::lockfile::LockFile::read_from_file(lock_path)?;
 
     for pkg in &lock.packages {
         add_platform_requirements_from_map(&pkg.require, &pkg.name, requirements);
@@ -181,7 +181,7 @@ fn collect_from_installed(
     no_dev: bool,
     requirements: &mut BTreeMap<String, Vec<PlatformRequirement>>,
 ) -> anyhow::Result<()> {
-    let installed = crate::installed::InstalledPackages::read(vendor_dir)?;
+    let installed = mozart_registry::installed::InstalledPackages::read(vendor_dir)?;
 
     let dev_names: std::collections::HashSet<String> = installed
         .dev_package_names
@@ -200,7 +200,7 @@ fn collect_from_installed(
         {
             for (dep_name, dep_constraint_val) in require_obj {
                 let dep_lower = dep_name.to_lowercase();
-                if crate::platform::is_platform_package(&dep_lower) {
+                if mozart_core::platform::is_platform_package(&dep_lower) {
                     let constraint = dep_constraint_val.as_str().unwrap_or("*").to_string();
                     requirements
                         .entry(dep_lower)
@@ -224,7 +224,7 @@ fn add_platform_requirements_from_map(
 ) {
     for (name, constraint) in require {
         let name_lower = name.to_lowercase();
-        if crate::platform::is_platform_package(&name_lower) {
+        if mozart_core::platform::is_platform_package(&name_lower) {
             requirements
                 .entry(name_lower)
                 .or_default()
@@ -240,7 +240,7 @@ fn add_platform_requirements_from_map(
 
 fn check_requirements(
     requirements: &BTreeMap<String, Vec<PlatformRequirement>>,
-    platform: &[crate::platform::PlatformPackage],
+    platform: &[mozart_core::platform::PlatformPackage],
 ) -> Vec<CheckResult> {
     let mut results: Vec<CheckResult> = Vec::new();
 
@@ -279,18 +279,18 @@ fn check_requirements(
             }
             Some(detected) => {
                 // Check all constraints
-                let detected_version = match crate::constraint::Version::parse(&detected.version) {
+                let detected_version = match mozart_constraint::Version::parse(&detected.version) {
                     Ok(v) => v,
                     Err(_) => {
                         // Unparseable version → treat as 0.0.0
-                        crate::constraint::Version::parse("0.0.0").unwrap()
+                        mozart_constraint::Version::parse("0.0.0").unwrap()
                     }
                 };
 
                 let mut failed_req: Option<(String, String)> = None;
                 for req in reqs {
                     let constraint =
-                        match crate::constraint::VersionConstraint::parse(&req.constraint) {
+                        match mozart_constraint::VersionConstraint::parse(&req.constraint) {
                             Ok(c) => c,
                             Err(_) => continue, // skip unparseable constraints
                         };
@@ -352,9 +352,9 @@ fn render_text(results: &[CheckResult]) {
             CheckStatus::Success => {
                 println!(
                     "{}  {}  {}",
-                    crate::console::info(&padded_name),
-                    crate::console::comment(&padded_version),
-                    crate::console::info("success"),
+                    mozart_core::console::info(&padded_name),
+                    mozart_core::console::comment(&padded_version),
+                    mozart_core::console::info("success"),
                 );
             }
             CheckStatus::Failed => {
@@ -365,9 +365,9 @@ fn render_text(results: &[CheckResult]) {
                     .unwrap_or(("", ""));
                 println!(
                     "{}  {}  {} requires {} ({})",
-                    crate::console::comment(&padded_name),
-                    crate::console::comment(&padded_version),
-                    crate::console::error("failed"),
+                    mozart_core::console::comment(&padded_name),
+                    mozart_core::console::comment(&padded_version),
+                    mozart_core::console::error("failed"),
                     provider,
                     constraint,
                 );
@@ -380,9 +380,9 @@ fn render_text(results: &[CheckResult]) {
                     .unwrap_or(("*", ""));
                 println!(
                     "{}  {}  {} requires {} ({})",
-                    crate::console::comment(&padded_name),
-                    crate::console::comment(&padded_version),
-                    crate::console::error("missing"),
+                    mozart_core::console::comment(&padded_name),
+                    mozart_core::console::comment(&padded_version),
+                    mozart_core::console::error("missing"),
                     provider,
                     constraint,
                 );
@@ -426,7 +426,7 @@ fn render_json(results: &[CheckResult]) -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::platform::PlatformPackage;
+    use mozart_core::platform::PlatformPackage;
     use std::collections::BTreeMap;
     use tempfile::tempdir;
 
@@ -501,17 +501,25 @@ mod tests {
 
     #[test]
     fn test_is_platform_package() {
-        assert!(crate::platform::is_platform_package("php"));
-        assert!(crate::platform::is_platform_package("ext-json"));
-        assert!(crate::platform::is_platform_package("ext-mbstring"));
-        assert!(crate::platform::is_platform_package("lib-pcre"));
-        assert!(crate::platform::is_platform_package("php-64bit"));
-        assert!(crate::platform::is_platform_package("composer-plugin-api"));
-        assert!(crate::platform::is_platform_package("composer-runtime-api"));
+        assert!(mozart_core::platform::is_platform_package("php"));
+        assert!(mozart_core::platform::is_platform_package("ext-json"));
+        assert!(mozart_core::platform::is_platform_package("ext-mbstring"));
+        assert!(mozart_core::platform::is_platform_package("lib-pcre"));
+        assert!(mozart_core::platform::is_platform_package("php-64bit"));
+        assert!(mozart_core::platform::is_platform_package(
+            "composer-plugin-api"
+        ));
+        assert!(mozart_core::platform::is_platform_package(
+            "composer-runtime-api"
+        ));
 
-        assert!(!crate::platform::is_platform_package("monolog/monolog"));
-        assert!(!crate::platform::is_platform_package("psr/log"));
-        assert!(!crate::platform::is_platform_package("symfony/console"));
+        assert!(!mozart_core::platform::is_platform_package(
+            "monolog/monolog"
+        ));
+        assert!(!mozart_core::platform::is_platform_package("psr/log"));
+        assert!(!mozart_core::platform::is_platform_package(
+            "symfony/console"
+        ));
     }
 
     // ── test_collect_requirements_from_lock ──────────────────────────────────

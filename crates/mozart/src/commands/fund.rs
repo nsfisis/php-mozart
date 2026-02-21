@@ -26,7 +26,7 @@ struct FundingEntry {
 pub fn execute(
     args: &FundArgs,
     cli: &super::Cli,
-    _console: &crate::console::Console,
+    _console: &mozart_core::console::Console,
 ) -> anyhow::Result<()> {
     let working_dir = match &cli.working_dir {
         Some(dir) => PathBuf::from(dir),
@@ -64,9 +64,10 @@ pub fn execute(
 
 fn collect_funding_from_locked(working_dir: &Path) -> anyhow::Result<Vec<FundingEntry>> {
     let lock_path = working_dir.join("composer.lock");
-    let lock = crate::lockfile::LockFile::read_from_file(&lock_path)?;
+    let lock = mozart_registry::lockfile::LockFile::read_from_file(&lock_path)?;
 
-    let mut all_packages: Vec<&crate::lockfile::LockedPackage> = lock.packages.iter().collect();
+    let mut all_packages: Vec<&mozart_registry::lockfile::LockedPackage> =
+        lock.packages.iter().collect();
     if let Some(ref pkgs_dev) = lock.packages_dev {
         all_packages.extend(pkgs_dev.iter());
     }
@@ -94,7 +95,7 @@ fn collect_funding_from_locked(working_dir: &Path) -> anyhow::Result<Vec<Funding
 
 fn collect_funding_from_installed(working_dir: &Path) -> anyhow::Result<Vec<FundingEntry>> {
     let vendor_dir = working_dir.join("vendor");
-    let installed = crate::installed::InstalledPackages::read(&vendor_dir)?;
+    let installed = mozart_registry::installed::InstalledPackages::read(&vendor_dir)?;
 
     let entries = installed
         .packages
@@ -361,7 +362,7 @@ mod tests {
 
     #[test]
     fn test_fund_from_lockfile() {
-        use crate::lockfile::{LockFile, LockedPackage};
+        use mozart_registry::lockfile::{LockFile, LockedPackage};
         use tempfile::tempdir;
 
         let dir = tempdir().unwrap();
@@ -451,7 +452,7 @@ mod tests {
         let working_dir = dir.path();
         let vendor_dir = working_dir.join("vendor");
 
-        let mut installed = crate::installed::InstalledPackages::new();
+        let mut installed = mozart_registry::installed::InstalledPackages::new();
 
         let mut extra = BTreeMap::new();
         extra.insert(
@@ -461,7 +462,7 @@ mod tests {
                 "url": "https://github.com/Seldaek"
             }]),
         );
-        installed.upsert(crate::installed::InstalledPackageEntry {
+        installed.upsert(mozart_registry::installed::InstalledPackageEntry {
             name: "monolog/monolog".to_string(),
             version: "3.0.0".to_string(),
             version_normalized: None,
@@ -475,7 +476,7 @@ mod tests {
         });
 
         // Package without funding
-        installed.upsert(crate::installed::InstalledPackageEntry {
+        installed.upsert(mozart_registry::installed::InstalledPackageEntry {
             name: "psr/log".to_string(),
             version: "3.0.0".to_string(),
             version_normalized: None,
@@ -498,7 +499,7 @@ mod tests {
 
     #[test]
     fn test_fund_no_funding_data() {
-        use crate::lockfile::{LockFile, LockedPackage};
+        use mozart_registry::lockfile::{LockFile, LockedPackage};
         use tempfile::tempdir;
 
         let dir = tempdir().unwrap();

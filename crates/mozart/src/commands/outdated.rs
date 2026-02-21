@@ -99,7 +99,7 @@ struct OutdatedEntry {
 pub fn execute(
     args: &OutdatedArgs,
     cli: &super::Cli,
-    _console: &crate::console::Console,
+    _console: &mozart_core::console::Console,
 ) -> anyhow::Result<()> {
     let working_dir = match &cli.working_dir {
         Some(dir) => PathBuf::from(dir),
@@ -120,7 +120,7 @@ pub fn execute(
     // Load root composer.json for --direct filtering and constraint lookup
     let composer_json_path = working_dir.join("composer.json");
     let root_package = if composer_json_path.exists() {
-        crate::package::read_from_file(&composer_json_path).ok()
+        mozart_core::package::read_from_file(&composer_json_path).ok()
     } else {
         None
     };
@@ -247,7 +247,7 @@ pub fn execute(
 
 fn load_installed_packages(working_dir: &Path, no_dev: bool) -> anyhow::Result<Vec<PackageInfo>> {
     let vendor_dir = working_dir.join("vendor");
-    let installed = crate::installed::InstalledPackages::read(&vendor_dir)?;
+    let installed = mozart_registry::installed::InstalledPackages::read(&vendor_dir)?;
 
     let dev_names: HashSet<String> = installed
         .dev_package_names
@@ -301,9 +301,10 @@ fn load_locked_packages(working_dir: &Path, no_dev: bool) -> anyhow::Result<Vec<
         );
     }
 
-    let lock = crate::lockfile::LockFile::read_from_file(&lock_path)?;
+    let lock = mozart_registry::lockfile::LockFile::read_from_file(&lock_path)?;
 
-    let mut all_packages: Vec<&crate::lockfile::LockedPackage> = lock.packages.iter().collect();
+    let mut all_packages: Vec<&mozart_registry::lockfile::LockedPackage> =
+        lock.packages.iter().collect();
 
     if !no_dev && let Some(ref pkgs_dev) = lock.packages_dev {
         all_packages.extend(pkgs_dev.iter());
@@ -333,10 +334,10 @@ fn load_locked_packages(working_dir: &Path, no_dev: bool) -> anyhow::Result<Vec<
 // ─── Version fetching ────────────────────────────────────────────────────────
 
 fn fetch_latest_version(name: &str) -> anyhow::Result<PackageInfo> {
-    use crate::package::Stability;
-    use crate::version::find_best_candidate;
+    use mozart_core::package::Stability;
+    use mozart_registry::version::find_best_candidate;
 
-    let versions = crate::packagist::fetch_package_versions(name, None)?;
+    let versions = mozart_registry::packagist::fetch_package_versions(name, None)?;
     let best = find_best_candidate(&versions, Stability::Stable)
         .ok_or_else(|| anyhow::anyhow!("No stable version found for {name}"))?;
 
@@ -361,7 +362,7 @@ fn classify_update(
     latest_normalized: &str,
     root_constraint: Option<&str>,
 ) -> UpdateCategory {
-    use crate::version::compare_normalized_versions;
+    use mozart_registry::version::compare_normalized_versions;
 
     // If latest is not newer than current, it's up-to-date
     if compare_normalized_versions(latest_normalized, current_normalized) != Ordering::Greater {
@@ -370,8 +371,8 @@ fn classify_update(
 
     // We have an update available — classify it
     if let Some(constraint_str) = root_constraint
-        && let Ok(constraint) = crate::constraint::VersionConstraint::parse(constraint_str)
-        && let Ok(latest_ver) = crate::constraint::Version::parse(latest_normalized)
+        && let Ok(constraint) = mozart_constraint::VersionConstraint::parse(constraint_str)
+        && let Ok(latest_ver) = mozart_constraint::Version::parse(latest_normalized)
     {
         if constraint.matches(&latest_ver) {
             return UpdateCategory::SemverCompatible;
@@ -460,7 +461,10 @@ fn passes_level_filter(args: &OutdatedArgs, current: &str, latest: &str) -> bool
 
 fn render_text(entries: &[OutdatedEntry]) {
     if entries.is_empty() {
-        println!("{}", crate::console::info("All packages are up to date."));
+        println!(
+            "{}",
+            mozart_core::console::info("All packages are up to date.")
+        );
         return;
     }
 
@@ -484,23 +488,23 @@ fn render_text(entries: &[OutdatedEntry]) {
 
         let (name_str, lat_str) = match entry.category {
             UpdateCategory::UpToDate => (
-                crate::console::info(&name_col).to_string(),
-                crate::console::info(&lat_col).to_string(),
+                mozart_core::console::info(&name_col).to_string(),
+                mozart_core::console::info(&lat_col).to_string(),
             ),
             UpdateCategory::SemverCompatible => (
-                crate::console::highlight(&name_col).to_string(),
-                crate::console::highlight(&lat_col).to_string(),
+                mozart_core::console::highlight(&name_col).to_string(),
+                mozart_core::console::highlight(&lat_col).to_string(),
             ),
             UpdateCategory::SemverIncompatible => (
-                crate::console::comment(&name_col).to_string(),
-                crate::console::comment(&lat_col).to_string(),
+                mozart_core::console::comment(&name_col).to_string(),
+                mozart_core::console::comment(&lat_col).to_string(),
             ),
         };
 
         println!(
             "{} {} {} {}",
             name_str,
-            crate::console::comment(&cur_col),
+            mozart_core::console::comment(&cur_col),
             lat_str,
             entry.description
         );

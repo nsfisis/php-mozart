@@ -16,7 +16,7 @@ pub struct GlobalArgs {
 pub fn execute(
     args: &GlobalArgs,
     cli: &super::Cli,
-    console: &crate::console::Console,
+    console: &mozart_core::console::Console,
 ) -> anyhow::Result<()> {
     use clap::Parser as _;
     use std::fs;

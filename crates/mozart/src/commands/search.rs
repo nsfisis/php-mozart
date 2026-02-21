@@ -1,5 +1,5 @@
-use crate::packagist::SearchResult;
 use clap::Args;
+use mozart_registry::packagist::SearchResult;
 
 #[derive(Args)]
 pub struct SearchArgs {
@@ -62,11 +62,12 @@ fn passes_only_vendor(result: &SearchResult, query: &str) -> bool {
 pub fn execute(
     args: &SearchArgs,
     _cli: &super::Cli,
-    _console: &crate::console::Console,
+    _console: &mozart_core::console::Console,
 ) -> anyhow::Result<()> {
     let query = args.tokens.join(" ");
 
-    let (all_results, total) = crate::packagist::search_packages(&query, args.r#type.as_deref())?;
+    let (all_results, total) =
+        mozart_registry::packagist::search_packages(&query, args.r#type.as_deref())?;
 
     // Apply client-side filters
     let mut results: Vec<&SearchResult> = all_results.iter().collect();
@@ -92,7 +93,7 @@ pub fn execute(
             if results.is_empty() {
                 eprintln!(
                     "{}",
-                    crate::console::warning(&format!("No packages found for \"{query}\""))
+                    mozart_core::console::warning(&format!("No packages found for \"{query}\""))
                 );
                 return Ok(());
             }
@@ -115,9 +116,13 @@ pub fn execute(
 
                 println!(
                     "{} {}  {}",
-                    crate::console::info(&format!("{:<width$}", result.name, width = name_width)),
-                    crate::console::comment(&dl_str),
-                    crate::console::comment(&fav_str),
+                    mozart_core::console::info(&format!(
+                        "{:<width$}",
+                        result.name,
+                        width = name_width
+                    )),
+                    mozart_core::console::comment(&dl_str),
+                    mozart_core::console::comment(&fav_str),
                 );
                 if !result.description.is_empty() {
                     println!("  {}", result.description);
@@ -163,7 +168,7 @@ mod tests {
 
     #[test]
     fn test_parse_search_response() {
-        use crate::packagist::SearchResponse;
+        use mozart_registry::packagist::SearchResponse;
 
         let json = r#"{
             "results": [
@@ -209,7 +214,7 @@ mod tests {
 
     #[test]
     fn test_parse_search_response_with_next() {
-        use crate::packagist::SearchResponse;
+        use mozart_registry::packagist::SearchResponse;
 
         let json = r#"{
             "results": [],

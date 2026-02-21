@@ -12,7 +12,7 @@ pub struct CompletionArgs {
 pub fn execute(
     args: &CompletionArgs,
     _cli: &super::Cli,
-    _console: &crate::console::Console,
+    _console: &mozart_core::console::Console,
 ) -> anyhow::Result<()> {
     let mut cmd = super::Cli::command();
     clap_complete::aot::generate(args.shell, &mut cmd, "mozart", &mut std::io::stdout());

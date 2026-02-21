@@ -20,7 +20,7 @@ pub struct ExecArgs {
 pub fn execute(
     args: &ExecArgs,
     cli: &super::Cli,
-    _console: &crate::console::Console,
+    _console: &mozart_core::console::Console,
 ) -> anyhow::Result<()> {
     let working_dir = match &cli.working_dir {
         Some(dir) => PathBuf::from(dir),
@@ -58,7 +58,7 @@ pub fn execute(
         } else {
             // Check root composer.json bin entries
             let composer_json_path = working_dir.join("composer.json");
-            if let Ok(root) = crate::package::read_from_file(&composer_json_path) {
+            if let Ok(root) = mozart_core::package::read_from_file(&composer_json_path) {
                 root.bin.into_iter().find_map(|entry| {
                     let p = working_dir.join(&entry);
                     let stem = Path::new(&entry)
@@ -159,7 +159,7 @@ fn get_binaries(working_dir: &Path, bin_dir: &Path) -> Vec<(String, bool)> {
 
     // Collect from root composer.json bin entries
     let composer_json_path = working_dir.join("composer.json");
-    if let Ok(root) = crate::package::read_from_file(&composer_json_path) {
+    if let Ok(root) = mozart_core::package::read_from_file(&composer_json_path) {
         let existing: std::collections::HashSet<&str> =
             binaries.iter().map(|(n, _)| n.as_str()).collect();
         let mut local: Vec<String> = root
@@ -363,7 +363,7 @@ mod tests {
         assert!(!candidate.exists());
 
         // Confirm root bin entries are also empty
-        let root = crate::package::read_from_file(&dir.path().join("composer.json")).unwrap();
+        let root = mozart_core::package::read_from_file(&dir.path().join("composer.json")).unwrap();
         assert!(root.bin.is_empty());
     }
 }

@@ -68,7 +68,7 @@ pub struct ReinstallArgs {
 pub fn execute(
     args: &ReinstallArgs,
     cli: &super::Cli,
-    console: &crate::console::Console,
+    console: &mozart_core::console::Console,
 ) -> anyhow::Result<()> {
     // Step 1: Resolve working directory
     let working_dir = match &cli.working_dir {
@@ -79,7 +79,7 @@ pub fn execute(
     let vendor_dir = working_dir.join("vendor");
 
     // Step 2: Read installed.json
-    let installed = crate::installed::InstalledPackages::read(&vendor_dir)?;
+    let installed = mozart_registry::installed::InstalledPackages::read(&vendor_dir)?;
 
     // Step 3: Read composer.lock
     let lock_path = working_dir.join("composer.lock");
@@ -89,7 +89,7 @@ pub fn execute(
             working_dir.display()
         );
     }
-    let lock = crate::lockfile::LockFile::read_from_file(&lock_path)?;
+    let lock = mozart_registry::lockfile::LockFile::read_from_file(&lock_path)?;
 
     // Step 4: Validate — error if both --type and package names are provided;
     //         error if neither is provided.
@@ -116,7 +116,7 @@ pub fn execute(
         .map(|n| n.to_lowercase())
         .collect();
 
-    let candidates: Vec<&crate::installed::InstalledPackageEntry> = installed
+    let candidates: Vec<&mozart_registry::installed::InstalledPackageEntry> = installed
         .packages
         .iter()
         .filter(|pkg| {
@@ -128,7 +128,7 @@ pub fn execute(
         })
         .collect();
 
-    let selected: Vec<&crate::installed::InstalledPackageEntry> = if has_type {
+    let selected: Vec<&mozart_registry::installed::InstalledPackageEntry> = if has_type {
         filter_by_type(&candidates, &args.r#type)
     } else {
         filter_by_names(&candidates, &args.packages)
@@ -141,7 +141,7 @@ pub fn execute(
 
     // Step 6: For each selected package, find its locked metadata.
     // Build a lookup map: lowercase name -> LockedPackage
-    let all_locked: Vec<&crate::lockfile::LockedPackage> = lock
+    let all_locked: Vec<&mozart_registry::lockfile::LockedPackage> = lock
         .packages
         .iter()
         .chain(lock.packages_dev.as_deref().unwrap_or(&[]))
@@ -161,8 +161,8 @@ pub fn execute(
     }
 
     // Step 8: For each package, remove vendor dir and re-download.
-    let cache_config = crate::cache::build_cache_config(cli);
-    let files_cache = crate::cache::Cache::files(&cache_config);
+    let cache_config = mozart_registry::cache::build_cache_config(cli.no_cache);
+    let files_cache = mozart_registry::cache::Cache::files(&cache_config);
 
     let mut reinstalled_count = 0usize;
 
@@ -202,12 +202,12 @@ pub fn execute(
         }
 
         // Re-download and install
-        let mut progress = crate::downloader::DownloadProgress::new(
+        let mut progress = mozart_registry::downloader::DownloadProgress::new(
             !args.no_progress,
             format!("{} ({})", locked.name, locked.version),
         );
 
-        crate::downloader::install_package(
+        mozart_registry::downloader::install_package(
             &dist.url,
             &dist.dist_type,
             dist.shasum.as_deref(),
@@ -233,7 +233,7 @@ pub fn execute(
         let dev_mode = !args.no_dev && installed.dev;
         let suffix = lock.content_hash.clone();
 
-        crate::autoload::generate(&crate::autoload::AutoloadConfig {
+        mozart_autoload::autoload::generate(&mozart_autoload::autoload::AutoloadConfig {
             project_dir: working_dir.to_path_buf(),
             vendor_dir: vendor_dir.to_path_buf(),
             dev_mode,
@@ -243,7 +243,7 @@ pub fn execute(
             apcu: args.apcu_autoloader,
             apcu_prefix: args.apcu_autoloader_prefix.clone(),
             strict_psr: false,
-            platform_check: crate::autoload::PlatformCheckMode::Full,
+            platform_check: mozart_autoload::autoload::PlatformCheckMode::Full,
             ignore_platform_reqs: args.ignore_platform_reqs,
         })?;
 
@@ -257,9 +257,9 @@ pub fn execute(
 
 /// Filter candidates by package type (case-insensitive).
 fn filter_by_type<'a>(
-    candidates: &[&'a crate::installed::InstalledPackageEntry],
+    candidates: &[&'a mozart_registry::installed::InstalledPackageEntry],
     types: &[String],
-) -> Vec<&'a crate::installed::InstalledPackageEntry> {
+) -> Vec<&'a mozart_registry::installed::InstalledPackageEntry> {
     let lower_types: Vec<String> = types.iter().map(|t| t.to_lowercase()).collect();
     candidates
         .iter()
@@ -280,9 +280,9 @@ fn filter_by_type<'a>(
 /// Patterns support `*` as a wildcard matching any sequence of characters
 /// (including `/`).
 fn filter_by_names<'a>(
-    candidates: &[&'a crate::installed::InstalledPackageEntry],
+    candidates: &[&'a mozart_registry::installed::InstalledPackageEntry],
     patterns: &[String],
-) -> Vec<&'a crate::installed::InstalledPackageEntry> {
+) -> Vec<&'a mozart_registry::installed::InstalledPackageEntry> {
     candidates
         .iter()
         .filter(|pkg| {
@@ -339,9 +339,9 @@ fn glob_matches(pattern: &str, value: &str) -> bool {
 
 /// Find a locked package by name (case-insensitive).
 fn find_locked_package<'a>(
-    locked: &[&'a crate::lockfile::LockedPackage],
+    locked: &[&'a mozart_registry::lockfile::LockedPackage],
     name: &str,
-) -> Option<&'a crate::lockfile::LockedPackage> {
+) -> Option<&'a mozart_registry::lockfile::LockedPackage> {
     let name_lower = name.to_lowercase();
     locked
         .iter()
@@ -361,8 +361,8 @@ mod tests {
     fn make_installed_entry(
         name: &str,
         pkg_type: Option<&str>,
-    ) -> crate::installed::InstalledPackageEntry {
-        crate::installed::InstalledPackageEntry {
+    ) -> mozart_registry::installed::InstalledPackageEntry {
+        mozart_registry::installed::InstalledPackageEntry {
             name: name.to_string(),
             version: "1.0.0".to_string(),
             version_normalized: None,
@@ -376,8 +376,8 @@ mod tests {
         }
     }
 
-    fn make_locked_package(name: &str, version: &str) -> crate::lockfile::LockedPackage {
-        crate::lockfile::LockedPackage {
+    fn make_locked_package(name: &str, version: &str) -> mozart_registry::lockfile::LockedPackage {
+        mozart_registry::lockfile::LockedPackage {
             name: name.to_string(),
             version: version.to_string(),
             version_normalized: None,
@@ -453,7 +453,7 @@ mod tests {
             make_locked_package("psr/log", "3.0.0"),
             make_locked_package("monolog/monolog", "3.8.0"),
         ];
-        let refs: Vec<&crate::lockfile::LockedPackage> = pkgs.iter().collect();
+        let refs: Vec<&mozart_registry::lockfile::LockedPackage> = pkgs.iter().collect();
 
         let result = find_locked_package(&refs, "psr/log");
         assert!(result.is_some());
@@ -463,7 +463,7 @@ mod tests {
     #[test]
     fn test_find_locked_package_case_insensitive() {
         let pkgs = vec![make_locked_package("Monolog/Monolog", "3.8.0")];
-        let refs: Vec<&crate::lockfile::LockedPackage> = pkgs.iter().collect();
+        let refs: Vec<&mozart_registry::lockfile::LockedPackage> = pkgs.iter().collect();
 
         let result = find_locked_package(&refs, "monolog/monolog");
         assert!(result.is_some());
@@ -472,7 +472,7 @@ mod tests {
     #[test]
     fn test_find_locked_package_not_found() {
         let pkgs = vec![make_locked_package("psr/log", "3.0.0")];
-        let refs: Vec<&crate::lockfile::LockedPackage> = pkgs.iter().collect();
+        let refs: Vec<&mozart_registry::lockfile::LockedPackage> = pkgs.iter().collect();
 
         let result = find_locked_package(&refs, "monolog/monolog");
         assert!(result.is_none());
@@ -601,7 +601,7 @@ mod tests {
         let e1 = make_installed_entry("psr/log", Some("library"));
         let e2 = make_installed_entry("phpunit/phpunit", Some("library"));
 
-        let mut installed = crate::installed::InstalledPackages::new();
+        let mut installed = mozart_registry::installed::InstalledPackages::new();
         installed.packages.push(e1.clone());
         installed.packages.push(e2.clone());
         installed.dev_package_names = vec!["phpunit/phpunit".to_string()];
@@ -613,7 +613,7 @@ mod tests {
             .collect();
 
         // Simulate --no-dev filtering
-        let candidates: Vec<&crate::installed::InstalledPackageEntry> = installed
+        let candidates: Vec<&mozart_registry::installed::InstalledPackageEntry> = installed
             .packages
             .iter()
             .filter(|pkg| !dev_package_names.contains(&pkg.name.to_lowercase()))
@@ -628,13 +628,13 @@ mod tests {
         let e1 = make_installed_entry("psr/log", Some("library"));
         let e2 = make_installed_entry("phpunit/phpunit", Some("library"));
 
-        let mut installed = crate::installed::InstalledPackages::new();
+        let mut installed = mozart_registry::installed::InstalledPackages::new();
         installed.packages.push(e1.clone());
         installed.packages.push(e2.clone());
         installed.dev_package_names = vec!["phpunit/phpunit".to_string()];
 
         // no_dev = false: include all
-        let candidates: Vec<&crate::installed::InstalledPackageEntry> =
+        let candidates: Vec<&mozart_registry::installed::InstalledPackageEntry> =
             installed.packages.iter().collect();
 
         assert_eq!(candidates.len(), 2);

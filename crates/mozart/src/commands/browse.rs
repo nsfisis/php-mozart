@@ -21,7 +21,7 @@ pub struct BrowseArgs {
 pub fn execute(
     args: &BrowseArgs,
     cli: &super::Cli,
-    console: &crate::console::Console,
+    console: &mozart_core::console::Console,
 ) -> anyhow::Result<()> {
     let working_dir = match &cli.working_dir {
         Some(dir) => PathBuf::from(dir),
@@ -36,7 +36,7 @@ pub fn execute(
                 "No composer.json found in the current directory and no package specified."
             );
         }
-        let root = crate::package::read_from_file(&composer_json)?;
+        let root = mozart_core::package::read_from_file(&composer_json)?;
         vec![root.name.clone()]
     } else {
         args.packages.clone()
@@ -57,7 +57,7 @@ pub fn execute(
             None => {
                 console.info(&format!(
                     "{}",
-                    crate::console::warning(&format!(
+                    mozart_core::console::warning(&format!(
                         "No URL found for package \"{}\".",
                         package_name
                     ))
@@ -84,7 +84,7 @@ fn resolve_url(
     // 1. Check root package (composer.json)
     let composer_json = working_dir.join("composer.json");
     if composer_json.exists()
-        && let Ok(root) = crate::package::read_from_file(&composer_json)
+        && let Ok(root) = mozart_core::package::read_from_file(&composer_json)
         && root.name.eq_ignore_ascii_case(package_name)
         && let Some(url) = extract_url_from_root(&root, prefer_homepage)
     {
@@ -94,7 +94,7 @@ fn resolve_url(
     // 2. Check lock file (composer.lock)
     let lock_path = working_dir.join("composer.lock");
     if lock_path.exists()
-        && let Ok(lock) = crate::lockfile::LockFile::read_from_file(&lock_path)
+        && let Ok(lock) = mozart_registry::lockfile::LockFile::read_from_file(&lock_path)
     {
         let all_packages = lock
             .packages
@@ -109,7 +109,7 @@ fn resolve_url(
     }
 
     // 3. Fall back to Packagist API
-    match crate::packagist::fetch_package_versions(package_name, None) {
+    match mozart_registry::packagist::fetch_package_versions(package_name, None) {
         Ok(versions) => {
             // Find the latest stable version (first non-dev, or fallback to first)
             let best = versions
@@ -129,7 +129,7 @@ fn resolve_url(
 // ─── URL extraction ───────────────────────────────────────────────────────────
 
 fn extract_url_from_locked(
-    pkg: &crate::lockfile::LockedPackage,
+    pkg: &mozart_registry::lockfile::LockedPackage,
     prefer_homepage: bool,
 ) -> Option<String> {
     if prefer_homepage {
@@ -161,7 +161,7 @@ fn extract_url_from_locked(
 }
 
 fn extract_url_from_root(
-    root: &crate::package::RawPackageData,
+    root: &mozart_core::package::RawPackageData,
     prefer_homepage: bool,
 ) -> Option<String> {
     if prefer_homepage {
@@ -187,7 +187,7 @@ fn extract_url_from_root(
 }
 
 fn extract_url_from_packagist(
-    pkg: &crate::packagist::PackagistVersion,
+    pkg: &mozart_registry::packagist::PackagistVersion,
     prefer_homepage: bool,
 ) -> Option<String> {
     if prefer_homepage {
@@ -278,14 +278,14 @@ mod tests {
         source_url: Option<&str>,
         homepage: Option<&str>,
         support_source: Option<&str>,
-    ) -> crate::lockfile::LockedPackage {
+    ) -> mozart_registry::lockfile::LockedPackage {
         let support = support_source.map(|s| serde_json::json!({"source": s}));
-        let source = source_url.map(|url| crate::lockfile::LockedSource {
+        let source = source_url.map(|url| mozart_registry::lockfile::LockedSource {
             source_type: "git".to_string(),
             url: url.to_string(),
             reference: None,
         });
-        crate::lockfile::LockedPackage {
+        mozart_registry::lockfile::LockedPackage {
             name: "vendor/package".to_string(),
             version: "1.0.0".to_string(),
             version_normalized: None,

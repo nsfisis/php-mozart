@@ -22,7 +22,7 @@ pub struct DependsArgs {
 pub fn execute(
     args: &DependsArgs,
     cli: &super::Cli,
-    _console: &crate::console::Console,
+    _console: &mozart_core::console::Console,
 ) -> anyhow::Result<()> {
     let working_dir = match &cli.working_dir {
         Some(dir) => PathBuf::from(dir),
@@ -34,7 +34,7 @@ pub fn execute(
     if packages.is_empty() {
         println!(
             "{}",
-            crate::console::info("No packages found. Run `mozart install` first.")
+            mozart_core::console::info("No packages found. Run `mozart install` first.")
         );
         return Ok(());
     }

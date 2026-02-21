@@ -1028,19 +1028,82 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "assert_cmd",
- "bzip2",
  "clap",
  "clap_complete",
  "colored",
- "dialoguer",
- "filetime",
- "flate2",
- "md5",
+ "mozart-archiver",
+ "mozart-autoload",
+ "mozart-constraint",
+ "mozart-core",
+ "mozart-registry",
  "predicates",
- "pubgrub",
  "regex",
  "reqwest",
  "self-replace",
+ "serde",
+ "serde_json",
+ "sha1",
+ "tempfile",
+]
+
+[[package]]
+name = "mozart-archiver"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "bzip2",
+ "flate2",
+ "regex",
+ "sha1",
+ "tar",
+ "tempfile",
+ "zip",
+]
+
+[[package]]
+name = "mozart-autoload"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "md5",
+ "mozart-core",
+ "mozart-registry",
+ "regex",
+ "serde",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
+name = "mozart-constraint"
+version = "0.1.0"
+
+[[package]]
+name = "mozart-core"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "colored",
+ "dialoguer",
+ "regex",
+ "serde",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
+name = "mozart-registry"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "bzip2",
+ "filetime",
+ "flate2",
+ "md5",
+ "mozart-constraint",
+ "mozart-core",
+ "pubgrub",
+ "reqwest",
  "serde",
  "serde_json",
  "sha1",

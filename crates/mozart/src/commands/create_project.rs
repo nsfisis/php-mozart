@@ -1,12 +1,12 @@
-use crate::console;
-use crate::downloader;
-use crate::lockfile;
-use crate::package::{self, Stability};
-use crate::packagist;
-use crate::resolver::{self, PlatformConfig, ResolveRequest};
-use crate::validation;
-use crate::version;
 use clap::Args;
+use mozart_core::console;
+use mozart_core::package::{self, Stability};
+use mozart_core::validation;
+use mozart_registry::downloader;
+use mozart_registry::lockfile;
+use mozart_registry::packagist;
+use mozart_registry::resolver::{self, PlatformConfig, ResolveRequest};
+use mozart_registry::version;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
@@ -173,7 +173,7 @@ fn is_dir_non_empty(path: &Path) -> bool {
 pub fn execute(
     args: &CreateProjectArgs,
     cli: &super::Cli,
-    console: &crate::console::Console,
+    console: &mozart_core::console::Console,
 ) -> anyhow::Result<()> {
     // --- Handle deprecated / no-op flags ---
     if args.prefer_source {
@@ -423,8 +423,8 @@ pub fn execute(
     console.info("Resolving dependencies...");
 
     let resolved = resolver::resolve(&request).map_err(|e| {
-        crate::exit_code::bail(
-            crate::exit_code::DEPENDENCY_RESOLUTION_FAILED,
+        mozart_core::exit_code::bail(
+            mozart_core::exit_code::DEPENDENCY_RESOLUTION_FAILED,
             e.to_string(),
         )
     })?;
