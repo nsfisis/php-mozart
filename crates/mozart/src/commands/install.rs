@@ -496,58 +496,51 @@ pub fn install_from_lock(
     Ok(())
 }
 
-pub fn execute(args: &InstallArgs, cli: &super::Cli) -> anyhow::Result<()> {
+pub fn execute(
+    args: &InstallArgs,
+    cli: &super::Cli,
+    console: &crate::console::Console,
+) -> anyhow::Result<()> {
     // Step 1: Resolve the working directory
     let working_dir = resolve_working_dir(cli);
 
     // Step 2: Validate arguments
     if !args.packages.is_empty() {
         let pkgs = args.packages.join(" ");
-        eprintln!(
-            "{}",
-            console::error(&format!(
+        return Err(crate::exit_code::bail(
+            crate::exit_code::GENERAL_ERROR,
+            format!(
                 "Invalid argument {pkgs}. Use \"mozart require {pkgs}\" instead to add packages to your composer.json."
-            ))
-        );
-        std::process::exit(1);
+            ),
+        ));
     }
 
     if args.no_install {
-        eprintln!(
-            "{}",
-            console::error(
-                "Invalid option \"--no-install\". Use \"mozart update --no-install\" instead if you are trying to update the composer.lock file."
-            )
-        );
-        std::process::exit(1);
+        return Err(crate::exit_code::bail(
+            crate::exit_code::GENERAL_ERROR,
+            "Invalid option \"--no-install\". Use \"mozart update --no-install\" instead if you are trying to update the composer.lock file.",
+        ));
     }
 
     if args.dev {
-        eprintln!(
-            "{}",
-            console::warning(
-                "The --dev option is deprecated. Dev packages are installed by default."
-            )
-        );
+        console.info(&console::warning(
+            "The --dev option is deprecated. Dev packages are installed by default.",
+        ));
     }
 
     if args.no_suggest {
-        eprintln!(
-            "{}",
-            console::warning("The --no-suggest option is deprecated and has no effect.")
-        );
+        console.info(&console::warning(
+            "The --no-suggest option is deprecated and has no effect.",
+        ));
     }
 
     // Step 3: Read composer.lock
     let lock_path = working_dir.join("composer.lock");
     if !lock_path.exists() {
-        eprintln!(
-            "{}",
-            console::warning(
-                "No composer.lock file present. Run \"mozart update\" to generate one."
-            )
-        );
-        std::process::exit(1);
+        return Err(crate::exit_code::bail(
+            crate::exit_code::LOCK_FILE_INVALID,
+            "No composer.lock file present. Run \"mozart update\" to generate one.",
+        ));
     }
     let lock = lockfile::LockFile::read_from_file(&lock_path)?;
 
@@ -556,12 +549,9 @@ pub fn execute(args: &InstallArgs, cli: &super::Cli) -> anyhow::Result<()> {
     if composer_json_path.exists() {
         let content = std::fs::read_to_string(&composer_json_path)?;
         if !lock.is_fresh(&content) {
-            eprintln!(
-                "{}",
-                console::warning(
-                    "Warning: The lock file is not up to date with the latest changes in composer.json. You may be getting outdated dependencies. It is recommended that you run `mozart update`."
-                )
-            );
+            console.info(&console::warning(
+                "Warning: The lock file is not up to date with the latest changes in composer.json. You may be getting outdated dependencies. It is recommended that you run `mozart update`."
+            ));
         }
     }
 
@@ -573,12 +563,9 @@ pub fn execute(args: &InstallArgs, cli: &super::Cli) -> anyhow::Result<()> {
             .map(|s| s.eq_ignore_ascii_case("source"))
             .unwrap_or(false);
     if prefer_source {
-        eprintln!(
-            "{}",
-            console::warning(
-                "Warning: Source installs are not yet supported. Falling back to dist."
-            )
-        );
+        console.info(&console::warning(
+            "Warning: Source installs are not yet supported. Falling back to dist.",
+        ));
     }
 
     // Step 6: Determine dev mode and vendor directory

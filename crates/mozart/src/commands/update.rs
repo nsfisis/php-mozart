@@ -630,57 +630,53 @@ pub fn apply_minimal_changes(
 // Main execute function
 // ─────────────────────────────────────────────────────────────────────────────
 
-pub fn execute(args: &UpdateArgs, cli: &super::Cli) -> anyhow::Result<()> {
+pub fn execute(
+    args: &UpdateArgs,
+    cli: &super::Cli,
+    console: &crate::console::Console,
+) -> anyhow::Result<()> {
     // Step 1: Resolve the working directory
     let working_dir = super::install::resolve_working_dir(cli);
 
     // Step 2: Handle deprecated flags
     if args.dev {
-        eprintln!(
-            "{}",
-            console::warning(
-                "The --dev option is deprecated. Dev packages are updated by default."
-            )
-        );
+        console.info(&console::warning(
+            "The --dev option is deprecated. Dev packages are updated by default.",
+        ));
     }
     if args.no_suggest {
-        eprintln!(
-            "{}",
-            console::warning("The --no-suggest option is deprecated and has no effect.")
-        );
+        console.info(&console::warning(
+            "The --no-suggest option is deprecated and has no effect.",
+        ));
     }
 
     // Warn about still-deferred flags
     if args.patch_only {
-        eprintln!(
-            "{}",
-            console::warning("--patch-only is not yet implemented and will be ignored.")
-        );
+        console.info(&console::warning(
+            "--patch-only is not yet implemented and will be ignored.",
+        ));
     }
     if args.root_reqs {
-        eprintln!(
-            "{}",
-            console::warning("--root-reqs is not yet implemented and will be ignored.")
-        );
+        console.info(&console::warning(
+            "--root-reqs is not yet implemented and will be ignored.",
+        ));
     }
     if args.bump_after_update.is_some() {
-        eprintln!(
-            "{}",
-            console::warning("--bump-after-update is not yet implemented and will be ignored.")
-        );
+        console.info(&console::warning(
+            "--bump-after-update is not yet implemented and will be ignored.",
+        ));
     }
 
     // Step 3: Read composer.json
     let composer_json_path = working_dir.join("composer.json");
     if !composer_json_path.exists() {
-        eprintln!(
-            "{}",
-            console::error(&format!(
+        return Err(crate::exit_code::bail(
+            crate::exit_code::GENERAL_ERROR,
+            format!(
                 "Composer could not find a composer.json file in {}",
                 working_dir.display()
-            ))
-        );
-        std::process::exit(1);
+            ),
+        ));
     }
     let composer_json = package::read_from_file(&composer_json_path)?;
     let composer_json_content = std::fs::read_to_string(&composer_json_path)?;
@@ -690,7 +686,7 @@ pub fn execute(args: &UpdateArgs, cli: &super::Cli) -> anyhow::Result<()> {
 
     // Step 4: Handle --lock mode (early return)
     if args.lock {
-        return handle_lock_mode(&lock_path, &composer_json_content, args.dry_run);
+        return handle_lock_mode(&lock_path, &composer_json_content, args.dry_run, console);
     }
 
     let dev_mode = !args.no_dev;
@@ -739,19 +735,21 @@ pub fn execute(args: &UpdateArgs, cli: &super::Cli) -> anyhow::Result<()> {
     };
 
     // Step 6: Print header and run resolver
-    eprintln!("Loading composer repositories with package information");
+    console.info("Loading composer repositories with package information");
     if dev_mode {
-        eprintln!("Updating dependencies (including require-dev)");
+        console.info("Updating dependencies (including require-dev)");
     } else {
-        eprintln!("Updating dependencies");
+        console.info("Updating dependencies");
     }
-    eprintln!("Resolving dependencies...");
+    console.info("Resolving dependencies...");
 
     let mut resolved = match resolver::resolve(&request) {
         Ok(packages) => packages,
         Err(e) => {
-            eprintln!("{}", console::error(&e.to_string()));
-            std::process::exit(1);
+            return Err(crate::exit_code::bail(
+                crate::exit_code::DEPENDENCY_RESOLUTION_FAILED,
+                e.to_string(),
+            ));
         }
     };
 
@@ -760,13 +758,10 @@ pub fn execute(args: &UpdateArgs, cli: &super::Cli) -> anyhow::Result<()> {
         match lockfile::LockFile::read_from_file(&lock_path) {
             Ok(l) => Some(l),
             Err(e) => {
-                eprintln!(
-                    "{}",
-                    console::warning(&format!(
-                        "Could not read existing composer.lock: {}. Treating as a fresh install.",
-                        e
-                    ))
-                );
+                console.info(&console::warning(&format!(
+                    "Could not read existing composer.lock: {}. Treating as a fresh install.",
+                    e
+                )));
                 None
             }
         }
@@ -782,13 +777,10 @@ pub fn execute(args: &UpdateArgs, cli: &super::Cli) -> anyhow::Result<()> {
     let update_packages: Vec<String> = if !args.packages.is_empty() {
         match &old_lock {
             None => {
-                eprintln!(
-                    "{}",
-                    console::error(
-                        "No lock file found. Cannot perform partial update. Run `mozart update` first."
-                    )
-                );
-                std::process::exit(1);
+                return Err(crate::exit_code::bail(
+                    crate::exit_code::NO_LOCK_FILE_FOR_PARTIAL_UPDATE,
+                    "No lock file found. Cannot perform partial update. Run `mozart update` first.",
+                ));
             }
             Some(lock) => {
                 // 1. Expand wildcards
@@ -813,10 +805,9 @@ pub fn execute(args: &UpdateArgs, cli: &super::Cli) -> anyhow::Result<()> {
         if args.interactive {
             match &old_lock {
                 None => {
-                    eprintln!(
-                        "{}",
-                        console::warning("No lock file found. --interactive mode skipped.")
-                    );
+                    console.info(&console::warning(
+                        "No lock file found. --interactive mode skipped.",
+                    ));
                     vec![]
                 }
                 Some(lock) => {
@@ -843,13 +834,10 @@ pub fn execute(args: &UpdateArgs, cli: &super::Cli) -> anyhow::Result<()> {
     if !update_packages.is_empty() {
         match &old_lock {
             None => {
-                eprintln!(
-                    "{}",
-                    console::error(
-                        "No lock file found. Cannot perform partial update. Run `mozart update` first."
-                    )
-                );
-                std::process::exit(1);
+                return Err(crate::exit_code::bail(
+                    crate::exit_code::NO_LOCK_FILE_FOR_PARTIAL_UPDATE,
+                    "No lock file found. Cannot perform partial update. Run `mozart update` first.",
+                ));
             }
             Some(lock) => {
                 resolved = apply_partial_update(resolved, lock, &update_packages);
@@ -859,10 +847,7 @@ pub fn execute(args: &UpdateArgs, cli: &super::Cli) -> anyhow::Result<()> {
         // Full update with --minimal-changes: pin everything to locked versions
         // (only updates packages whose constraints have changed in composer.json)
         if let Some(ref lock) = old_lock {
-            eprintln!(
-                "{}",
-                console::info("Minimal changes mode: preserving locked versions where possible.")
-            );
+            console.info("Minimal changes mode: preserving locked versions where possible.");
             resolved = apply_minimal_changes(resolved, lock);
         }
     }
@@ -892,18 +877,15 @@ pub fn execute(args: &UpdateArgs, cli: &super::Cli) -> anyhow::Result<()> {
         .filter(|c| matches!(c.kind, ChangeKind::Remove { .. }))
         .collect();
 
-    eprintln!(
-        "{}",
-        console::info(&format!(
-            "Package operations: {} install{}, {} update{}, {} removal{}",
-            installs.len(),
-            if installs.len() == 1 { "" } else { "s" },
-            updates.len(),
-            if updates.len() == 1 { "" } else { "s" },
-            removals.len(),
-            if removals.len() == 1 { "" } else { "s" },
-        ))
-    );
+    console.info(&format!(
+        "Package operations: {} install{}, {} update{}, {} removal{}",
+        installs.len(),
+        if installs.len() == 1 { "" } else { "s" },
+        updates.len(),
+        if updates.len() == 1 { "" } else { "s" },
+        removals.len(),
+        if removals.len() == 1 { "" } else { "s" },
+    ));
 
     // Print individual change lines
     let prefix = if args.dry_run { "Would" } else { "" };
@@ -911,16 +893,22 @@ pub fn execute(args: &UpdateArgs, cli: &super::Cli) -> anyhow::Result<()> {
         match &change.kind {
             ChangeKind::Remove { old_version } => {
                 if args.dry_run {
-                    eprintln!("  - {} remove {} ({})", prefix, change.name, old_version);
+                    console.info(&format!(
+                        "  - {} remove {} ({})",
+                        prefix, change.name, old_version
+                    ));
                 } else {
-                    eprintln!("  - Removing {} ({})", change.name, old_version);
+                    console.info(&format!("  - Removing {} ({})", change.name, old_version));
                 }
             }
             ChangeKind::Install { new_version } => {
                 if args.dry_run {
-                    eprintln!("  - {} install {} ({})", prefix, change.name, new_version);
+                    console.info(&format!(
+                        "  - {} install {} ({})",
+                        prefix, change.name, new_version
+                    ));
                 } else {
-                    eprintln!("  - Installing {} ({})", change.name, new_version);
+                    console.info(&format!("  - Installing {} ({})", change.name, new_version));
                 }
             }
             ChangeKind::Update {
@@ -928,15 +916,15 @@ pub fn execute(args: &UpdateArgs, cli: &super::Cli) -> anyhow::Result<()> {
                 new_version,
             } => {
                 if args.dry_run {
-                    eprintln!(
+                    console.info(&format!(
                         "  - {} update {} ({} => {})",
                         prefix, change.name, old_version, new_version
-                    );
+                    ));
                 } else {
-                    eprintln!(
+                    console.info(&format!(
                         "  - Updating {} ({} => {})",
                         change.name, old_version, new_version
-                    );
+                    ));
                 }
             }
             ChangeKind::Unchanged => {}
@@ -945,7 +933,7 @@ pub fn execute(args: &UpdateArgs, cli: &super::Cli) -> anyhow::Result<()> {
 
     // Step 11: Write lock file (unless --dry-run)
     if !args.dry_run {
-        eprintln!("Writing lock file");
+        console.info("Writing lock file");
         new_lock.write_to_file(&lock_path)?;
     }
 
@@ -959,12 +947,9 @@ pub fn execute(args: &UpdateArgs, cli: &super::Cli) -> anyhow::Result<()> {
                 .map(|s| s.eq_ignore_ascii_case("source"))
                 .unwrap_or(false);
         if prefer_source {
-            eprintln!(
-                "{}",
-                crate::console::warning(
-                    "Warning: Source installs are not yet supported. Falling back to dist."
-                )
-            );
+            console.info(&crate::console::warning(
+                "Warning: Source installs are not yet supported. Falling back to dist.",
+            ));
         }
 
         super::install::install_from_lock(
@@ -1001,13 +986,13 @@ fn handle_lock_mode(
     lock_path: &std::path::Path,
     composer_json_content: &str,
     dry_run: bool,
+    console: &crate::console::Console,
 ) -> anyhow::Result<()> {
     if !lock_path.exists() {
-        eprintln!(
-            "{}",
-            console::error("No lock file found. Run `mozart update` to generate one.")
-        );
-        std::process::exit(1);
+        return Err(crate::exit_code::bail(
+            crate::exit_code::LOCK_FILE_INVALID,
+            "No lock file found. Run `mozart update` to generate one.",
+        ));
     }
 
     let mut lock = lockfile::LockFile::read_from_file(lock_path)?;
@@ -1015,7 +1000,7 @@ fn handle_lock_mode(
     let new_hash = lockfile::LockFile::compute_content_hash(composer_json_content)?;
 
     if new_hash == lock.content_hash {
-        eprintln!("Lock file is already up to date");
+        console.info("Lock file is already up to date");
         return Ok(());
     }
 
@@ -1023,9 +1008,9 @@ fn handle_lock_mode(
 
     if !dry_run {
         lock.write_to_file(lock_path)?;
-        eprintln!("Lock file hash updated successfully.");
+        console.info("Lock file hash updated successfully.");
     } else {
-        eprintln!("Would update lock file hash.");
+        console.info("Would update lock file hash.");
     }
 
     Ok(())
@@ -1375,7 +1360,12 @@ mod tests {
         // Composer.json content that will produce a different hash
         let composer_json_content = r#"{"name": "test/project", "require": {"psr/log": "^3.0"}}"#;
 
-        let result = handle_lock_mode(&lock_path, composer_json_content, false);
+        let console = crate::console::Console {
+            interactive: false,
+            verbosity: crate::console::Verbosity::Normal,
+            decorated: false,
+        };
+        let result = handle_lock_mode(&lock_path, composer_json_content, false, &console);
         assert!(result.is_ok());
 
         // Read back and verify hash changed
@@ -1398,7 +1388,12 @@ mod tests {
         lock.content_hash = correct_hash.clone();
         lock.write_to_file(&lock_path).unwrap();
 
-        let result = handle_lock_mode(&lock_path, composer_json_content, false);
+        let console = crate::console::Console {
+            interactive: false,
+            verbosity: crate::console::Verbosity::Normal,
+            decorated: false,
+        };
+        let result = handle_lock_mode(&lock_path, composer_json_content, false, &console);
         assert!(result.is_ok());
 
         // Hash should not have changed
@@ -1417,7 +1412,12 @@ mod tests {
 
         let composer_json_content = r#"{"name": "test/project", "require": {"psr/log": "^3.0"}}"#;
 
-        let result = handle_lock_mode(&lock_path, composer_json_content, true);
+        let console = crate::console::Console {
+            interactive: false,
+            verbosity: crate::console::Verbosity::Normal,
+            decorated: false,
+        };
+        let result = handle_lock_mode(&lock_path, composer_json_content, true, &console);
         assert!(result.is_ok());
 
         // Hash should NOT have changed (dry_run=true)
@@ -1717,7 +1717,12 @@ mod tests {
         let expected_hash =
             lockfile::LockFile::compute_content_hash(composer_json_content).unwrap();
 
-        handle_lock_mode(&lock_path, composer_json_content, false).unwrap();
+        let console = crate::console::Console {
+            interactive: false,
+            verbosity: crate::console::Verbosity::Normal,
+            decorated: false,
+        };
+        handle_lock_mode(&lock_path, composer_json_content, false, &console).unwrap();
 
         let updated = lockfile::LockFile::read_from_file(&lock_path).unwrap();
         assert_eq!(updated.content_hash, expected_hash);

@@ -22,7 +22,11 @@ pub struct BumpArgs {
 
 // ─── Main entry point ─────────────────────────────────────────────────────────
 
-pub fn execute(args: &BumpArgs, cli: &super::Cli) -> anyhow::Result<()> {
+pub fn execute(
+    args: &BumpArgs,
+    cli: &super::Cli,
+    console: &crate::console::Console,
+) -> anyhow::Result<()> {
     let working_dir = match &cli.working_dir {
         Some(dir) => PathBuf::from(dir),
         None => std::env::current_dir()?,
@@ -46,13 +50,13 @@ pub fn execute(args: &BumpArgs, cli: &super::Cli) -> anyhow::Result<()> {
     if let Some(ref pkg_type) = root.package_type
         && pkg_type != "project"
     {
-        eprintln!(
+        console.info(&format!(
             "{}",
             crate::console::warning(&format!(
                 "Warning: Bumping constraints for a non-project package (type=\"{pkg_type}\"). \
                  Libraries should not pin their dependencies."
             ))
-        );
+        ));
     }
 
     // Check lock file existence
@@ -65,14 +69,11 @@ pub fn execute(args: &BumpArgs, cli: &super::Cli) -> anyhow::Result<()> {
 
     // Check lock file freshness
     if !lock.is_fresh(&composer_json_content) {
-        eprintln!(
-            "{}",
-            crate::console::error(
-                "composer.lock is not up to date with composer.json. \
-                 Run `mozart install` or `mozart update` to refresh it."
-            )
-        );
-        std::process::exit(2);
+        return Err(crate::exit_code::bail(
+            crate::exit_code::LOCK_FILE_INVALID,
+            "composer.lock is not up to date with composer.json. \
+             Run `mozart install` or `mozart update` to refresh it.",
+        ));
     }
 
     // Build map: package name (lowercase) → (pretty_version, version_normalized)
@@ -343,7 +344,12 @@ mod tests {
             dry_run: false,
         };
         let cli = make_cli(dir.path());
-        execute(&args, &cli).unwrap();
+        let console = crate::console::Console {
+            interactive: false,
+            verbosity: crate::console::Verbosity::Normal,
+            decorated: false,
+        };
+        execute(&args, &cli, &console).unwrap();
 
         let updated = std::fs::read_to_string(dir.path().join("composer.json")).unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&updated).unwrap();
@@ -374,7 +380,12 @@ mod tests {
             dry_run: true,
         };
         let cli = make_cli(dir.path());
-        execute(&args, &cli).unwrap();
+        let console = crate::console::Console {
+            interactive: false,
+            verbosity: crate::console::Verbosity::Normal,
+            decorated: false,
+        };
+        execute(&args, &cli, &console).unwrap();
 
         // composer.json should be unchanged
         let content = std::fs::read_to_string(dir.path().join("composer.json")).unwrap();
@@ -406,7 +417,12 @@ mod tests {
             dry_run: false,
         };
         let cli = make_cli(dir.path());
-        execute(&args, &cli).unwrap();
+        let console = crate::console::Console {
+            interactive: false,
+            verbosity: crate::console::Verbosity::Normal,
+            decorated: false,
+        };
+        execute(&args, &cli, &console).unwrap();
 
         // No changes should be made
         let content = std::fs::read_to_string(dir.path().join("composer.json")).unwrap();
@@ -444,7 +460,12 @@ mod tests {
             dry_run: false,
         };
         let cli = make_cli(dir.path());
-        execute(&args, &cli).unwrap();
+        let console = crate::console::Console {
+            interactive: false,
+            verbosity: crate::console::Verbosity::Normal,
+            decorated: false,
+        };
+        execute(&args, &cli, &console).unwrap();
 
         let content = std::fs::read_to_string(dir.path().join("composer.json")).unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
@@ -484,7 +505,12 @@ mod tests {
             dry_run: false,
         };
         let cli = make_cli(dir.path());
-        execute(&args, &cli).unwrap();
+        let console = crate::console::Console {
+            interactive: false,
+            verbosity: crate::console::Verbosity::Normal,
+            decorated: false,
+        };
+        execute(&args, &cli, &console).unwrap();
 
         let content = std::fs::read_to_string(dir.path().join("composer.json")).unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
@@ -521,8 +547,8 @@ mod tests {
         };
         let _cli = make_cli(dir.path());
 
-        // The execute function calls std::process::exit(2) for stale lock.
-        // We can't test that directly, but we can verify the lock IS stale
+        // The execute function returns Err(MozartError) with LOCK_FILE_INVALID for stale lock.
+        // We verify the lock IS stale here as a prerequisite check.
         let lock_loaded = LockFile::read_from_file(&dir.path().join("composer.lock")).unwrap();
         assert!(!lock_loaded.is_fresh(composer_json));
     }
@@ -563,7 +589,12 @@ mod tests {
             dry_run: false,
         };
         let cli = make_cli(dir.path());
-        execute(&args, &cli).unwrap();
+        let console = crate::console::Console {
+            interactive: false,
+            verbosity: crate::console::Verbosity::Normal,
+            decorated: false,
+        };
+        execute(&args, &cli, &console).unwrap();
 
         // The lock file content-hash should now match the updated composer.json
         let updated_composer = std::fs::read_to_string(dir.path().join("composer.json")).unwrap();
@@ -605,7 +636,12 @@ mod tests {
             dry_run: false,
         };
         let cli = make_cli(dir.path());
-        execute(&args, &cli).unwrap();
+        let console = crate::console::Console {
+            interactive: false,
+            verbosity: crate::console::Verbosity::Normal,
+            decorated: false,
+        };
+        execute(&args, &cli, &console).unwrap();
 
         let content = std::fs::read_to_string(dir.path().join("composer.json")).unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();

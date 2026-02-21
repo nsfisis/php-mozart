@@ -603,7 +603,11 @@ fn render_value(v: &serde_json::Value) -> String {
 
 // ─── execute() ───────────────────────────────────────────────────────────────
 
-pub fn execute(args: &ConfigArgs, cli: &super::Cli) -> anyhow::Result<()> {
+pub fn execute(
+    args: &ConfigArgs,
+    cli: &super::Cli,
+    _console: &crate::console::Console,
+) -> anyhow::Result<()> {
     // 1. Handle --editor mode
     if args.editor {
         return execute_editor(args, cli);

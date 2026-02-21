@@ -23,7 +23,11 @@ struct FundingEntry {
 
 // ─── Main entry point ───────────────────────────────────────────────────────
 
-pub fn execute(args: &FundArgs, cli: &super::Cli) -> anyhow::Result<()> {
+pub fn execute(
+    args: &FundArgs,
+    cli: &super::Cli,
+    _console: &crate::console::Console,
+) -> anyhow::Result<()> {
     let working_dir = match &cli.working_dir {
         Some(dir) => PathBuf::from(dir),
         None => std::env::current_dir()?,

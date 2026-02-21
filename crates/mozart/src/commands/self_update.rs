@@ -50,7 +50,11 @@ const BACKUP_EXTENSION: &str = ".old";
 
 // ─── Public entry point ───────────────────────────────────────────────────────
 
-pub fn execute(args: &SelfUpdateArgs, _cli: &super::Cli) -> anyhow::Result<()> {
+pub fn execute(
+    args: &SelfUpdateArgs,
+    _cli: &super::Cli,
+    _console: &crate::console::Console,
+) -> anyhow::Result<()> {
     let current_exe = std::env::current_exe()
         .map_err(|e| anyhow::anyhow!("Could not determine current executable path: {e}"))?;
 

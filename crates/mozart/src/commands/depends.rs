@@ -19,7 +19,11 @@ pub struct DependsArgs {
     pub locked: bool,
 }
 
-pub fn execute(args: &DependsArgs, cli: &super::Cli) -> anyhow::Result<()> {
+pub fn execute(
+    args: &DependsArgs,
+    cli: &super::Cli,
+    _console: &crate::console::Console,
+) -> anyhow::Result<()> {
     let working_dir = match &cli.working_dir {
         Some(dir) => PathBuf::from(dir),
         None => std::env::current_dir()?,

@@ -70,7 +70,11 @@ struct AuditResult {
 
 // ─── Main entry point ─────────────────────────────────────────────────────────
 
-pub fn execute(args: &AuditArgs, cli: &super::Cli) -> anyhow::Result<()> {
+pub fn execute(
+    args: &AuditArgs,
+    cli: &super::Cli,
+    _console: &crate::console::Console,
+) -> anyhow::Result<()> {
     // Validate format
     let format = args.format.as_str();
     if format != "table" && format != "plain" && format != "json" && format != "summary" {

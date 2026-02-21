@@ -55,9 +55,11 @@ pub struct InitArgs {
     pub autoload: Option<String>,
 }
 
-pub fn execute(args: &InitArgs, cli: &super::Cli) -> anyhow::Result<()> {
-    let console = console::Console::new(cli.no_interaction, cli.quiet);
-
+pub fn execute(
+    args: &InitArgs,
+    cli: &super::Cli,
+    console: &console::Console,
+) -> anyhow::Result<()> {
     let working_dir = match &cli.working_dir {
         Some(dir) => PathBuf::from(dir),
         None => std::env::current_dir().context("Failed to get current directory")?,
@@ -78,7 +80,7 @@ pub fn execute(args: &InitArgs, cli: &super::Cli) -> anyhow::Result<()> {
     }
 
     let composer = if console.interactive {
-        build_interactive(args, &console, &working_dir)?
+        build_interactive(args, console, &working_dir)?
     } else {
         build_non_interactive(args, &working_dir)?
     };

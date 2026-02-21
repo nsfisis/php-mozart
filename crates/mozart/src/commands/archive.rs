@@ -82,7 +82,11 @@ impl Drop for PackageMeta {
 
 // ─── Main entry point ─────────────────────────────────────────────────────────
 
-pub fn execute(args: &ArchiveArgs, cli: &super::Cli) -> anyhow::Result<()> {
+pub fn execute(
+    args: &ArchiveArgs,
+    cli: &super::Cli,
+    console: &crate::console::Console,
+) -> anyhow::Result<()> {
     use crate::archiver::{
         ArchiveFormat, collect_archivable_files, create_archive, generate_archive_filename,
         parse_composer_excludes, parse_gitattributes, parse_gitignore_pattern,
@@ -216,7 +220,10 @@ pub fn execute(args: &ArchiveArgs, cli: &super::Cli) -> anyhow::Result<()> {
 
     // 9. Create archive
     let target_path = output_dir.join(format!("{}.{}", filename_base, format.extension()));
-    eprintln!("Creating the archive into \"{}\".", output_dir.display());
+    console.info(&format!(
+        "Creating the archive into \"{}\".",
+        output_dir.display()
+    ));
     create_archive(&meta.source_dir, &files, &target_path, &format)?;
 
     // Print relative path if possible

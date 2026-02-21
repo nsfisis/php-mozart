@@ -371,7 +371,11 @@ fn check_cache_dir(cache_dir: &Path) -> CheckResult {
 
 // ─── Main execute function ─────────────────────────────────────────────────────
 
-pub fn execute(_args: &DiagnoseArgs, cli: &super::Cli) -> anyhow::Result<()> {
+pub fn execute(
+    _args: &DiagnoseArgs,
+    cli: &super::Cli,
+    _console: &crate::console::Console,
+) -> anyhow::Result<()> {
     let working_dir = match &cli.working_dir {
         Some(dir) => PathBuf::from(dir),
         None => std::env::current_dir()?,

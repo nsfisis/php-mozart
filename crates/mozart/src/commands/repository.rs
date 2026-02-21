@@ -35,6 +35,10 @@ pub struct RepositoryArgs {
     pub after: Option<String>,
 }
 
-pub fn execute(_args: &RepositoryArgs, _cli: &super::Cli) -> anyhow::Result<()> {
+pub fn execute(
+    _args: &RepositoryArgs,
+    _cli: &super::Cli,
+    _console: &crate::console::Console,
+) -> anyhow::Result<()> {
     todo!()
 }

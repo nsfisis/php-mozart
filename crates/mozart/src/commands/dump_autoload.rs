@@ -48,7 +48,11 @@ pub struct DumpAutoloadArgs {
     pub strict_ambiguous: bool,
 }
 
-pub fn execute(args: &DumpAutoloadArgs, cli: &super::Cli) -> anyhow::Result<()> {
+pub fn execute(
+    args: &DumpAutoloadArgs,
+    cli: &super::Cli,
+    console: &crate::console::Console,
+) -> anyhow::Result<()> {
     let working_dir = match &cli.working_dir {
         Some(dir) => PathBuf::from(dir),
         None => std::env::current_dir()?,
@@ -61,7 +65,7 @@ pub fn execute(args: &DumpAutoloadArgs, cli: &super::Cli) -> anyhow::Result<()> 
     let suffix = crate::autoload::determine_suffix(&working_dir, &vendor_dir)?;
 
     if args.dry_run {
-        eprintln!("Dry run: would generate autoload files");
+        console.info("Dry run: would generate autoload files");
         return Ok(());
     }
 
@@ -79,7 +83,7 @@ pub fn execute(args: &DumpAutoloadArgs, cli: &super::Cli) -> anyhow::Result<()> 
         ignore_platform_reqs: args.ignore_platform_reqs,
     })?;
 
-    eprintln!("Generated autoload files");
+    console.info("Generated autoload files");
 
     Ok(())
 }

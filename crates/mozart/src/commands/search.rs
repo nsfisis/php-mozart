@@ -59,7 +59,11 @@ fn passes_only_vendor(result: &SearchResult, query: &str) -> bool {
     vendor.eq_ignore_ascii_case(query)
 }
 
-pub fn execute(args: &SearchArgs, _cli: &super::Cli) -> anyhow::Result<()> {
+pub fn execute(
+    args: &SearchArgs,
+    _cli: &super::Cli,
+    _console: &crate::console::Console,
+) -> anyhow::Result<()> {
     let query = args.tokens.join(" ");
 
     let (all_results, total) = crate::packagist::search_packages(&query, args.r#type.as_deref())?;

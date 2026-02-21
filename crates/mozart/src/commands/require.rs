@@ -343,7 +343,11 @@ fn interactive_search_packages(
     Ok(selected)
 }
 
-pub fn execute(args: &RequireArgs, cli: &super::Cli) -> anyhow::Result<()> {
+pub fn execute(
+    args: &RequireArgs,
+    cli: &super::Cli,
+    console: &crate::console::Console,
+) -> anyhow::Result<()> {
     // Collect the effective list of packages to add.
     // If none were provided on the CLI, try interactive search (unless --no-interaction).
     let cli_packages: Vec<String> = if args.packages.is_empty() {
@@ -399,26 +403,19 @@ pub fn execute(args: &RequireArgs, cli: &super::Cli) -> anyhow::Result<()> {
 
     // Handle deprecated flags
     if args.no_suggest {
-        eprintln!(
-            "{}",
-            console::warning("The --no-suggest option is deprecated and has no effect.")
-        );
+        console.info(&console::warning(
+            "The --no-suggest option is deprecated and has no effect.",
+        ));
     }
     if args.update_with_dependencies {
-        eprintln!(
-            "{}",
-            console::warning(
-                "The -w / --update-with-dependencies flag is deprecated. Use --with-dependencies instead."
-            )
-        );
+        console.info(&console::warning(
+            "The -w / --update-with-dependencies flag is deprecated. Use --with-dependencies instead."
+        ));
     }
     if args.update_with_all_dependencies {
-        eprintln!(
-            "{}",
-            console::warning(
-                "The -W / --update-with-all-dependencies flag is deprecated. Use --with-all-dependencies instead."
-            )
-        );
+        console.info(&console::warning(
+            "The -W / --update-with-all-dependencies flag is deprecated. Use --with-all-dependencies instead."
+        ));
     }
 
     // Resolve working directory
@@ -600,20 +597,22 @@ pub fn execute(args: &RequireArgs, cli: &super::Cli) -> anyhow::Result<()> {
     };
 
     // Print header messages
-    eprintln!("Loading composer repositories with package information");
+    console.info("Loading composer repositories with package information");
     if dev_mode {
-        eprintln!("Updating dependencies (including require-dev)");
+        console.info("Updating dependencies (including require-dev)");
     } else {
-        eprintln!("Updating dependencies");
+        console.info("Updating dependencies");
     }
-    eprintln!("Resolving dependencies...");
+    console.info("Resolving dependencies...");
 
     // Run resolver
     let mut resolved = match resolver::resolve(&request) {
         Ok(packages) => packages,
         Err(e) => {
-            eprintln!("{}", console::error(&e.to_string()));
-            std::process::exit(1);
+            return Err(crate::exit_code::bail(
+                crate::exit_code::DEPENDENCY_RESOLUTION_FAILED,
+                e.to_string(),
+            ));
         }
     };
 
@@ -622,13 +621,10 @@ pub fn execute(args: &RequireArgs, cli: &super::Cli) -> anyhow::Result<()> {
         match lockfile::LockFile::read_from_file(&lock_path) {
             Ok(l) => Some(l),
             Err(e) => {
-                eprintln!(
-                    "{}",
-                    console::warning(&format!(
-                        "Could not read existing composer.lock: {}. Treating as a fresh install.",
-                        e
-                    ))
-                );
+                console.info(&console::warning(&format!(
+                    "Could not read existing composer.lock: {}. Treating as a fresh install.",
+                    e
+                )));
                 None
             }
         }
@@ -693,34 +689,37 @@ pub fn execute(args: &RequireArgs, cli: &super::Cli) -> anyhow::Result<()> {
         .filter(|c| matches!(c.kind, super::update::ChangeKind::Remove { .. }))
         .collect();
 
-    eprintln!(
-        "{}",
-        console::info(&format!(
-            "Package operations: {} install{}, {} update{}, {} removal{}",
-            installs.len(),
-            if installs.len() == 1 { "" } else { "s" },
-            updates.len(),
-            if updates.len() == 1 { "" } else { "s" },
-            removals.len(),
-            if removals.len() == 1 { "" } else { "s" },
-        ))
-    );
+    console.info(&format!(
+        "Package operations: {} install{}, {} update{}, {} removal{}",
+        installs.len(),
+        if installs.len() == 1 { "" } else { "s" },
+        updates.len(),
+        if updates.len() == 1 { "" } else { "s" },
+        removals.len(),
+        if removals.len() == 1 { "" } else { "s" },
+    ));
 
     // Print individual change lines
     for change in &changes {
         match &change.kind {
             super::update::ChangeKind::Remove { old_version } => {
                 if args.dry_run {
-                    eprintln!("  - Would remove {} ({})", change.name, old_version);
+                    console.info(&format!(
+                        "  - Would remove {} ({})",
+                        change.name, old_version
+                    ));
                 } else {
-                    eprintln!("  - Removing {} ({})", change.name, old_version);
+                    console.info(&format!("  - Removing {} ({})", change.name, old_version));
                 }
             }
             super::update::ChangeKind::Install { new_version } => {
                 if args.dry_run {
-                    eprintln!("  - Would install {} ({})", change.name, new_version);
+                    console.info(&format!(
+                        "  - Would install {} ({})",
+                        change.name, new_version
+                    ));
                 } else {
-                    eprintln!("  - Installing {} ({})", change.name, new_version);
+                    console.info(&format!("  - Installing {} ({})", change.name, new_version));
                 }
             }
             super::update::ChangeKind::Update {
@@ -728,15 +727,15 @@ pub fn execute(args: &RequireArgs, cli: &super::Cli) -> anyhow::Result<()> {
                 new_version,
             } => {
                 if args.dry_run {
-                    eprintln!(
+                    console.info(&format!(
                         "  - Would update {} ({} => {})",
                         change.name, old_version, new_version
-                    );
+                    ));
                 } else {
-                    eprintln!(
+                    console.info(&format!(
                         "  - Updating {} ({} => {})",
                         change.name, old_version, new_version
-                    );
+                    ));
                 }
             }
             super::update::ChangeKind::Unchanged => {}
@@ -745,7 +744,7 @@ pub fn execute(args: &RequireArgs, cli: &super::Cli) -> anyhow::Result<()> {
 
     // Write lock file (unless --dry-run)
     if !args.dry_run {
-        eprintln!("Writing lock file");
+        console.info("Writing lock file");
         new_lock.write_to_file(&lock_path)?;
     }
 
@@ -759,12 +758,9 @@ pub fn execute(args: &RequireArgs, cli: &super::Cli) -> anyhow::Result<()> {
                 .map(|s| s.eq_ignore_ascii_case("source"))
                 .unwrap_or(false);
         if prefer_source {
-            eprintln!(
-                "{}",
-                crate::console::warning(
-                    "Warning: Source installs are not yet supported. Falling back to dist."
-                )
-            );
+            console.info(&crate::console::warning(
+                "Warning: Source installs are not yet supported. Falling back to dist.",
+            ));
         }
 
         super::install::install_from_lock(

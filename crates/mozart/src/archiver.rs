@@ -974,7 +974,12 @@ mod tests {
             no_ansi: false,
         };
 
-        execute(&args, &cli).unwrap();
+        let console = crate::console::Console {
+            interactive: false,
+            verbosity: crate::console::Verbosity::Normal,
+            decorated: false,
+        };
+        execute(&args, &cli, &console).unwrap();
 
         let archive_path = out.path().join("test-archive.tar");
         assert!(archive_path.exists(), "tar archive was not created");
@@ -1038,7 +1043,12 @@ mod tests {
             no_ansi: false,
         };
 
-        execute(&args, &cli).unwrap();
+        let console = crate::console::Console {
+            interactive: false,
+            verbosity: crate::console::Verbosity::Normal,
+            decorated: false,
+        };
+        execute(&args, &cli, &console).unwrap();
 
         let archive_path = out.path().join("test-archive.zip");
         assert!(archive_path.exists(), "zip archive was not created");
@@ -1088,7 +1098,12 @@ mod tests {
             no_ansi: false,
         };
 
-        execute(&args, &cli).unwrap();
+        let console = crate::console::Console {
+            interactive: false,
+            verbosity: crate::console::Verbosity::Normal,
+            decorated: false,
+        };
+        execute(&args, &cli, &console).unwrap();
 
         assert!(custom_out.path().join("custom.tar").exists());
     }
@@ -1137,7 +1152,12 @@ mod tests {
             no_ansi: false,
         };
 
-        execute(&args, &cli).unwrap();
+        let console = crate::console::Console {
+            interactive: false,
+            verbosity: crate::console::Verbosity::Normal,
+            decorated: false,
+        };
+        execute(&args, &cli, &console).unwrap();
 
         assert!(out.path().join("my-custom-name.tar").exists());
     }
@@ -1190,7 +1210,12 @@ mod tests {
             no_ansi: false,
         };
 
-        execute(&args, &cli).unwrap();
+        let console = crate::console::Console {
+            interactive: false,
+            verbosity: crate::console::Verbosity::Normal,
+            decorated: false,
+        };
+        execute(&args, &cli, &console).unwrap();
 
         let tar_path = out.path().join("filtered.tar");
         assert!(tar_path.exists());
@@ -1255,7 +1280,12 @@ mod tests {
             no_ansi: false,
         };
 
-        execute(&args, &cli).unwrap();
+        let console = crate::console::Console {
+            interactive: false,
+            verbosity: crate::console::Verbosity::Normal,
+            decorated: false,
+        };
+        execute(&args, &cli, &console).unwrap();
 
         let tar_path = out.path().join("with-excludes.tar");
         assert!(tar_path.exists());
@@ -1321,7 +1351,12 @@ mod tests {
             no_ansi: false,
         };
 
-        execute(&args, &cli).unwrap();
+        let console = crate::console::Console {
+            interactive: false,
+            verbosity: crate::console::Verbosity::Normal,
+            decorated: false,
+        };
+        execute(&args, &cli, &console).unwrap();
 
         let tar_path = out.path().join("unfiltered.tar");
         assert!(tar_path.exists());
@@ -1383,7 +1418,12 @@ mod tests {
             no_ansi: false,
         };
 
-        let result = execute(&args, &cli);
+        let console = crate::console::Console {
+            interactive: false,
+            verbosity: crate::console::Verbosity::Normal,
+            decorated: false,
+        };
+        let result = execute(&args, &cli, &console);
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("rar"));
     }

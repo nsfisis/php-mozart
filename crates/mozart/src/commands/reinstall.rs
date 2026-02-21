@@ -65,7 +65,11 @@ pub struct ReinstallArgs {
 
 // ─── Main entry point ─────────────────────────────────────────────────────────
 
-pub fn execute(args: &ReinstallArgs, cli: &super::Cli) -> anyhow::Result<()> {
+pub fn execute(
+    args: &ReinstallArgs,
+    cli: &super::Cli,
+    console: &crate::console::Console,
+) -> anyhow::Result<()> {
     // Step 1: Resolve working directory
     let working_dir = match &cli.working_dir {
         Some(dir) => PathBuf::from(dir),
@@ -167,7 +171,10 @@ pub fn execute(args: &ReinstallArgs, cli: &super::Cli) -> anyhow::Result<()> {
         let locked = match locked {
             Some(lp) => lp,
             None => {
-                eprintln!("  Warning: {} is not in the lock file; skipping.", pkg.name);
+                console.info(&format!(
+                    "  Warning: {} is not in the lock file; skipping.",
+                    pkg.name
+                ));
                 continue;
             }
         };
@@ -175,15 +182,18 @@ pub fn execute(args: &ReinstallArgs, cli: &super::Cli) -> anyhow::Result<()> {
         let dist = match &locked.dist {
             Some(d) => d,
             None => {
-                eprintln!(
+                console.info(&format!(
                     "  Warning: {} has no dist information; skipping.",
                     locked.name
-                );
+                ));
                 continue;
             }
         };
 
-        eprintln!("  - Reinstalling {} ({})", locked.name, locked.version);
+        console.info(&format!(
+            "  - Reinstalling {} ({})",
+            locked.name, locked.version
+        ));
 
         // Remove vendor directory for this package
         let pkg_dir = vendor_dir.join(&locked.name);
@@ -218,7 +228,7 @@ pub fn execute(args: &ReinstallArgs, cli: &super::Cli) -> anyhow::Result<()> {
 
     // Step 9: Regenerate autoloader unless --no-autoloader.
     if !args.no_autoloader {
-        eprintln!("Generating autoload files");
+        console.info("Generating autoload files");
 
         let dev_mode = !args.no_dev && installed.dev;
         let suffix = lock.content_hash.clone();
@@ -237,7 +247,7 @@ pub fn execute(args: &ReinstallArgs, cli: &super::Cli) -> anyhow::Result<()> {
             ignore_platform_reqs: args.ignore_platform_reqs,
         })?;
 
-        eprintln!("Generated autoload files");
+        console.info("Generated autoload files");
     }
 
     Ok(())

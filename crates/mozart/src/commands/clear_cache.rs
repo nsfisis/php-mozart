@@ -8,7 +8,11 @@ pub struct ClearCacheArgs {
     pub gc: bool,
 }
 
-pub fn execute(args: &ClearCacheArgs, cli: &super::Cli) -> anyhow::Result<()> {
+pub fn execute(
+    args: &ClearCacheArgs,
+    cli: &super::Cli,
+    console: &crate::console::Console,
+) -> anyhow::Result<()> {
     let config = build_cache_config(cli);
 
     if args.gc {
@@ -19,8 +23,8 @@ pub fn execute(args: &ClearCacheArgs, cli: &super::Cli) -> anyhow::Result<()> {
         repo_cache.gc(config.cache_ttl, u64::MAX)?;
         files_cache.gc(config.cache_files_ttl, config.cache_files_maxsize)?;
 
-        eprintln!("Cache garbage collection complete.");
-        eprintln!("Cache directory: {}", config.cache_dir.display());
+        console.info("Cache garbage collection complete.");
+        console.info(&format!("Cache directory: {}", config.cache_dir.display()));
     } else {
         // Full clear of all cache directories
         let repo_cache = Cache::repo(&config);
@@ -44,8 +48,8 @@ pub fn execute(args: &ClearCacheArgs, cli: &super::Cli) -> anyhow::Result<()> {
             }
         }
 
-        eprintln!("Cache cleared.");
-        eprintln!("Cache directory: {}", config.cache_dir.display());
+        console.info("Cache cleared.");
+        console.info(&format!("Cache directory: {}", config.cache_dir.display()));
     }
 
     Ok(())

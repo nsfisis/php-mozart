@@ -67,7 +67,11 @@ impl ValidationResult {
 
 // ─── Entry point ─────────────────────────────────────────────────────────────
 
-pub fn execute(args: &ValidateArgs, cli: &super::Cli) -> anyhow::Result<()> {
+pub fn execute(
+    args: &ValidateArgs,
+    cli: &super::Cli,
+    console: &crate::console::Console,
+) -> anyhow::Result<()> {
     let working_dir = match &cli.working_dir {
         Some(dir) => PathBuf::from(dir),
         None => std::env::current_dir()?,
@@ -79,24 +83,28 @@ pub fn execute(args: &ValidateArgs, cli: &super::Cli) -> anyhow::Result<()> {
         None => working_dir.join("composer.json"),
     };
 
+    // Validate-specific exit codes (matching Composer's behavior):
+    //   3 = file not found or not readable
+    //   2 = JSON parse error
+    const VALIDATE_FILE_ERROR: i32 = 3;
+    const VALIDATE_JSON_ERROR: i32 = 2;
+
     // Check file exists
     if !file.exists() {
-        eprintln!(
-            "{}",
-            crate::console::error(&format!("{} not found.", file.display()))
-        );
-        std::process::exit(3);
+        return Err(crate::exit_code::bail(
+            VALIDATE_FILE_ERROR,
+            format!("{} not found.", file.display()),
+        ));
     }
 
     // Read file content
     let content = match std::fs::read_to_string(&file) {
         Ok(c) => c,
         Err(_) => {
-            eprintln!(
-                "{}",
-                crate::console::error(&format!("{} is not readable.", file.display()))
-            );
-            std::process::exit(3);
+            return Err(crate::exit_code::bail(
+                VALIDATE_FILE_ERROR,
+                format!("{} is not readable.", file.display()),
+            ));
         }
     };
 
@@ -104,12 +112,10 @@ pub fn execute(args: &ValidateArgs, cli: &super::Cli) -> anyhow::Result<()> {
     let json_value: serde_json::Value = match serde_json::from_str(&content) {
         Ok(v) => v,
         Err(e) => {
-            eprintln!(
-                "{}",
-                crate::console::error(&format!("{} does not contain valid JSON", file.display()))
-            );
-            eprintln!("{e}");
-            std::process::exit(2);
+            return Err(crate::exit_code::bail(
+                VALIDATE_JSON_ERROR,
+                format!("{} does not contain valid JSON: {e}", file.display()),
+            ));
         }
     };
 
@@ -130,7 +136,7 @@ pub fn execute(args: &ValidateArgs, cli: &super::Cli) -> anyhow::Result<()> {
 
     // Stub for --with-dependencies
     if args.with_dependencies {
-        eprintln!("The --with-dependencies option is not yet implemented");
+        console.info("The --with-dependencies option is not yet implemented");
     }
 
     let exit_code = compute_exit_code(
@@ -141,7 +147,7 @@ pub fn execute(args: &ValidateArgs, cli: &super::Cli) -> anyhow::Result<()> {
         args.strict,
     );
     if exit_code != 0 {
-        std::process::exit(exit_code);
+        return Err(crate::exit_code::bail_silent(exit_code));
     }
 
     Ok(())

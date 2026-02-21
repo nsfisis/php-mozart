@@ -170,41 +170,45 @@ fn is_dir_non_empty(path: &Path) -> bool {
         .unwrap_or(false)
 }
 
-pub fn execute(args: &CreateProjectArgs, cli: &super::Cli) -> anyhow::Result<()> {
+pub fn execute(
+    args: &CreateProjectArgs,
+    cli: &super::Cli,
+    console: &crate::console::Console,
+) -> anyhow::Result<()> {
     // --- Handle deprecated / no-op flags ---
     if args.prefer_source {
-        eprintln!(
+        console.info(&format!(
             "{}",
             console::warning("Source installs not yet supported, falling back to dist.")
-        );
+        ));
     }
 
     if args.dev {
-        eprintln!(
+        console.info(&format!(
             "{}",
             console::warning(
                 "The --dev flag is deprecated. Dev packages are installed by default."
             )
-        );
+        ));
     }
 
     if args.no_custom_installers {
-        eprintln!(
+        console.info(&format!(
             "{}",
             console::warning(
                 "The --no-custom-installers flag is deprecated. Use --no-plugins instead."
             )
-        );
+        ));
     }
 
     if !args.repository.is_empty() || args.repository_url.is_some() || args.add_repository {
-        eprintln!(
+        console.info(&format!(
             "{}",
             console::warning(
                 "Custom repository options (--repository, --repository-url, --add-repository) \
                  are not yet supported and will be ignored."
             )
-        );
+        ));
     }
 
     // --- Step 1: Parse package argument ---
@@ -268,11 +272,11 @@ pub fn execute(args: &CreateProjectArgs, cli: &super::Cli) -> anyhow::Result<()>
     };
 
     // --- Step 4: Fetch package versions and find best match ---
-    eprintln!(
+    console.info(&format!(
         "{}",
         console::info(&format!("Creating project from package {package_name}"))
-    );
-    eprintln!("Loading composer repositories with package information");
+    ));
+    console.info("Loading composer repositories with package information");
 
     let versions = packagist::fetch_package_versions(&package_name, None)?;
 
@@ -306,10 +310,10 @@ pub fn execute(args: &CreateProjectArgs, cli: &super::Cli) -> anyhow::Result<()>
 
     let concrete_version = best.version.clone();
 
-    eprintln!(
+    console.info(&format!(
         "{}",
         console::info(&format!("Installing {package_name} ({concrete_version})"))
-    );
+    ));
 
     // --- Step 5: Create target directory and download+extract ---
     std::fs::create_dir_all(&target_dir)?;
@@ -337,10 +341,10 @@ pub fn execute(args: &CreateProjectArgs, cli: &super::Cli) -> anyhow::Result<()>
         other => anyhow::bail!("Unsupported dist type: {other}"),
     }
 
-    eprintln!(
+    console.info(&format!(
         "{}",
         console::info(&format!("Created project in {}", target_dir.display()))
-    );
+    ));
 
     // --- Step 7: VCS removal ---
     // Remove VCS metadata unless --keep-vcs is set.
@@ -354,13 +358,13 @@ pub fn execute(args: &CreateProjectArgs, cli: &super::Cli) -> anyhow::Result<()>
     let composer_path = target_dir.join("composer.json");
 
     if !composer_path.exists() {
-        eprintln!(
+        console.info(&format!(
             "{}",
             console::warning(&format!(
                 "No composer.json found in {}. Skipping dependency installation.",
                 target_dir.display()
             ))
-        );
+        ));
         return Ok(());
     }
 
@@ -372,10 +376,10 @@ pub fn execute(args: &CreateProjectArgs, cli: &super::Cli) -> anyhow::Result<()>
 
     // --- Step 6 continued: dependency resolution and install ---
     if args.no_install {
-        eprintln!(
+        console.info(&format!(
             "{}",
             console::comment("Skipping dependency installation (--no-install).")
-        );
+        ));
         return Ok(());
     }
 
@@ -416,15 +420,14 @@ pub fn execute(args: &CreateProjectArgs, cli: &super::Cli) -> anyhow::Result<()>
         repo_cache: None,
     };
 
-    eprintln!("Resolving dependencies...");
+    console.info("Resolving dependencies...");
 
-    let resolved = match resolver::resolve(&request) {
-        Ok(packages) => packages,
-        Err(e) => {
-            eprintln!("{}", console::error(&e.to_string()));
-            std::process::exit(1);
-        }
-    };
+    let resolved = resolver::resolve(&request).map_err(|e| {
+        crate::exit_code::bail(
+            crate::exit_code::DEPENDENCY_RESOLUTION_FAILED,
+            e.to_string(),
+        )
+    })?;
 
     let composer_json_content = std::fs::read_to_string(&composer_path)?;
 
@@ -444,22 +447,22 @@ pub fn execute(args: &CreateProjectArgs, cli: &super::Cli) -> anyhow::Result<()>
         .filter(|c| matches!(c.kind, super::update::ChangeKind::Install { .. }))
         .collect();
 
-    eprintln!(
+    console.info(&format!(
         "{}",
         console::info(&format!(
             "Package operations: {} install{}, 0 updates, 0 removals",
             installs.len(),
             if installs.len() == 1 { "" } else { "s" },
         ))
-    );
+    ));
 
     for change in &changes {
         if let super::update::ChangeKind::Install { new_version } = &change.kind {
-            eprintln!("  - Installing {} ({})", change.name, new_version);
+            console.info(&format!("  - Installing {} ({})", change.name, new_version));
         }
     }
 
-    eprintln!("Writing lock file");
+    console.info("Writing lock file");
     let lock_path = target_dir.join("composer.lock");
     new_lock.write_to_file(&lock_path)?;
 
@@ -473,10 +476,10 @@ pub fn execute(args: &CreateProjectArgs, cli: &super::Cli) -> anyhow::Result<()>
             .map(|s| s.eq_ignore_ascii_case("source"))
             .unwrap_or(false);
     if prefer_source {
-        eprintln!(
+        console.info(&format!(
             "{}",
             console::warning("Source installs are not yet supported. Falling back to dist.")
-        );
+        ));
     }
 
     super::install::install_from_lock(

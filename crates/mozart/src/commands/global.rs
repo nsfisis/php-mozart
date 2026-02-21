@@ -13,7 +13,11 @@ pub struct GlobalArgs {
 
 // ─── Main entry point ────────────────────────────────────────────────────────
 
-pub fn execute(args: &GlobalArgs, cli: &super::Cli) -> anyhow::Result<()> {
+pub fn execute(
+    args: &GlobalArgs,
+    cli: &super::Cli,
+    console: &crate::console::Console,
+) -> anyhow::Result<()> {
     use clap::Parser as _;
     use std::fs;
 
@@ -21,9 +25,7 @@ pub fn execute(args: &GlobalArgs, cli: &super::Cli) -> anyhow::Result<()> {
 
     fs::create_dir_all(&home)?;
 
-    if !cli.quiet {
-        eprintln!("Changed current directory to {}", home.display());
-    }
+    console.info(&format!("Changed current directory to {}", home.display()));
 
     // SAFETY: single-threaded at this point; no concurrent env access
     unsafe {

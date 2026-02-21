@@ -96,7 +96,11 @@ pub struct RemoveArgs {
     pub apcu_autoloader_prefix: Option<String>,
 }
 
-pub fn execute(args: &RemoveArgs, cli: &super::Cli) -> anyhow::Result<()> {
+pub fn execute(
+    args: &RemoveArgs,
+    cli: &super::Cli,
+    console: &crate::console::Console,
+) -> anyhow::Result<()> {
     // Step 1: Validate inputs
     if args.packages.is_empty() && !args.unused {
         anyhow::bail!("Not enough arguments (missing: \"packages\").");
@@ -104,20 +108,20 @@ pub fn execute(args: &RemoveArgs, cli: &super::Cli) -> anyhow::Result<()> {
 
     // Step 2: Handle deprecated flags
     if args.update_with_dependencies {
-        eprintln!(
+        console.info(&format!(
             "{}",
             console::warning(
                 "The -w / --update-with-dependencies flag is deprecated. Use --with-all-dependencies instead."
             )
-        );
+        ));
     }
     if args.update_with_all_dependencies {
-        eprintln!(
+        console.info(&format!(
             "{}",
             console::warning(
                 "The -W / --update-with-all-dependencies flag is deprecated. Use --with-all-dependencies instead."
             )
-        );
+        ));
     }
 
     // Step 3: Resolve working directory and read composer.json
@@ -135,12 +139,12 @@ pub fn execute(args: &RemoveArgs, cli: &super::Cli) -> anyhow::Result<()> {
 
     // Step 4: Handle --unused flag (deferred implementation)
     if args.unused {
-        eprintln!(
+        console.info(&format!(
             "{}",
             console::warning(
                 "--unused is not yet fully implemented. The resolver will naturally prune unreachable packages."
             )
-        );
+        ));
         // Fall through: if no explicit packages were named, nothing to remove.
         if args.packages.is_empty() {
             return Ok(());
@@ -168,12 +172,12 @@ pub fn execute(args: &RemoveArgs, cli: &super::Cli) -> anyhow::Result<()> {
                 raw.require_dev.remove(&name);
                 any_removed = true;
             } else {
-                eprintln!(
+                console.info(&format!(
                     "{}",
                     console::warning(&format!(
                         "{name} is not required in require-dev and has not been removed."
                     ))
-                );
+                ));
             }
         } else {
             // Auto-detect: look in require first, then require-dev
@@ -192,12 +196,12 @@ pub fn execute(args: &RemoveArgs, cli: &super::Cli) -> anyhow::Result<()> {
                 raw.require_dev.remove(&name);
                 any_removed = true;
             } else {
-                eprintln!(
+                console.info(&format!(
                     "{}",
                     console::warning(&format!(
                         "{name} is not required in your composer.json and has not been removed."
                     ))
-                );
+                ));
             }
         }
     }
@@ -272,35 +276,34 @@ pub fn execute(args: &RemoveArgs, cli: &super::Cli) -> anyhow::Result<()> {
     };
 
     // Print header messages
-    eprintln!("Loading composer repositories with package information");
+    console.info("Loading composer repositories with package information");
     if dev_mode {
-        eprintln!("Updating dependencies (including require-dev)");
+        console.info("Updating dependencies (including require-dev)");
     } else {
-        eprintln!("Updating dependencies");
+        console.info("Updating dependencies");
     }
-    eprintln!("Resolving dependencies...");
+    console.info("Resolving dependencies...");
 
     // Run resolver
-    let mut resolved = match resolver::resolve(&request) {
-        Ok(packages) => packages,
-        Err(e) => {
-            eprintln!("{}", console::error(&e.to_string()));
-            std::process::exit(1);
-        }
-    };
+    let mut resolved = resolver::resolve(&request).map_err(|e| {
+        crate::exit_code::bail(
+            crate::exit_code::DEPENDENCY_RESOLUTION_FAILED,
+            e.to_string(),
+        )
+    })?;
 
     // Read old lock file (if any) for change reporting and partial update
     let old_lock = if lock_path.exists() {
         match lockfile::LockFile::read_from_file(&lock_path) {
             Ok(l) => Some(l),
             Err(e) => {
-                eprintln!(
+                console.info(&format!(
                     "{}",
                     console::warning(&format!(
                         "Could not read existing composer.lock: {}. Treating as a fresh install.",
                         e
                     ))
-                );
+                ));
                 None
             }
         }
@@ -341,12 +344,12 @@ pub fn execute(args: &RemoveArgs, cli: &super::Cli) -> anyhow::Result<()> {
 
         // For --minimal-changes, additionally pin packages beyond the allow list
         if args.minimal_changes {
-            eprintln!(
+            console.info(&format!(
                 "{}",
                 console::info(
                     "Minimal changes mode: preserving locked versions for non-removed packages."
                 )
-            );
+            ));
         }
 
         resolved = super::update::apply_partial_update(resolved, lock, &allow_list);
@@ -385,7 +388,7 @@ pub fn execute(args: &RemoveArgs, cli: &super::Cli) -> anyhow::Result<()> {
         .filter(|c| matches!(c.kind, super::update::ChangeKind::Remove { .. }))
         .collect();
 
-    eprintln!(
+    console.info(&format!(
         "{}",
         console::info(&format!(
             "Package operations: {} install{}, {} update{}, {} removal{}",
@@ -396,23 +399,29 @@ pub fn execute(args: &RemoveArgs, cli: &super::Cli) -> anyhow::Result<()> {
             removals.len(),
             if removals.len() == 1 { "" } else { "s" },
         ))
-    );
+    ));
 
     // Print individual change lines
     for change in &changes {
         match &change.kind {
             super::update::ChangeKind::Remove { old_version } => {
                 if args.dry_run {
-                    eprintln!("  - Would remove {} ({})", change.name, old_version);
+                    console.info(&format!(
+                        "  - Would remove {} ({})",
+                        change.name, old_version
+                    ));
                 } else {
-                    eprintln!("  - Removing {} ({})", change.name, old_version);
+                    console.info(&format!("  - Removing {} ({})", change.name, old_version));
                 }
             }
             super::update::ChangeKind::Install { new_version } => {
                 if args.dry_run {
-                    eprintln!("  - Would install {} ({})", change.name, new_version);
+                    console.info(&format!(
+                        "  - Would install {} ({})",
+                        change.name, new_version
+                    ));
                 } else {
-                    eprintln!("  - Installing {} ({})", change.name, new_version);
+                    console.info(&format!("  - Installing {} ({})", change.name, new_version));
                 }
             }
             super::update::ChangeKind::Update {
@@ -420,15 +429,15 @@ pub fn execute(args: &RemoveArgs, cli: &super::Cli) -> anyhow::Result<()> {
                 new_version,
             } => {
                 if args.dry_run {
-                    eprintln!(
+                    console.info(&format!(
                         "  - Would update {} ({} => {})",
                         change.name, old_version, new_version
-                    );
+                    ));
                 } else {
-                    eprintln!(
+                    console.info(&format!(
                         "  - Updating {} ({} => {})",
                         change.name, old_version, new_version
-                    );
+                    ));
                 }
             }
             super::update::ChangeKind::Unchanged => {}
@@ -437,7 +446,7 @@ pub fn execute(args: &RemoveArgs, cli: &super::Cli) -> anyhow::Result<()> {
 
     // Write lock file (unless --dry-run)
     if !args.dry_run {
-        eprintln!("Writing lock file");
+        console.info("Writing lock file");
         new_lock.write_to_file(&lock_path)?;
     }
 
