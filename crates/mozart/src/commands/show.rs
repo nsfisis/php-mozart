@@ -1229,7 +1229,7 @@ fn show_platform(args: &ShowArgs, working_dir: &Path) -> anyhow::Result<()> {
     let mut platform_packages: Vec<(String, String, String)> = Vec::new(); // (name, version, source)
 
     // Try to detect PHP from the system
-    let php_version = detect_php_version();
+    let php_version = crate::platform::detect_php_version();
 
     // Load platform requirements from lock file if available
     let lock_path = working_dir.join("composer.lock");
@@ -1264,7 +1264,7 @@ fn show_platform(args: &ShowArgs, working_dir: &Path) -> anyhow::Result<()> {
     }
 
     // Detect PHP extensions if PHP is available
-    let extensions = detect_php_extensions();
+    let extensions = crate::platform::detect_php_extensions();
     for ext in &extensions {
         let ext_name = format!("ext-{ext}");
         if !platform_packages.iter().any(|(n, _, _)| *n == ext_name) {
@@ -1329,53 +1329,6 @@ fn show_platform(args: &ShowArgs, working_dir: &Path) -> anyhow::Result<()> {
     }
 
     Ok(())
-}
-
-/// Try to detect the installed PHP version by running `php --version`.
-fn detect_php_version() -> Option<String> {
-    let output = std::process::Command::new("php")
-        .arg("--version")
-        .output()
-        .ok()?;
-
-    if !output.status.success() {
-        return None;
-    }
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    // Parse "PHP 8.2.1 (cli) ..." → "8.2.1"
-    let first_line = stdout.lines().next()?;
-    let parts: Vec<&str> = first_line.split_whitespace().collect();
-    if parts.len() >= 2 && parts[0] == "PHP" {
-        Some(parts[1].to_string())
-    } else {
-        None
-    }
-}
-
-/// Try to detect PHP extensions by running `php -m`.
-fn detect_php_extensions() -> Vec<String> {
-    let output = match std::process::Command::new("php").arg("-m").output() {
-        Ok(o) => o,
-        Err(_) => return vec![],
-    };
-
-    if !output.status.success() {
-        return vec![];
-    }
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    stdout
-        .lines()
-        .filter(|line| {
-            let l = line.trim();
-            !l.is_empty()
-                && !l.starts_with('[')
-                && l.chars()
-                    .all(|c| c.is_alphanumeric() || c == '_' || c == '-')
-        })
-        .map(|l| l.trim().to_lowercase())
-        .collect()
 }
 
 // ─── Available mode ─────────────────────────────────────────────────────────

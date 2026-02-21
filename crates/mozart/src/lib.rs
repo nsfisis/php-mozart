@@ -9,6 +9,7 @@ pub mod lockfile;
 pub mod package;
 pub mod packagist;
 pub mod php_scanner;
+pub mod platform;
 pub mod resolver;
 pub mod validation;
 pub mod version;
