@@ -1,13 +1,86 @@
 use sha1::{Digest, Sha1};
 use std::collections::HashSet;
 use std::fs;
-use std::io::{Cursor, Read};
+use std::io::{Cursor, Read, Write};
 use std::path::Path;
+
+/// A simple download progress tracker that writes to stderr.
+///
+/// When `show` is false, all methods are no-ops. This lets callers toggle
+/// progress display without branching on every call.
+pub struct DownloadProgress {
+    show: bool,
+    total: u64,
+    downloaded: u64,
+    label: String,
+}
+
+impl DownloadProgress {
+    /// Create a new progress tracker.
+    ///
+    /// - `show`: whether to actually display anything.
+    /// - `label`: a human-readable label (e.g. "psr/log (3.0.2)").
+    pub fn new(show: bool, label: impl Into<String>) -> Self {
+        Self {
+            show,
+            total: 0,
+            downloaded: 0,
+            label: label.into(),
+        }
+    }
+
+    /// Set the total expected bytes from a `Content-Length` header.
+    pub fn set_total(&mut self, total: u64) {
+        self.total = total;
+    }
+
+    /// Advance the downloaded byte count and redraw the line.
+    pub fn inc(&mut self, n: u64) {
+        if !self.show {
+            return;
+        }
+        self.downloaded += n;
+        let stderr = std::io::stderr();
+        let mut out = stderr.lock();
+        if let Some(pct) = (self.downloaded * 100).checked_div(self.total) {
+            let _ = write!(
+                out,
+                "\r  Downloading {} ({}/{} bytes, {}%)",
+                self.label, self.downloaded, self.total, pct
+            );
+        } else {
+            let _ = write!(
+                out,
+                "\r  Downloading {} ({} bytes)",
+                self.label, self.downloaded
+            );
+        }
+        let _ = out.flush();
+    }
+
+    /// Clear the progress line from the terminal.
+    pub fn finish(&self) {
+        if !self.show {
+            return;
+        }
+        let stderr = std::io::stderr();
+        let mut out = stderr.lock();
+        // Clear the line with spaces then return to start
+        let _ = write!(out, "\r{}\r", " ".repeat(80));
+        let _ = out.flush();
+    }
+}
 
 /// Download a dist archive from a URL.
 /// Returns the raw bytes of the downloaded archive.
 /// If `expected_shasum` is provided and non-empty, verifies SHA-1 of the downloaded bytes.
-pub fn download_dist(url: &str, expected_shasum: Option<&str>) -> anyhow::Result<Vec<u8>> {
+/// If `progress` is provided, increments it as bytes are received and sets the total from
+/// the `Content-Length` response header.
+pub fn download_dist(
+    url: &str,
+    expected_shasum: Option<&str>,
+    progress: Option<&mut DownloadProgress>,
+) -> anyhow::Result<Vec<u8>> {
     let response = reqwest::blocking::get(url)?;
 
     if !response.status().is_success() {
@@ -18,7 +91,26 @@ pub fn download_dist(url: &str, expected_shasum: Option<&str>) -> anyhow::Result
         );
     }
 
-    let bytes = response.bytes()?.to_vec();
+    // Stream the response body, updating progress as bytes arrive
+    let bytes = if let Some(pb) = progress {
+        if let Some(content_length) = response.content_length() {
+            pb.set_total(content_length);
+        }
+        let mut reader = response;
+        let mut buf = Vec::new();
+        let mut chunk = [0u8; 8192];
+        loop {
+            let n = reader.read(&mut chunk)?;
+            if n == 0 {
+                break;
+            }
+            buf.extend_from_slice(&chunk[..n]);
+            pb.inc(n as u64);
+        }
+        buf
+    } else {
+        response.bytes()?.to_vec()
+    };
 
     // Verify SHA-1 checksum if provided
     if let Some(shasum) = expected_shasum
@@ -199,12 +291,14 @@ pub fn extract_tar_gz(data: &[u8], target_dir: &Path) -> anyhow::Result<()> {
 /// - `dist_shasum`: optional SHA-1 checksum
 /// - `vendor_dir`: path to `vendor/` directory
 /// - `package_name`: e.g. `"monolog/monolog"`
+/// - `progress`: optional mutable progress tracker to update during download
 pub fn install_package(
     dist_url: &str,
     dist_type: &str,
     dist_shasum: Option<&str>,
     vendor_dir: &Path,
     package_name: &str,
+    progress: Option<&mut DownloadProgress>,
 ) -> anyhow::Result<()> {
     let target = vendor_dir.join(package_name);
 
@@ -214,7 +308,7 @@ pub fn install_package(
     }
     fs::create_dir_all(&target)?;
 
-    let bytes = download_dist(dist_url, dist_shasum)?;
+    let bytes = download_dist(dist_url, dist_shasum, progress)?;
 
     match dist_type {
         "zip" => extract_zip(&bytes, &target)?,

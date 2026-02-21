@@ -92,6 +92,41 @@ pub struct InstallArgs {
     pub ignore_platform_reqs: bool,
 }
 
+/// Configuration for `install_from_lock`, replacing positional boolean parameters.
+pub struct InstallConfig {
+    /// Install dev dependencies as well as prod dependencies.
+    pub dev_mode: bool,
+    /// Print what would happen without making changes.
+    pub dry_run: bool,
+    /// Skip generating autoload files.
+    pub no_autoloader: bool,
+    /// Suppress download progress bars.
+    pub no_progress: bool,
+    /// Ignore all platform requirements (php, ext-*, lib-*).
+    pub ignore_platform_reqs: bool,
+    /// Ignore specific platform requirements by name.
+    pub ignore_platform_req: Vec<String>,
+    /// Optimize autoloader by generating a classmap.
+    pub optimize_autoloader: bool,
+    /// Use classmap-only autoloading (implies optimize_autoloader).
+    pub classmap_authoritative: bool,
+}
+
+impl Default for InstallConfig {
+    fn default() -> Self {
+        Self {
+            dev_mode: true,
+            dry_run: false,
+            no_autoloader: false,
+            no_progress: false,
+            ignore_platform_reqs: false,
+            ignore_platform_req: vec![],
+            optimize_autoloader: false,
+            classmap_authoritative: false,
+        }
+    }
+}
+
 /// The action to take for a package during install.
 #[derive(Debug, PartialEq, Eq)]
 pub enum Action {
@@ -201,27 +236,82 @@ pub fn cleanup_empty_vendor_dirs(vendor_dir: &Path) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Check whether a package name refers to a platform package.
+///
+/// Platform packages are: names starting with "php", "ext-", or "lib-".
+fn is_platform_package(name: &str) -> bool {
+    let lower = name.to_lowercase();
+    lower == "php"
+        || lower.starts_with("php-")
+        || lower.starts_with("ext-")
+        || lower.starts_with("lib-")
+}
+
+/// Warn about platform requirements found in locked packages.
+///
+/// Iterates all locked packages' `require` fields, filters for platform entries,
+/// and emits a warning for any that are not in the ignore list (unless
+/// `ignore_platform_reqs` is set).
+fn warn_platform_requirements(
+    packages: &[&lockfile::LockedPackage],
+    ignore_platform_reqs: bool,
+    ignore_platform_req: &[String],
+) {
+    if ignore_platform_reqs {
+        return;
+    }
+
+    let ignored_set: HashSet<String> = ignore_platform_req
+        .iter()
+        .map(|s| s.to_lowercase())
+        .collect();
+
+    for pkg in packages {
+        for (req_name, req_constraint) in &pkg.require {
+            if is_platform_package(req_name) {
+                let lower = req_name.to_lowercase();
+                if !ignored_set.contains(&lower) {
+                    eprintln!(
+                        "{}",
+                        console::warning(&format!(
+                            "Platform requirement {req_name} {req_constraint} (required by {}) \
+                             has not been verified. Platform detection is not yet fully implemented.",
+                            pkg.name
+                        ))
+                    );
+                }
+            }
+        }
+    }
+}
+
+/// Create a download progress tracker for a package.
+fn make_progress(show: bool, pkg_name: &str, version: &str) -> downloader::DownloadProgress {
+    downloader::DownloadProgress::new(show, format!("{pkg_name} ({version})"))
+}
+
 /// Install packages from a lock file into vendor/.
 ///
 /// Used by both the `install` and `update` commands.
 ///
 /// This function:
 /// 1. Determines which packages to install (prod + optionally dev)
-/// 2. Reads currently installed packages
-/// 3. Computes install/update/skip/removal operations
-/// 4. Prints a summary
-/// 5. Executes downloads and removals (unless dry_run)
-/// 6. Writes vendor/composer/installed.json
-/// 7. Cleans up empty vendor directories
-/// 8. Generates the autoloader (unless no_autoloader)
+/// 2. Warns about platform requirements (unless ignored)
+/// 3. Reads currently installed packages
+/// 4. Computes install/update/skip/removal operations
+/// 5. Prints a summary
+/// 6. Executes downloads with optional progress bars (unless dry_run)
+/// 7. Writes vendor/composer/installed.json
+/// 8. Cleans up empty vendor directories
+/// 9. Generates the autoloader (unless no_autoloader)
 pub fn install_from_lock(
     lock: &lockfile::LockFile,
     working_dir: &Path,
     vendor_dir: &Path,
-    dev_mode: bool,
-    dry_run: bool,
-    no_autoloader: bool,
+    config: &InstallConfig,
 ) -> anyhow::Result<()> {
+    let dev_mode = config.dev_mode;
+
     // Step 1: Determine which packages to install
     let mut packages_to_install: Vec<&lockfile::LockedPackage> = lock.packages.iter().collect();
 
@@ -237,13 +327,20 @@ pub fn install_from_lock(
     }
     eprintln!("Verifying lock file contents can be installed on current platform.");
 
-    // Step 2: Read currently installed packages
+    // Step 2: Warn about platform requirements
+    warn_platform_requirements(
+        &packages_to_install,
+        config.ignore_platform_reqs,
+        &config.ignore_platform_req,
+    );
+
+    // Step 3: Read currently installed packages
     let installed = installed::InstalledPackages::read(vendor_dir)?;
 
-    // Step 3: Compute install operations
+    // Step 4: Compute install operations
     let (ops, removals) = compute_operations(&packages_to_install, &installed);
 
-    // Step 4: Print operation summary
+    // Step 5: Print operation summary
     let installs: Vec<_> = ops
         .iter()
         .filter(|(_, a)| matches!(a, Action::Install))
@@ -270,8 +367,8 @@ pub fn install_from_lock(
         );
     }
 
-    // Step 5: Execute operations (unless dry_run)
-    if dry_run {
+    // Step 6: Execute operations (unless dry_run)
+    if config.dry_run {
         for (pkg, action) in &ops {
             match action {
                 Action::Skip => {}
@@ -305,13 +402,18 @@ pub fn install_from_lock(
                 )
             })?;
 
+            let mut progress = make_progress(!config.no_progress, &pkg.name, &pkg.version);
+
             downloader::install_package(
                 &dist.url,
                 &dist.dist_type,
                 dist.shasum.as_deref(),
                 vendor_dir,
                 &pkg.name,
+                Some(&mut progress),
             )?;
+
+            progress.finish();
         }
 
         // Handle removals
@@ -323,12 +425,12 @@ pub fn install_from_lock(
             }
         }
 
-        // Step 6: Clean up empty vendor namespace directories
+        // Step 7: Clean up empty vendor namespace directories
         if !removals.is_empty() {
             cleanup_empty_vendor_dirs(vendor_dir)?;
         }
 
-        // Step 7: Write updated vendor/composer/installed.json
+        // Step 8: Write updated vendor/composer/installed.json
         let mut new_installed = installed::InstalledPackages::new();
         new_installed.dev = dev_mode;
 
@@ -343,9 +445,26 @@ pub fn install_from_lock(
 
         new_installed.write(vendor_dir)?;
 
-        // Step 8: Generate autoloader (unless no_autoloader)
-        if !no_autoloader {
+        // Step 9: Generate autoloader (unless no_autoloader)
+        if !config.no_autoloader {
             eprintln!("Generating autoload files");
+
+            if config.classmap_authoritative {
+                eprintln!(
+                    "{}",
+                    console::info(
+                        "Classmap-authoritative mode: autoloader will only look up classes in the classmap."
+                    )
+                );
+            } else if config.optimize_autoloader {
+                eprintln!(
+                    "{}",
+                    console::info(
+                        "Optimize autoloader: classmap scanning is not yet fully supported. \
+                         PSR-4/PSR-0 autoloading will still be used."
+                    )
+                );
+            }
 
             let suffix = lock.content_hash.clone();
 
@@ -354,6 +473,7 @@ pub fn install_from_lock(
                 vendor_dir: vendor_dir.to_path_buf(),
                 dev_mode,
                 suffix,
+                classmap_authoritative: config.classmap_authoritative,
             })?;
 
             eprintln!("Generated autoload files");
@@ -432,18 +552,41 @@ pub fn execute(args: &InstallArgs, cli: &super::Cli) -> anyhow::Result<()> {
         }
     }
 
-    // Step 5: Determine dev mode and vendor directory
+    // Step 5: Warn about prefer-source (not yet supported)
+    let prefer_source = args.prefer_source
+        || args
+            .prefer_install
+            .as_deref()
+            .map(|s| s.eq_ignore_ascii_case("source"))
+            .unwrap_or(false);
+    if prefer_source {
+        eprintln!(
+            "{}",
+            console::warning(
+                "Warning: Source installs are not yet supported. Falling back to dist."
+            )
+        );
+    }
+
+    // Step 6: Determine dev mode and vendor directory
     let dev_mode = !args.no_dev;
     let vendor_dir = working_dir.join("vendor");
 
-    // Step 6: Delegate to shared install_from_lock()
+    // Step 7: Delegate to shared install_from_lock()
     install_from_lock(
         &lock,
         &working_dir,
         &vendor_dir,
-        dev_mode,
-        args.dry_run,
-        args.no_autoloader,
+        &InstallConfig {
+            dev_mode,
+            dry_run: args.dry_run,
+            no_autoloader: args.no_autoloader,
+            no_progress: args.no_progress,
+            ignore_platform_reqs: args.ignore_platform_reqs,
+            ignore_platform_req: args.ignore_platform_req.clone(),
+            optimize_autoloader: args.optimize_autoloader,
+            classmap_authoritative: args.classmap_authoritative,
+        },
     )
 }
 

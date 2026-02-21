@@ -70,6 +70,7 @@ pub fn execute(args: &DumpAutoloadArgs, cli: &super::Cli) -> anyhow::Result<()> 
         vendor_dir,
         dev_mode,
         suffix,
+        classmap_authoritative: args.classmap_authoritative,
     })?;
 
     eprintln!("Generated autoload files");

@@ -573,13 +573,36 @@ pub fn execute(args: &UpdateArgs, cli: &super::Cli) -> anyhow::Result<()> {
 
     // Step 12: Install packages (unless --no-install or --dry-run)
     if !args.no_install && !args.dry_run {
+        // Warn about prefer-source (not yet supported)
+        let prefer_source = args.prefer_source
+            || args
+                .prefer_install
+                .as_deref()
+                .map(|s| s.eq_ignore_ascii_case("source"))
+                .unwrap_or(false);
+        if prefer_source {
+            eprintln!(
+                "{}",
+                crate::console::warning(
+                    "Warning: Source installs are not yet supported. Falling back to dist."
+                )
+            );
+        }
+
         super::install::install_from_lock(
             &new_lock,
             &working_dir,
             &vendor_dir,
-            dev_mode,
-            false, // dry_run already checked above
-            args.no_autoloader,
+            &super::install::InstallConfig {
+                dev_mode,
+                dry_run: false, // dry_run already checked above
+                no_autoloader: args.no_autoloader,
+                no_progress: args.no_progress,
+                ignore_platform_reqs: args.ignore_platform_reqs,
+                ignore_platform_req: args.ignore_platform_req.clone(),
+                optimize_autoloader: args.optimize_autoloader,
+                classmap_authoritative: args.classmap_authoritative,
+            },
         )?;
     }
 
