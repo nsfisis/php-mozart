@@ -260,6 +260,113 @@ pub fn search_packages(
     Ok((all_results, total))
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Security Advisories API
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// A single security advisory from the Packagist API.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct SecurityAdvisory {
+    #[serde(rename = "advisoryId")]
+    pub advisory_id: String,
+
+    #[serde(rename = "packageName")]
+    pub package_name: String,
+
+    #[serde(rename = "remoteId")]
+    pub remote_id: String,
+
+    pub title: String,
+
+    pub link: Option<String>,
+
+    pub cve: Option<String>,
+
+    /// Composer version constraint string, e.g. ">=1.0,<1.5.1|>=2.0,<2.3"
+    #[serde(rename = "affectedVersions")]
+    pub affected_versions: String,
+
+    pub source: String,
+
+    #[serde(rename = "reportedAt")]
+    pub reported_at: String,
+
+    #[serde(rename = "composerRepository")]
+    pub composer_repository: Option<String>,
+
+    pub severity: Option<String>,
+
+    #[serde(default)]
+    pub sources: Vec<AdvisorySource>,
+}
+
+/// A source entry within a security advisory.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct AdvisorySource {
+    pub name: String,
+    #[serde(rename = "remoteId")]
+    pub remote_id: String,
+}
+
+/// Response from POST `https://packagist.org/api/security-advisories/`.
+#[derive(Debug, Deserialize)]
+pub struct SecurityAdvisoriesResponse {
+    pub advisories: BTreeMap<String, Vec<SecurityAdvisory>>,
+}
+
+/// Fetch security advisories for the given package names from the Packagist API.
+///
+/// Sends a POST request to `https://packagist.org/api/security-advisories/`
+/// with form-encoded package names. Returns advisories grouped by package name.
+///
+/// If the package list is very large (500+), requests are batched in chunks of
+/// 500 names per request and the results are merged.
+pub fn fetch_security_advisories(
+    package_names: &[&str],
+) -> anyhow::Result<BTreeMap<String, Vec<SecurityAdvisory>>> {
+    let client = reqwest::blocking::Client::builder()
+        .user_agent("mozart/0.1.0")
+        .build()?;
+
+    let mut all_advisories: BTreeMap<String, Vec<SecurityAdvisory>> = BTreeMap::new();
+
+    for chunk in package_names.chunks(500) {
+        // Build an application/x-www-form-urlencoded body manually.
+        // Each package is encoded as `packages[]=<name>` and joined with `&`.
+        let body: String = chunk
+            .iter()
+            .map(|name| format!("packages[]={}", url_encode(name)))
+            .collect::<Vec<_>>()
+            .join("&");
+
+        let response = client
+            .post("https://packagist.org/api/security-advisories/")
+            .header("Content-Type", "application/x-www-form-urlencoded")
+            .body(body)
+            .send()?;
+
+        if !response.status().is_success() {
+            anyhow::bail!(
+                "Packagist security advisories request failed (HTTP {})",
+                response.status()
+            );
+        }
+
+        let parsed: SecurityAdvisoriesResponse = response.json()?;
+
+        for (pkg_name, advisories) in parsed.advisories {
+            if !advisories.is_empty() {
+                all_advisories
+                    .entry(pkg_name)
+                    .or_default()
+                    .extend(advisories);
+            }
+        }
+    }
+
+    Ok(all_advisories)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -430,5 +537,93 @@ mod tests {
         let versions = parse_p2_response(json, "test/pkg").unwrap();
         let aliases = versions[0].branch_aliases();
         assert!(aliases.is_empty());
+    }
+
+    // ──────────── SecurityAdvisory parsing tests ─────────────────────────────
+
+    #[test]
+    fn test_parse_security_advisories_response() {
+        let json = r#"{
+            "advisories": {
+                "monolog/monolog": [
+                    {
+                        "advisoryId": "PKSA-b2m0-qqf7-qck4",
+                        "packageName": "monolog/monolog",
+                        "remoteId": "monolog/monolog/2017-11-13-1.yaml",
+                        "title": "Header injection in NativeMailerHandler",
+                        "link": "https://github.com/Seldaek/monolog/pull/683",
+                        "cve": null,
+                        "affectedVersions": ">=1.8.0,<1.12.0",
+                        "source": "FriendsOfPHP/security-advisories",
+                        "reportedAt": "2017-11-13T00:00:00+00:00",
+                        "composerRepository": "https://packagist.org",
+                        "severity": "low",
+                        "sources": [
+                            {
+                                "name": "FriendsOfPHP/security-advisories",
+                                "remoteId": "monolog/monolog/2017-11-13-1.yaml"
+                            }
+                        ]
+                    }
+                ]
+            }
+        }"#;
+
+        let response: SecurityAdvisoriesResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(response.advisories.len(), 1);
+        let advisories = response.advisories.get("monolog/monolog").unwrap();
+        assert_eq!(advisories.len(), 1);
+        let adv = &advisories[0];
+        assert_eq!(adv.advisory_id, "PKSA-b2m0-qqf7-qck4");
+        assert_eq!(adv.package_name, "monolog/monolog");
+        assert_eq!(adv.title, "Header injection in NativeMailerHandler");
+        assert_eq!(adv.affected_versions, ">=1.8.0,<1.12.0");
+        assert_eq!(adv.severity.as_deref(), Some("low"));
+        assert!(adv.cve.is_none());
+        assert_eq!(adv.sources.len(), 1);
+        assert_eq!(adv.sources[0].name, "FriendsOfPHP/security-advisories");
+    }
+
+    #[test]
+    fn test_parse_security_advisories_empty() {
+        let json = r#"{"advisories": {"other/package": []}}"#;
+        let response: SecurityAdvisoriesResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(response.advisories.len(), 1);
+        let advisories = response.advisories.get("other/package").unwrap();
+        assert!(advisories.is_empty());
+    }
+
+    #[test]
+    fn test_parse_security_advisories_null_fields() {
+        let json = r#"{
+            "advisories": {
+                "vendor/pkg": [
+                    {
+                        "advisoryId": "PKSA-0000-0000-0000",
+                        "packageName": "vendor/pkg",
+                        "remoteId": "vendor/pkg/2024-01-01.yaml",
+                        "title": "Some vulnerability",
+                        "link": null,
+                        "cve": null,
+                        "affectedVersions": ">=1.0,<2.0",
+                        "source": "FriendsOfPHP/security-advisories",
+                        "reportedAt": "2024-01-01T00:00:00+00:00",
+                        "composerRepository": null,
+                        "severity": null,
+                        "sources": []
+                    }
+                ]
+            }
+        }"#;
+
+        let response: SecurityAdvisoriesResponse = serde_json::from_str(json).unwrap();
+        let advisories = response.advisories.get("vendor/pkg").unwrap();
+        assert_eq!(advisories.len(), 1);
+        let adv = &advisories[0];
+        assert!(adv.link.is_none());
+        assert!(adv.cve.is_none());
+        assert!(adv.severity.is_none());
+        assert!(adv.composer_repository.is_none());
+        assert!(adv.sources.is_empty());
     }
 }
