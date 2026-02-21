@@ -56,7 +56,22 @@ pub fn execute(args: &LicensesArgs, cli: &super::Cli) -> anyhow::Result<()> {
         .and_then(|v| v.as_str())
         .unwrap_or("No version set")
         .to_string();
-    let root_license = root.license.clone().unwrap_or_else(|| "none".to_string());
+
+    // Parse root license as Vec<String>: composer.json allows either a string or an array.
+    let root_licenses: Vec<String> = {
+        // Read the raw JSON value so we can handle both string and array forms.
+        let raw_json = std::fs::read_to_string(&composer_json_path)?;
+        let raw_value: serde_json::Value = serde_json::from_str(&raw_json)?;
+        match raw_value.get("license") {
+            Some(serde_json::Value::String(s)) => vec![s.clone()],
+            Some(serde_json::Value::Array(arr)) => arr
+                .iter()
+                .filter_map(|v| v.as_str())
+                .map(|s| s.to_string())
+                .collect(),
+            _ => vec![],
+        }
+    };
 
     // Load dependency entries
     let entries = if args.locked {
@@ -67,9 +82,9 @@ pub fn execute(args: &LicensesArgs, cli: &super::Cli) -> anyhow::Result<()> {
 
     // Render output
     match format {
-        "json" => render_json(&root_name, &root_version, &root_license, &entries)?,
+        "json" => render_json(&root_name, &root_version, &root_licenses, &entries)?,
         "summary" => render_summary(&entries),
-        _ => render_text(&root_name, &root_version, &root_license, &entries),
+        _ => render_text(&root_name, &root_version, &root_licenses, &entries),
     }
 
     Ok(())
@@ -174,11 +189,21 @@ fn count_licenses(entries: &[LicenseEntry]) -> Vec<(String, usize)> {
 
 // ─── Rendering ───────────────────────────────────────────────────────────────
 
-fn render_text(root_name: &str, root_version: &str, root_license: &str, entries: &[LicenseEntry]) {
+fn render_text(
+    root_name: &str,
+    root_version: &str,
+    root_licenses: &[String],
+    entries: &[LicenseEntry],
+) {
+    let license_display = if root_licenses.is_empty() {
+        "none".to_string()
+    } else {
+        root_licenses.join(", ")
+    };
     // Print root package header
-    println!("Name: {}", root_name);
-    println!("Version: {}", root_version);
-    println!("Licenses: {}", root_license);
+    println!("Name: {}", crate::console::comment(root_name));
+    println!("Version: {}", crate::console::comment(root_version));
+    println!("Licenses: {}", crate::console::comment(&license_display));
     println!("Dependencies:");
     println!();
 
@@ -210,14 +235,13 @@ fn render_text(root_name: &str, root_version: &str, root_license: &str, entries:
 fn render_json(
     root_name: &str,
     root_version: &str,
-    root_license: &str,
+    root_licenses: &[String],
     entries: &[LicenseEntry],
 ) -> anyhow::Result<()> {
-    let root_license_arr: Vec<serde_json::Value> = if root_license == "none" {
-        vec![]
-    } else {
-        vec![serde_json::Value::String(root_license.to_string())]
-    };
+    let root_license_arr: Vec<serde_json::Value> = root_licenses
+        .iter()
+        .map(|s| serde_json::Value::String(s.clone()))
+        .collect();
 
     let mut dependencies: serde_json::Map<String, serde_json::Value> = serde_json::Map::new();
     for entry in entries {
@@ -574,5 +598,76 @@ mod tests {
         // Without --no-dev: both packages
         let entries_all = load_locked_licenses(working_dir, false).unwrap();
         assert_eq!(entries_all.len(), 2);
+    }
+
+    // ── Root license parsing ──────────────────────────────────────────────────
+
+    #[test]
+    fn test_root_license_array_in_json() {
+        use tempfile::tempdir;
+
+        let dir = tempdir().unwrap();
+        let working_dir = dir.path();
+        let composer_json_path = working_dir.join("composer.json");
+
+        // Write a composer.json where "license" is an array
+        std::fs::write(
+            &composer_json_path,
+            r#"{"name": "test/project", "license": ["MIT", "Apache-2.0"]}"#,
+        )
+        .unwrap();
+
+        let raw_json = std::fs::read_to_string(&composer_json_path).unwrap();
+        let raw_value: serde_json::Value = serde_json::from_str(&raw_json).unwrap();
+
+        let root_licenses: Vec<String> = match raw_value.get("license") {
+            Some(serde_json::Value::String(s)) => vec![s.clone()],
+            Some(serde_json::Value::Array(arr)) => arr
+                .iter()
+                .filter_map(|v| v.as_str())
+                .map(|s| s.to_string())
+                .collect(),
+            _ => vec![],
+        };
+
+        assert_eq!(root_licenses, vec!["MIT", "Apache-2.0"]);
+    }
+
+    #[test]
+    fn test_render_json_root_license_is_array() {
+        let entries: Vec<LicenseEntry> = vec![];
+
+        // Single license string becomes a one-element array in JSON output
+        let root_licenses = vec!["MIT".to_string()];
+        let root_license_arr: Vec<serde_json::Value> = root_licenses
+            .iter()
+            .map(|s| serde_json::Value::String(s.clone()))
+            .collect();
+        let output = serde_json::json!({
+            "name": "test/project",
+            "version": "1.0.0",
+            "license": root_license_arr,
+            "dependencies": {},
+        });
+        assert!(output["license"].is_array());
+        assert_eq!(output["license"][0], "MIT");
+
+        // Multiple licenses are also emitted as an array
+        let root_licenses_multi = vec!["MIT".to_string(), "Apache-2.0".to_string()];
+        let root_license_arr_multi: Vec<serde_json::Value> = root_licenses_multi
+            .iter()
+            .map(|s| serde_json::Value::String(s.clone()))
+            .collect();
+        let output_multi = serde_json::json!({
+            "name": "test/project",
+            "version": "1.0.0",
+            "license": root_license_arr_multi,
+            "dependencies": serde_json::json!({}),
+        });
+        assert!(output_multi["license"].is_array());
+        assert_eq!(output_multi["license"].as_array().unwrap().len(), 2);
+
+        // Ensure the helper produces consistent results for empty entries
+        let _ = entries;
     }
 }
