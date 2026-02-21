@@ -1,5 +1,5 @@
+use crate::packagist::SearchResult;
 use clap::Args;
-use serde::{Deserialize, Serialize};
 
 #[derive(Args)]
 pub struct SearchArgs {
@@ -22,26 +22,6 @@ pub struct SearchArgs {
     /// Output format (text, json)
     #[arg(short, long)]
     pub format: Option<String>,
-}
-
-/// Maximum number of pages to fetch from the Packagist search API.
-const MAX_PAGES: usize = 20;
-
-#[derive(Debug, Deserialize)]
-struct SearchResponse {
-    results: Vec<SearchResult>,
-    total: u64,
-    next: Option<String>,
-}
-
-#[derive(Debug, Deserialize, Serialize, Clone)]
-struct SearchResult {
-    name: String,
-    description: String,
-    url: String,
-    repository: Option<String>,
-    downloads: u64,
-    favers: u64,
 }
 
 /// Format a large count as a human-readable string (e.g. 1500 -> "1.5K", 2500000 -> "2.5M").
@@ -79,73 +59,10 @@ fn passes_only_vendor(result: &SearchResult, query: &str) -> bool {
     vendor.eq_ignore_ascii_case(query)
 }
 
-/// Percent-encode a string for use in a URL query parameter value.
-/// Encodes spaces as `%20` and other reserved/non-ASCII characters.
-fn url_encode(s: &str) -> String {
-    let mut encoded = String::with_capacity(s.len());
-    for byte in s.bytes() {
-        match byte {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
-                encoded.push(byte as char);
-            }
-            b' ' => encoded.push_str("%20"),
-            other => {
-                encoded.push_str(&format!("%{other:02X}"));
-            }
-        }
-    }
-    encoded
-}
-
 pub fn execute(args: &SearchArgs, _cli: &super::Cli) -> anyhow::Result<()> {
     let query = args.tokens.join(" ");
 
-    let client = reqwest::blocking::Client::builder()
-        .user_agent("mozart/0.1.0")
-        .build()?;
-
-    let mut all_results: Vec<SearchResult> = Vec::new();
-    let mut page = 1usize;
-    let mut next_url: Option<String> = None;
-    let mut total: u64 = 0;
-
-    loop {
-        let response: SearchResponse = if let Some(ref url) = next_url {
-            // Packagist gives us the full next URL; just fetch it
-            let resp = client.get(url).send()?;
-            if !resp.status().is_success() {
-                anyhow::bail!("Packagist search request failed (HTTP {})", resp.status());
-            }
-            resp.json()?
-        } else {
-            // Build the first request URL with query parameters encoded manually
-            let encoded_query = url_encode(&query);
-            let mut url = format!("https://packagist.org/search.json?q={encoded_query}");
-            if let Some(ref t) = args.r#type {
-                url.push_str("&type=");
-                url.push_str(&url_encode(t));
-            }
-
-            let resp = client.get(&url).send()?;
-
-            if !resp.status().is_success() {
-                anyhow::bail!("Packagist search request failed (HTTP {})", resp.status());
-            }
-            resp.json()?
-        };
-
-        if page == 1 {
-            total = response.total;
-        }
-
-        all_results.extend(response.results);
-        next_url = response.next;
-        page += 1;
-
-        if next_url.is_none() || page > MAX_PAGES {
-            break;
-        }
-    }
+    let (all_results, total) = crate::packagist::search_packages(&query, args.r#type.as_deref())?;
 
     // Apply client-side filters
     let mut results: Vec<&SearchResult> = all_results.iter().collect();
@@ -242,6 +159,8 @@ mod tests {
 
     #[test]
     fn test_parse_search_response() {
+        use crate::packagist::SearchResponse;
+
         let json = r#"{
             "results": [
                 {
@@ -286,6 +205,8 @@ mod tests {
 
     #[test]
     fn test_parse_search_response_with_next() {
+        use crate::packagist::SearchResponse;
+
         let json = r#"{
             "results": [],
             "total": 100,

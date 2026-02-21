@@ -120,22 +120,6 @@ pub fn execute(args: &RemoveArgs, cli: &super::Cli) -> anyhow::Result<()> {
         );
     }
 
-    // Warn about flags that are accepted but not fully implemented
-    if args.minimal_changes {
-        eprintln!(
-            "{}",
-            console::warning("--minimal-changes is not yet implemented and will be ignored.")
-        );
-    }
-    if args.no_update_with_dependencies {
-        eprintln!(
-            "{}",
-            console::warning(
-                "--no-update-with-dependencies is not yet implemented and will be ignored."
-            )
-        );
-    }
-
     // Step 3: Resolve working directory and read composer.json
     let working_dir = super::install::resolve_working_dir(cli);
     let composer_path = working_dir.join("composer.json");
@@ -296,7 +280,7 @@ pub fn execute(args: &RemoveArgs, cli: &super::Cli) -> anyhow::Result<()> {
     eprintln!("Resolving dependencies...");
 
     // Run resolver
-    let resolved = match resolver::resolve(&request) {
+    let mut resolved = match resolver::resolve(&request) {
         Ok(packages) => packages,
         Err(e) => {
             eprintln!("{}", console::error(&e.to_string()));
@@ -304,7 +288,7 @@ pub fn execute(args: &RemoveArgs, cli: &super::Cli) -> anyhow::Result<()> {
         }
     };
 
-    // Read old lock file (if any) for change reporting
+    // Read old lock file (if any) for change reporting and partial update
     let old_lock = if lock_path.exists() {
         match lockfile::LockFile::read_from_file(&lock_path) {
             Ok(l) => Some(l),
@@ -322,6 +306,50 @@ pub fn execute(args: &RemoveArgs, cli: &super::Cli) -> anyhow::Result<()> {
     } else {
         None
     };
+
+    // Apply partial update logic for `remove`:
+    //
+    // Composer's default for `remove` is to also update the direct dependencies of the
+    // removed packages (i.e. they become candidates for removal if nothing else needs them).
+    // With --with-all-dependencies the full transitive dependency tree is considered.
+    // With --no-update-with-dependencies only the removed packages themselves are freed.
+    //
+    // We implement this by building an "allow list" of packages that may change:
+    //   - --no-update-with-dependencies: only the removed packages
+    //   - --with-all-dependencies:        removed packages + full transitive deps
+    //   - default:                         removed packages + direct deps (Composer default)
+    // Then we pin everything NOT in the allow list to its locked version.
+    let with_all_deps = args.with_all_dependencies || args.update_with_all_dependencies;
+
+    if let Some(ref lock) = old_lock {
+        let removed_names: Vec<String> = args
+            .packages
+            .iter()
+            .map(|s| s.trim().to_lowercase())
+            .collect();
+
+        let allow_list = if args.no_update_with_dependencies {
+            // Only the removed packages themselves are freed
+            removed_names
+        } else if with_all_deps {
+            super::update::expand_with_all_dependencies(removed_names, lock)
+        } else {
+            // Default: freed packages + their direct dependencies
+            super::update::expand_with_direct_dependencies(removed_names, lock)
+        };
+
+        // For --minimal-changes, additionally pin packages beyond the allow list
+        if args.minimal_changes {
+            eprintln!(
+                "{}",
+                console::info(
+                    "Minimal changes mode: preserving locked versions for non-removed packages."
+                )
+            );
+        }
+
+        resolved = super::update::apply_partial_update(resolved, lock, &allow_list);
+    }
 
     // Get the composer.json content string for content-hash computation.
     // For --dry-run, serialize from memory; otherwise re-read the file we just wrote.

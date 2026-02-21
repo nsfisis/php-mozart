@@ -7,6 +7,7 @@ use crate::validation;
 use crate::version;
 use clap::Args;
 use std::collections::HashMap;
+use std::io::{BufRead, IsTerminal, Write};
 
 #[derive(Args)]
 pub struct RequireArgs {
@@ -126,10 +127,275 @@ pub struct RequireArgs {
     pub apcu_autoloader_prefix: Option<String>,
 }
 
-pub fn execute(args: &RequireArgs, cli: &super::Cli) -> anyhow::Result<()> {
-    if args.packages.is_empty() {
-        anyhow::bail!("Not enough arguments (missing: \"packages\").");
+/// Run the interactive package search+pick loop.
+///
+/// Returns a list of `"vendor/package:constraint"` strings that the user confirmed,
+/// or an empty vec if the user typed nothing / pressed Ctrl-D immediately.
+fn interactive_search_packages(
+    already_required: &std::collections::HashSet<String>,
+    preferred_stability: Stability,
+    fixed: bool,
+) -> anyhow::Result<Vec<String>> {
+    let stdin = std::io::stdin();
+    if !stdin.is_terminal() {
+        anyhow::bail!(
+            "Not enough arguments (missing: \"packages\") and stdin is not a TTY. \
+             Pass package name(s) directly or run interactively."
+        );
     }
+
+    let mut selected: Vec<String> = Vec::new();
+
+    loop {
+        // Prompt for a search query (empty input = done)
+        eprint!("Search for a package: ");
+        let _ = std::io::stderr().flush();
+
+        let query = {
+            let stdin_locked = stdin.lock();
+            let mut lines = stdin_locked.lines();
+            match lines.next() {
+                Some(Ok(line)) => line.trim().to_string(),
+                _ => break, // EOF or error
+            }
+        };
+
+        if query.is_empty() {
+            break;
+        }
+
+        // Search Packagist
+        let (results, total) = match packagist::search_packages(&query, None) {
+            Ok(r) => r,
+            Err(e) => {
+                eprintln!(
+                    "{}",
+                    console::warning(&format!("Search failed: {e}. Try again."))
+                );
+                continue;
+            }
+        };
+
+        // Filter out packages already in require / require-dev
+        let filtered: Vec<&packagist::SearchResult> = results
+            .iter()
+            .filter(|r| !already_required.contains(&r.name.to_lowercase()))
+            .take(15)
+            .collect();
+
+        if filtered.is_empty() {
+            eprintln!(
+                "{}",
+                console::warning(&format!(
+                    "No new packages found for \"{query}\" (total: {total})."
+                ))
+            );
+            continue;
+        }
+
+        eprintln!(
+            "\nFound {} package{} for \"{}\":",
+            filtered.len(),
+            if filtered.len() == 1 { "" } else { "s" },
+            query
+        );
+
+        let name_width = filtered.iter().map(|r| r.name.len()).max().unwrap_or(0);
+        for (idx, result) in filtered.iter().enumerate() {
+            let desc = if result.description.is_empty() {
+                String::new()
+            } else {
+                format!(" — {}", result.description)
+            };
+            eprintln!(
+                "  [{idx}] {:<width$}{desc}",
+                result.name,
+                idx = idx + 1,
+                width = name_width,
+            );
+        }
+        eprintln!("  [0] Search again / enter full package name");
+        eprintln!();
+
+        // Ask user to pick
+        eprint!("Enter package # or name (leave empty to finish): ");
+        let _ = std::io::stderr().flush();
+
+        let choice = {
+            let stdin_locked = stdin.lock();
+            let mut lines = stdin_locked.lines();
+            match lines.next() {
+                Some(Ok(line)) => line.trim().to_string(),
+                _ => break,
+            }
+        };
+
+        if choice.is_empty() {
+            // Empty = done
+            break;
+        }
+
+        // Resolve the chosen package name
+        let package_name: String = if let Ok(num) = choice.parse::<usize>() {
+            if num == 0 {
+                // Search again
+                continue;
+            } else if num <= filtered.len() {
+                filtered[num - 1].name.to_lowercase()
+            } else {
+                eprintln!("{}", console::warning(&format!("Invalid selection: {num}")));
+                continue;
+            }
+        } else {
+            // User typed a full package name (possibly with constraint)
+            choice.to_lowercase()
+        };
+
+        // Determine constraint
+        let (pkg_name, constraint) = if package_name.contains(':') {
+            match validation::parse_require_string(&package_name) {
+                Ok((n, v)) => (n.to_lowercase(), v),
+                Err(e) => {
+                    eprintln!("{}", console::warning(&format!("Invalid: {e}")));
+                    continue;
+                }
+            }
+        } else {
+            if !validation::validate_package_name(&package_name) {
+                eprintln!(
+                    "{}",
+                    console::warning(&format!("Invalid package name: \"{package_name}\""))
+                );
+                continue;
+            }
+
+            eprintln!(
+                "{}",
+                console::info(&format!(
+                    "Using version constraint for {package_name} from Packagist..."
+                ))
+            );
+
+            match packagist::fetch_package_versions(&package_name) {
+                Ok(versions) => {
+                    match version::find_best_candidate(&versions, preferred_stability) {
+                        Some(best) => {
+                            let stability = version::stability_of(&best.version_normalized);
+                            let c = if fixed {
+                                best.version.clone()
+                            } else {
+                                version::find_recommended_require_version(
+                                    &best.version,
+                                    &best.version_normalized,
+                                    stability,
+                                )
+                            };
+                            eprintln!(
+                                "{}",
+                                console::info(&format!("Using version {c} for {package_name}"))
+                            );
+                            (package_name, c)
+                        }
+                        None => {
+                            eprintln!(
+                                "{}",
+                                console::warning(&format!(
+                                    "Could not find a version of \"{package_name}\" matching \
+                                     your minimum-stability. Try specifying it explicitly."
+                                ))
+                            );
+                            continue;
+                        }
+                    }
+                }
+                Err(e) => {
+                    eprintln!(
+                        "{}",
+                        console::warning(&format!(
+                            "Could not fetch versions for \"{package_name}\": {e}"
+                        ))
+                    );
+                    continue;
+                }
+            }
+        };
+
+        selected.push(format!("{pkg_name}:{constraint}"));
+
+        // Ask whether to add more
+        eprint!("Search for another package? [y/N] ");
+        let _ = std::io::stderr().flush();
+
+        let again = {
+            let stdin_locked = stdin.lock();
+            let mut lines = stdin_locked.lines();
+            match lines.next() {
+                Some(Ok(line)) => line.trim().to_lowercase(),
+                _ => break,
+            }
+        };
+
+        if again != "y" && again != "yes" {
+            break;
+        }
+    }
+
+    Ok(selected)
+}
+
+pub fn execute(args: &RequireArgs, cli: &super::Cli) -> anyhow::Result<()> {
+    // Collect the effective list of packages to add.
+    // If none were provided on the CLI, try interactive search (unless --no-interaction).
+    let cli_packages: Vec<String> = if args.packages.is_empty() {
+        if cli.no_interaction {
+            anyhow::bail!("Not enough arguments (missing: \"packages\").");
+        }
+        // Interactive search — we need composer.json first to know what's already required.
+        // We'll perform a quick check that composer.json exists, then run the search.
+        let working_dir = super::install::resolve_working_dir(cli);
+        let composer_path = working_dir.join("composer.json");
+        if !composer_path.exists() {
+            anyhow::bail!(
+                "composer.json not found in {}. Run `mozart init` to create one.",
+                working_dir.display()
+            );
+        }
+        let raw_check = package::read_from_file(&composer_path)?;
+
+        // Build set of already-required packages
+        let mut already_required: std::collections::HashSet<String> =
+            std::collections::HashSet::new();
+        for k in raw_check.require.keys() {
+            already_required.insert(k.to_lowercase());
+        }
+        for k in raw_check.require_dev.keys() {
+            already_required.insert(k.to_lowercase());
+        }
+
+        let preferred_stability = raw_check
+            .minimum_stability
+            .as_deref()
+            .map(|s| match s.to_lowercase().as_str() {
+                "dev" => Stability::Dev,
+                "alpha" => Stability::Alpha,
+                "beta" => Stability::Beta,
+                "rc" | "RC" => Stability::RC,
+                _ => Stability::Stable,
+            })
+            .unwrap_or(Stability::Stable);
+
+        let found =
+            interactive_search_packages(&already_required, preferred_stability, args.fixed)?;
+
+        if found.is_empty() {
+            // Nothing selected — exit cleanly
+            return Ok(());
+        }
+
+        found
+    } else {
+        args.packages.clone()
+    };
 
     // Handle deprecated flags
     if args.no_suggest {
@@ -151,24 +417,6 @@ pub fn execute(args: &RequireArgs, cli: &super::Cli) -> anyhow::Result<()> {
             "{}",
             console::warning(
                 "The -W / --update-with-all-dependencies flag is deprecated. Use --with-all-dependencies instead."
-            )
-        );
-    }
-
-    // Warn about flags that are accepted but not fully implemented
-    if args.with_dependencies || args.update_with_dependencies {
-        eprintln!(
-            "{}",
-            console::warning(
-                "--with-dependencies is not yet implemented; full resolution is always performed."
-            )
-        );
-    }
-    if args.with_all_dependencies || args.update_with_all_dependencies {
-        eprintln!(
-            "{}",
-            console::warning(
-                "--with-all-dependencies is not yet implemented; full resolution is always performed."
             )
         );
     }
@@ -203,7 +451,7 @@ pub fn execute(args: &RequireArgs, cli: &super::Cli) -> anyhow::Result<()> {
     // Process each package argument
     let mut additions: Vec<(String, String, bool)> = Vec::new(); // (name, constraint, is_dev)
 
-    for pkg_arg in &args.packages {
+    for pkg_arg in &cli_packages {
         // Try to parse as "vendor/package:constraint"
         let (name, constraint) = match validation::parse_require_string(pkg_arg) {
             Ok((n, v)) => (n.to_lowercase(), v),
@@ -360,7 +608,7 @@ pub fn execute(args: &RequireArgs, cli: &super::Cli) -> anyhow::Result<()> {
     eprintln!("Resolving dependencies...");
 
     // Run resolver
-    let resolved = match resolver::resolve(&request) {
+    let mut resolved = match resolver::resolve(&request) {
         Ok(packages) => packages,
         Err(e) => {
             eprintln!("{}", console::error(&e.to_string()));
@@ -368,7 +616,7 @@ pub fn execute(args: &RequireArgs, cli: &super::Cli) -> anyhow::Result<()> {
         }
     };
 
-    // Read old lock file (if any) for change reporting
+    // Read old lock file (if any) for change reporting and partial update
     let old_lock = if lock_path.exists() {
         match lockfile::LockFile::read_from_file(&lock_path) {
             Ok(l) => Some(l),
@@ -386,6 +634,30 @@ pub fn execute(args: &RequireArgs, cli: &super::Cli) -> anyhow::Result<()> {
     } else {
         None
     };
+
+    // Apply --with-dependencies / --with-all-dependencies partial update logic.
+    //
+    // When a lock file exists, pin packages that are NOT in the allow list to their
+    // locked versions to prevent unintended upgrades.
+    let with_deps = args.with_dependencies || args.update_with_dependencies;
+    let with_all_deps = args.with_all_dependencies || args.update_with_all_dependencies;
+
+    if let Some(ref lock) = old_lock {
+        // Build the allow list: newly required package names + (optionally) their deps.
+        let newly_required: Vec<String> =
+            additions.iter().map(|(name, _, _)| name.clone()).collect();
+
+        let allow_list = if with_all_deps {
+            super::update::expand_with_all_dependencies(newly_required, lock)
+        } else if with_deps {
+            super::update::expand_with_direct_dependencies(newly_required, lock)
+        } else {
+            // Default for `require`: only the newly added packages are allowed to change.
+            additions.iter().map(|(name, _, _)| name.clone()).collect()
+        };
+
+        resolved = super::update::apply_partial_update(resolved, lock, &allow_list);
+    }
 
     // Get the composer.json content string for content-hash computation.
     // For --dry-run, serialize from memory; otherwise re-read the file we just wrote.

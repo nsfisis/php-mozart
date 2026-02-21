@@ -1,4 +1,4 @@
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
 #[derive(Debug, Clone, Deserialize)]
@@ -136,6 +136,103 @@ pub fn fetch_package_versions(package_name: &str) -> anyhow::Result<Vec<Packagis
 
     let body = response.text()?;
     parse_p2_response(&body, package_name)
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Packagist search API
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// A single search result from the Packagist search API.
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct SearchResult {
+    pub name: String,
+    pub description: String,
+    pub url: String,
+    pub repository: Option<String>,
+    pub downloads: u64,
+    pub favers: u64,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SearchResponse {
+    pub results: Vec<SearchResult>,
+    pub total: u64,
+    pub next: Option<String>,
+}
+
+/// Maximum number of pages to fetch from the Packagist search API.
+const SEARCH_MAX_PAGES: usize = 20;
+
+/// Percent-encode a string for use in a URL query parameter value.
+fn url_encode(s: &str) -> String {
+    let mut encoded = String::with_capacity(s.len());
+    for byte in s.bytes() {
+        match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                encoded.push(byte as char);
+            }
+            b' ' => encoded.push_str("%20"),
+            other => {
+                encoded.push_str(&format!("%{other:02X}"));
+            }
+        }
+    }
+    encoded
+}
+
+/// Search Packagist for packages matching `query`.
+///
+/// Fetches up to `SEARCH_MAX_PAGES` pages of results and returns the full list.
+/// An optional `package_type` filter can narrow results (e.g. `"library"`).
+pub fn search_packages(
+    query: &str,
+    package_type: Option<&str>,
+) -> anyhow::Result<(Vec<SearchResult>, u64)> {
+    let client = reqwest::blocking::Client::builder()
+        .user_agent("mozart/0.1.0")
+        .build()?;
+
+    let mut all_results: Vec<SearchResult> = Vec::new();
+    let mut page = 1usize;
+    let mut next_url: Option<String> = None;
+    let mut total: u64 = 0;
+
+    loop {
+        let response: SearchResponse = if let Some(ref url) = next_url {
+            let resp = client.get(url).send()?;
+            if !resp.status().is_success() {
+                anyhow::bail!("Packagist search request failed (HTTP {})", resp.status());
+            }
+            resp.json()?
+        } else {
+            let encoded_query = url_encode(query);
+            let mut url = format!("https://packagist.org/search.json?q={encoded_query}");
+            if let Some(t) = package_type {
+                url.push_str("&type=");
+                url.push_str(&url_encode(t));
+            }
+
+            let resp = client.get(&url).send()?;
+            if !resp.status().is_success() {
+                anyhow::bail!("Packagist search request failed (HTTP {})", resp.status());
+            }
+            resp.json()?
+        };
+
+        if page == 1 {
+            total = response.total;
+        }
+
+        all_results.extend(response.results);
+        next_url = response.next;
+        page += 1;
+
+        if next_url.is_none() || page > SEARCH_MAX_PAGES {
+            break;
+        }
+    }
+
+    Ok((all_results, total))
 }
 
 #[cfg(test)]
