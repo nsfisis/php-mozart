@@ -7,6 +7,7 @@ pub mod check_platform_reqs;
 pub mod clear_cache;
 pub mod config;
 pub mod create_project;
+pub mod dependency;
 pub mod depends;
 pub mod diagnose;
 pub mod dump_autoload;

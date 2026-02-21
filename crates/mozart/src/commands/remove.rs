@@ -444,6 +444,7 @@ mod tests {
             dist: None,
             require: BTreeMap::new(),
             require_dev: BTreeMap::new(),
+            conflict: BTreeMap::new(),
             suggest: None,
             package_type: Some("library".to_string()),
             autoload: None,
