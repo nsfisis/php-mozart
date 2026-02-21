@@ -107,7 +107,7 @@ pub struct InstallOp<'a> {
 }
 
 /// Resolve the working directory from the CLI option, falling back to cwd.
-fn resolve_working_dir(cli: &super::Cli) -> PathBuf {
+pub fn resolve_working_dir(cli: &super::Cli) -> PathBuf {
     match &cli.working_dir {
         Some(dir) => PathBuf::from(dir),
         None => std::env::current_dir().expect("Failed to determine current directory"),
@@ -181,7 +181,7 @@ pub fn locked_to_installed_entry(
 }
 
 /// Clean up empty vendor namespace directories after removals.
-fn cleanup_empty_vendor_dirs(vendor_dir: &Path) -> anyhow::Result<()> {
+pub fn cleanup_empty_vendor_dirs(vendor_dir: &Path) -> anyhow::Result<()> {
     if let Ok(entries) = std::fs::read_dir(vendor_dir) {
         for entry in entries.flatten() {
             let path = entry.path();
@@ -198,6 +198,168 @@ fn cleanup_empty_vendor_dirs(vendor_dir: &Path) -> anyhow::Result<()> {
             }
         }
     }
+    Ok(())
+}
+
+/// Install packages from a lock file into vendor/.
+///
+/// Used by both the `install` and `update` commands.
+///
+/// This function:
+/// 1. Determines which packages to install (prod + optionally dev)
+/// 2. Reads currently installed packages
+/// 3. Computes install/update/skip/removal operations
+/// 4. Prints a summary
+/// 5. Executes downloads and removals (unless dry_run)
+/// 6. Writes vendor/composer/installed.json
+/// 7. Cleans up empty vendor directories
+/// 8. Generates the autoloader (unless no_autoloader)
+pub fn install_from_lock(
+    lock: &lockfile::LockFile,
+    working_dir: &Path,
+    vendor_dir: &Path,
+    dev_mode: bool,
+    dry_run: bool,
+    no_autoloader: bool,
+) -> anyhow::Result<()> {
+    // Step 1: Determine which packages to install
+    let mut packages_to_install: Vec<&lockfile::LockedPackage> = lock.packages.iter().collect();
+
+    if dev_mode && let Some(ref dev_pkgs) = lock.packages_dev {
+        packages_to_install.extend(dev_pkgs.iter());
+    }
+
+    // Print install mode header
+    if dev_mode {
+        eprintln!("Installing dependencies from lock file (including require-dev)");
+    } else {
+        eprintln!("Installing dependencies from lock file");
+    }
+    eprintln!("Verifying lock file contents can be installed on current platform.");
+
+    // Step 2: Read currently installed packages
+    let installed = installed::InstalledPackages::read(vendor_dir)?;
+
+    // Step 3: Compute install operations
+    let (ops, removals) = compute_operations(&packages_to_install, &installed);
+
+    // Step 4: Print operation summary
+    let installs: Vec<_> = ops
+        .iter()
+        .filter(|(_, a)| matches!(a, Action::Install))
+        .collect();
+    let updates: Vec<_> = ops
+        .iter()
+        .filter(|(_, a)| matches!(a, Action::Update))
+        .collect();
+
+    if installs.is_empty() && updates.is_empty() && removals.is_empty() {
+        eprintln!("Nothing to install, update or remove");
+    } else {
+        eprintln!(
+            "{}",
+            console::info(&format!(
+                "Package operations: {} install{}, {} update{}, {} removal{}",
+                installs.len(),
+                if installs.len() == 1 { "" } else { "s" },
+                updates.len(),
+                if updates.len() == 1 { "" } else { "s" },
+                removals.len(),
+                if removals.len() == 1 { "" } else { "s" },
+            ))
+        );
+    }
+
+    // Step 5: Execute operations (unless dry_run)
+    if dry_run {
+        for (pkg, action) in &ops {
+            match action {
+                Action::Skip => {}
+                Action::Install => {
+                    eprintln!("  - Would install {} ({})", pkg.name, pkg.version);
+                }
+                Action::Update => {
+                    eprintln!("  - Would update {} ({})", pkg.name, pkg.version);
+                }
+            }
+        }
+        for name in &removals {
+            eprintln!("  - Would remove {name}");
+        }
+    } else {
+        for (pkg, action) in &ops {
+            match action {
+                Action::Skip => continue,
+                Action::Install => {
+                    eprintln!("  - Installing {} ({})", pkg.name, pkg.version);
+                }
+                Action::Update => {
+                    eprintln!("  - Updating {} ({})", pkg.name, pkg.version);
+                }
+            }
+
+            let dist = pkg.dist.as_ref().ok_or_else(|| {
+                anyhow::anyhow!(
+                    "Package {} has no dist information — source installs are not yet supported",
+                    pkg.name
+                )
+            })?;
+
+            downloader::install_package(
+                &dist.url,
+                &dist.dist_type,
+                dist.shasum.as_deref(),
+                vendor_dir,
+                &pkg.name,
+            )?;
+        }
+
+        // Handle removals
+        for name in &removals {
+            eprintln!("  - Removing {name}");
+            let pkg_dir = vendor_dir.join(name);
+            if pkg_dir.exists() {
+                std::fs::remove_dir_all(&pkg_dir)?;
+            }
+        }
+
+        // Step 6: Clean up empty vendor namespace directories
+        if !removals.is_empty() {
+            cleanup_empty_vendor_dirs(vendor_dir)?;
+        }
+
+        // Step 7: Write updated vendor/composer/installed.json
+        let mut new_installed = installed::InstalledPackages::new();
+        new_installed.dev = dev_mode;
+
+        // Collect dev package names from lock
+        if dev_mode && let Some(ref dev_pkgs) = lock.packages_dev {
+            new_installed.dev_package_names = dev_pkgs.iter().map(|p| p.name.clone()).collect();
+        }
+
+        for pkg in &packages_to_install {
+            new_installed.upsert(locked_to_installed_entry(pkg, vendor_dir));
+        }
+
+        new_installed.write(vendor_dir)?;
+
+        // Step 8: Generate autoloader (unless no_autoloader)
+        if !no_autoloader {
+            eprintln!("Generating autoload files");
+
+            let suffix = lock.content_hash.clone();
+
+            crate::autoload::generate(&crate::autoload::AutoloadConfig {
+                project_dir: working_dir.to_path_buf(),
+                vendor_dir: vendor_dir.to_path_buf(),
+                dev_mode,
+                suffix,
+            })?;
+
+            eprintln!("Generated autoload files");
+        }
+    }
+
     Ok(())
 }
 
@@ -270,150 +432,19 @@ pub fn execute(args: &InstallArgs, cli: &super::Cli) -> anyhow::Result<()> {
         }
     }
 
-    // Step 5: Determine which packages to install
+    // Step 5: Determine dev mode and vendor directory
     let dev_mode = !args.no_dev;
-
-    let mut packages_to_install: Vec<&lockfile::LockedPackage> = lock.packages.iter().collect();
-
-    if dev_mode && let Some(ref dev_pkgs) = lock.packages_dev {
-        packages_to_install.extend(dev_pkgs.iter());
-    }
-
-    // Print install mode header
-    if dev_mode {
-        eprintln!("Installing dependencies from lock file (including require-dev)");
-    } else {
-        eprintln!("Installing dependencies from lock file");
-    }
-    eprintln!("Verifying lock file contents can be installed on current platform.");
-
-    // Step 6: Determine the vendor directory
     let vendor_dir = working_dir.join("vendor");
 
-    // Step 7: Read currently installed packages
-    let installed = installed::InstalledPackages::read(&vendor_dir)?;
-
-    // Step 8: Compute install operations
-    let (ops, removals) = compute_operations(&packages_to_install, &installed);
-
-    // Step 9: Print operation summary
-    let installs: Vec<_> = ops
-        .iter()
-        .filter(|(_, a)| matches!(a, Action::Install))
-        .collect();
-    let updates: Vec<_> = ops
-        .iter()
-        .filter(|(_, a)| matches!(a, Action::Update))
-        .collect();
-
-    if installs.is_empty() && updates.is_empty() && removals.is_empty() {
-        eprintln!("Nothing to install, update or remove");
-    } else {
-        eprintln!(
-            "{}",
-            console::info(&format!(
-                "Package operations: {} install{}, {} update{}, {} removal{}",
-                installs.len(),
-                if installs.len() == 1 { "" } else { "s" },
-                updates.len(),
-                if updates.len() == 1 { "" } else { "s" },
-                removals.len(),
-                if removals.len() == 1 { "" } else { "s" },
-            ))
-        );
-    }
-
-    // Step 10: Execute operations (unless --dry-run)
-    if args.dry_run {
-        for (pkg, action) in &ops {
-            match action {
-                Action::Skip => {}
-                Action::Install => {
-                    eprintln!("  - Would install {} ({})", pkg.name, pkg.version);
-                }
-                Action::Update => {
-                    eprintln!("  - Would update {} ({})", pkg.name, pkg.version);
-                }
-            }
-        }
-        for name in &removals {
-            eprintln!("  - Would remove {name}");
-        }
-    } else {
-        for (pkg, action) in &ops {
-            match action {
-                Action::Skip => continue,
-                Action::Install => {
-                    eprintln!("  - Installing {} ({})", pkg.name, pkg.version);
-                }
-                Action::Update => {
-                    eprintln!("  - Updating {} ({})", pkg.name, pkg.version);
-                }
-            }
-
-            let dist = pkg.dist.as_ref().ok_or_else(|| {
-                anyhow::anyhow!(
-                    "Package {} has no dist information — source installs are not yet supported",
-                    pkg.name
-                )
-            })?;
-
-            downloader::install_package(
-                &dist.url,
-                &dist.dist_type,
-                dist.shasum.as_deref(),
-                &vendor_dir,
-                &pkg.name,
-            )?;
-        }
-
-        // Handle removals
-        for name in &removals {
-            eprintln!("  - Removing {name}");
-            let pkg_dir = vendor_dir.join(name);
-            if pkg_dir.exists() {
-                std::fs::remove_dir_all(&pkg_dir)?;
-            }
-        }
-
-        // Step 13: Clean up empty vendor namespace directories
-        if !removals.is_empty() {
-            cleanup_empty_vendor_dirs(&vendor_dir)?;
-        }
-
-        // Step 11: Write updated vendor/composer/installed.json
-        let mut new_installed = installed::InstalledPackages::new();
-        new_installed.dev = dev_mode;
-
-        // Collect dev package names from lock
-        if dev_mode && let Some(ref dev_pkgs) = lock.packages_dev {
-            new_installed.dev_package_names = dev_pkgs.iter().map(|p| p.name.clone()).collect();
-        }
-
-        for pkg in &packages_to_install {
-            new_installed.upsert(locked_to_installed_entry(pkg, &vendor_dir));
-        }
-
-        new_installed.write(&vendor_dir)?;
-
-        // Step 14: Generate autoloader (unless --no-autoloader)
-        if !args.no_autoloader {
-            eprintln!("Generating autoload files");
-
-            let suffix = lock.content_hash.clone();
-
-            crate::autoload::generate(&crate::autoload::AutoloadConfig {
-                project_dir: working_dir.clone(),
-                vendor_dir: vendor_dir.clone(),
-                dev_mode,
-                suffix,
-            })?;
-
-            eprintln!("Generated autoload files");
-        }
-    }
-
-    Ok(())
+    // Step 6: Delegate to shared install_from_lock()
+    install_from_lock(
+        &lock,
+        &working_dir,
+        &vendor_dir,
+        dev_mode,
+        args.dry_run,
+        args.no_autoloader,
+    )
 }
 
 #[cfg(test)]

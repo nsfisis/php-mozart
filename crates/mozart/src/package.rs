@@ -17,6 +17,22 @@ pub enum Stability {
     Dev = 20,
 }
 
+impl Stability {
+    /// Parse a stability string (case-insensitive) into a `Stability` value.
+    ///
+    /// Recognizes: "stable", "RC", "beta", "alpha", "dev".
+    /// Defaults to `Stability::Stable` for unrecognized values.
+    pub fn parse(s: &str) -> Self {
+        match s.to_lowercase().as_str() {
+            "dev" => Stability::Dev,
+            "alpha" => Stability::Alpha,
+            "beta" => Stability::Beta,
+            "rc" => Stability::RC,
+            _ => Stability::Stable,
+        }
+    }
+}
+
 /// A versioned relationship between two packages.
 /// Corresponds to `Composer\Package\Link`.
 #[derive(Debug, Clone)]
