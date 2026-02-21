@@ -12,3 +12,4 @@ pub mod php_scanner;
 pub mod resolver;
 pub mod validation;
 pub mod version;
+pub mod version_bumper;
