@@ -235,7 +235,10 @@ fn normalize_pre_release(s: &str) -> String {
         .to_string();
 
     // Extract the alphabetic prefix (stability name)
-    let alpha: String = normalized.chars().take_while(|c| c.is_alphabetic()).collect();
+    let alpha: String = normalized
+        .chars()
+        .take_while(|c| c.is_alphabetic())
+        .collect();
     // Extract only digits from the rest (strip separators like dots)
     let num: String = normalized
         .chars()

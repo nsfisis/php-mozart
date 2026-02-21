@@ -30,9 +30,7 @@ pub fn download_dist(url: &str, expected_shasum: Option<&str>) -> anyhow::Result
         let computed = format!("{result:x}");
 
         if computed != shasum {
-            anyhow::bail!(
-                "SHA-1 checksum mismatch for {url}: expected {shasum}, got {computed}"
-            );
+            anyhow::bail!("SHA-1 checksum mismatch for {url}: expected {shasum}, got {computed}");
         }
     }
 
