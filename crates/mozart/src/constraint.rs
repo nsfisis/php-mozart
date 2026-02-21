@@ -94,6 +94,9 @@ impl Ord for Version {
 
 impl Version {
     /// Parse a version string into a `Version` struct using Composer normalization rules.
+    ///
+    /// For inline aliases (`"1.0.x-dev as 1.0.0"`), the LEFT side (the real branch version)
+    /// is used. This is the correct behaviour for identifying *what* version a package provides.
     pub fn parse(input: &str) -> Result<Version, String> {
         let s = input.trim();
 
@@ -166,6 +169,28 @@ impl Version {
 
         // Parse the version using regex-like approach
         parse_classical_version(s)
+    }
+
+    /// Parse a version string for use inside a *constraint expression*.
+    ///
+    /// The difference from [`Version::parse`] is the treatment of inline aliases:
+    /// `"1.0.x-dev as 1.0.0"` → takes the **right** side (`1.0.0`).
+    ///
+    /// Inline aliases appear in `require` fields like:
+    /// ```text
+    /// "some/package": "1.0.x-dev as 1.0.0"
+    /// ```
+    /// Here the author wants the constraint to be satisfied by the real version `1.0.0`,
+    /// while the left side (`1.0.x-dev`) indicates the branch that provides it.
+    pub fn parse_for_constraint(input: &str) -> Result<Version, String> {
+        let s = input.trim();
+        // For inline aliases, take the RIGHT side (alias target)
+        let s = if let Some(pos) = s.find(" as ") {
+            s[pos + 4..].trim()
+        } else {
+            s
+        };
+        Version::parse(s)
     }
 
     /// Create a "dev boundary" version for constraint matching (major.minor.patch.build with dev pre-release).
@@ -361,6 +386,12 @@ fn split_or(s: &str) -> Vec<&str> {
 
 /// Parse an AND group (space or comma separated constraints).
 fn parse_and_group(s: &str) -> Result<VersionConstraint, String> {
+    // Detect inline alias first: "1.0.x-dev as 1.0.0"
+    // The entire expression is a single atomic constraint; parse it directly.
+    if s.contains(" as ") {
+        return parse_single(s);
+    }
+
     // Detect hyphen range first: "1.0 - 2.0" where both sides start with a digit
     if let Some(idx) = s.find(" - ") {
         let before = s[..idx].trim();
@@ -461,28 +492,30 @@ fn parse_single(s: &str) -> Result<VersionConstraint, String> {
     }
 
     // Comparison operators
+    // Use parse_for_constraint so that inline aliases like "1.0.x-dev as 1.0.0"
+    // resolve to the alias target (right-hand side) when used in constraint context.
     if let Some(rest) = s.strip_prefix(">=") {
-        let v = Version::parse(rest.trim())?;
+        let v = Version::parse_for_constraint(rest.trim())?;
         return Ok(VersionConstraint::Single(Constraint::GreaterThanOrEqual(v)));
     }
     if let Some(rest) = s.strip_prefix("<=") {
-        let v = Version::parse(rest.trim())?;
+        let v = Version::parse_for_constraint(rest.trim())?;
         return Ok(VersionConstraint::Single(Constraint::LessThanOrEqual(v)));
     }
     if let Some(rest) = s.strip_prefix("!=") {
-        let v = Version::parse(rest.trim())?;
+        let v = Version::parse_for_constraint(rest.trim())?;
         return Ok(VersionConstraint::Single(Constraint::NotEqual(v)));
     }
     if let Some(rest) = s.strip_prefix('>') {
-        let v = Version::parse(rest.trim())?;
+        let v = Version::parse_for_constraint(rest.trim())?;
         return Ok(VersionConstraint::Single(Constraint::GreaterThan(v)));
     }
     if let Some(rest) = s.strip_prefix('<') {
-        let v = Version::parse(rest.trim())?;
+        let v = Version::parse_for_constraint(rest.trim())?;
         return Ok(VersionConstraint::Single(Constraint::LessThan(v)));
     }
     if let Some(rest) = s.strip_prefix('=') {
-        let v = Version::parse(rest.trim())?;
+        let v = Version::parse_for_constraint(rest.trim())?;
         return Ok(VersionConstraint::Single(Constraint::Exact(v)));
     }
 
@@ -491,8 +524,8 @@ fn parse_single(s: &str) -> Result<VersionConstraint, String> {
         return parse_wildcard(s);
     }
 
-    // Exact version
-    let v = Version::parse(s)?;
+    // Exact version (may carry an inline alias; take the alias target for matching)
+    let v = Version::parse_for_constraint(s)?;
     Ok(VersionConstraint::Single(Constraint::Exact(v)))
 }
 
@@ -590,8 +623,8 @@ fn parse_hyphen_range(s: &str) -> Result<VersionConstraint, String> {
         return Err(format!("Invalid hyphen range: {s}"));
     }
 
-    let lower_v = Version::parse(parts[0].trim())?;
-    let upper_v = Version::parse(parts[1].trim())?;
+    let lower_v = Version::parse_for_constraint(parts[0].trim())?;
+    let upper_v = Version::parse_for_constraint(parts[1].trim())?;
 
     Ok(VersionConstraint::And(vec![
         VersionConstraint::Single(Constraint::GreaterThanOrEqual(lower_v)),
@@ -697,6 +730,38 @@ mod tests {
         let v = Version::parse("1.0.x-dev as 1.0.0").unwrap();
         // Takes left side: 1.0.x-dev
         assert!(v.is_dev_branch);
+    }
+
+    #[test]
+    fn test_parse_for_constraint_inline_alias() {
+        // parse_for_constraint takes the RIGHT side of an inline alias
+        let v = Version::parse_for_constraint("1.0.x-dev as 1.0.0").unwrap();
+        assert!(!v.is_dev_branch);
+        assert_eq!(v.major, 1);
+        assert_eq!(v.minor, 0);
+        assert_eq!(v.patch, 0);
+        assert_eq!(v.pre_release, None);
+    }
+
+    #[test]
+    fn test_parse_for_constraint_no_alias() {
+        // Without an alias, parse_for_constraint behaves like parse
+        let v = Version::parse_for_constraint("1.2.3").unwrap();
+        assert_eq!(v.major, 1);
+        assert_eq!(v.minor, 2);
+        assert_eq!(v.patch, 3);
+        assert!(!v.is_dev_branch);
+    }
+
+    #[test]
+    fn test_constraint_inline_alias_exact_matches_target() {
+        // A constraint written as "1.0.x-dev as 1.0.0" should match 1.0.0 (the alias target)
+        let c = VersionConstraint::parse("1.0.x-dev as 1.0.0").unwrap();
+        let target = Version::parse("1.0.0").unwrap();
+        assert!(c.matches(&target));
+        // But NOT a different version
+        let other = Version::parse("1.1.0").unwrap();
+        assert!(!c.matches(&other));
     }
 
     // ──────────── Version ordering ────────────

@@ -101,6 +101,37 @@ impl fmt::Display for ComposerVersion {
 }
 
 impl ComposerVersion {
+    /// Parse a branch alias target like "2.x-dev" or "1.0.x-dev" into a ComposerVersion
+    /// with dev stability.
+    ///
+    /// Used to represent aliased dev branches in the resolver. The version number is taken
+    /// from the numeric prefix (e.g. "2.x-dev" → major=2, minor=0, patch=0, build=0, stability=dev).
+    /// This allows constraints like `^2.0` to match `dev-master` when it is aliased to `2.x-dev`.
+    pub fn from_branch_alias_target(alias_target: &str) -> Option<ComposerVersion> {
+        let s = alias_target.trim().to_lowercase();
+        // Must end with "-dev" or ".x-dev"
+        if !s.ends_with("-dev") {
+            return None;
+        }
+        // Strip the trailing "-dev"
+        let base = &s[..s.len() - 4];
+        // Strip optional trailing ".x" segments (e.g. "2.x" → "2", "1.0.x" → "1.0")
+        let base = base.trim_end_matches(".x");
+        // Now parse whatever numeric segments remain
+        let parts: Vec<&str> = base.split('.').collect();
+        let major: u16 = parts.first().and_then(|p| p.parse().ok())?;
+        let minor: u16 = parts.get(1).and_then(|p| p.parse().ok()).unwrap_or(0);
+        let patch: u16 = parts.get(2).and_then(|p| p.parse().ok()).unwrap_or(0);
+        let build: u16 = parts.get(3).and_then(|p| p.parse().ok()).unwrap_or(0);
+        Some(ComposerVersion {
+            major,
+            minor,
+            patch,
+            build,
+            stability: STABILITY_DEV,
+        })
+    }
+
     /// Parse from a Packagist normalized version string like "1.2.3.0", "1.0.0.0-beta1", "1.0.0.0-RC2".
     /// Returns `None` for dev branches (dev-master, dev-*, *.x-dev).
     pub fn from_normalized(normalized: &str) -> Option<ComposerVersion> {
@@ -604,41 +635,64 @@ impl MozartProvider {
         // Convert and filter
         let mut versions = BTreeMap::new();
         for pv in &packagist_versions {
-            let Some(cv) = ComposerVersion::from_normalized(&pv.version_normalized) else {
-                continue; // Skip dev branches
-            };
+            // Build the dependency metadata once (used for both the normal entry
+            // and any branch-alias synthetic entry).
+            let make_deps =
+                |version_string: String, version_normalized: String| VersionDependencies {
+                    require: pv
+                        .require
+                        .iter()
+                        .map(|(k, v)| (k.clone(), v.clone()))
+                        .collect(),
+                    replace: pv
+                        .replace
+                        .iter()
+                        .map(|(k, v)| (k.clone(), v.clone()))
+                        .collect(),
+                    provide: pv
+                        .provide
+                        .iter()
+                        .map(|(k, v)| (k.clone(), v.clone()))
+                        .collect(),
+                    conflict: pv
+                        .conflict
+                        .iter()
+                        .map(|(k, v)| (k.clone(), v.clone()))
+                        .collect(),
+                    version_string,
+                    version_normalized,
+                };
 
-            // Apply minimum-stability filter
-            if !self.passes_stability_filter(package_name, &cv) {
-                continue;
+            match ComposerVersion::from_normalized(&pv.version_normalized) {
+                Some(cv) => {
+                    // Regular (non-dev) version
+                    if self.passes_stability_filter(package_name, &cv) {
+                        let deps = make_deps(pv.version.clone(), pv.version_normalized.clone());
+                        versions.insert(cv, deps);
+                    }
+                }
+                None => {
+                    // Dev branch — check for branch aliases
+                    let aliases = pv.branch_aliases();
+                    for (branch, alias_target) in &aliases {
+                        // The key in branch-alias is the full branch name, e.g. "dev-master".
+                        // Verify it matches this version.
+                        if branch.to_lowercase() != pv.version.to_lowercase() {
+                            continue;
+                        }
+                        if let Some(alias_cv) =
+                            ComposerVersion::from_branch_alias_target(alias_target)
+                            && self.passes_stability_filter(package_name, &alias_cv)
+                        {
+                            // Use the alias target as the normalized version string so
+                            // that constraint matching works correctly.
+                            let deps = make_deps(pv.version.clone(), alias_target.clone());
+                            // Only insert if no real release already occupies this slot
+                            versions.entry(alias_cv).or_insert(deps);
+                        }
+                    }
+                }
             }
-
-            let deps = VersionDependencies {
-                require: pv
-                    .require
-                    .iter()
-                    .map(|(k, v)| (k.clone(), v.clone()))
-                    .collect(),
-                replace: pv
-                    .replace
-                    .iter()
-                    .map(|(k, v)| (k.clone(), v.clone()))
-                    .collect(),
-                provide: pv
-                    .provide
-                    .iter()
-                    .map(|(k, v)| (k.clone(), v.clone()))
-                    .collect(),
-                conflict: pv
-                    .conflict
-                    .iter()
-                    .map(|(k, v)| (k.clone(), v.clone()))
-                    .collect(),
-                version_string: pv.version.clone(),
-                version_normalized: pv.version_normalized.clone(),
-            };
-
-            versions.insert(cv, deps);
         }
 
         let mut cache = self.package_cache.borrow_mut();
@@ -1738,6 +1792,75 @@ mod tests {
         assert!(
             picked == foo_1_5 || picked == foo_2_3,
             "picked version should be one of the available versions"
+        );
+    }
+
+    // ──────────── Branch alias tests ────────────
+
+    #[test]
+    fn test_from_branch_alias_target_x_dev() {
+        let cv = ComposerVersion::from_branch_alias_target("2.x-dev").unwrap();
+        assert_eq!(cv.major, 2);
+        assert_eq!(cv.minor, 0);
+        assert_eq!(cv.patch, 0);
+        assert_eq!(cv.build, 0);
+        assert_eq!(cv.stability, STABILITY_DEV);
+    }
+
+    #[test]
+    fn test_from_branch_alias_target_minor_x_dev() {
+        let cv = ComposerVersion::from_branch_alias_target("1.5.x-dev").unwrap();
+        assert_eq!(cv.major, 1);
+        assert_eq!(cv.minor, 5);
+        assert_eq!(cv.patch, 0);
+        assert_eq!(cv.stability, STABILITY_DEV);
+    }
+
+    #[test]
+    fn test_from_branch_alias_target_patch_x_dev() {
+        let cv = ComposerVersion::from_branch_alias_target("1.0.2.x-dev").unwrap();
+        assert_eq!(cv.major, 1);
+        assert_eq!(cv.minor, 0);
+        assert_eq!(cv.patch, 2);
+        assert_eq!(cv.stability, STABILITY_DEV);
+    }
+
+    #[test]
+    fn test_from_branch_alias_target_invalid() {
+        // Must end with -dev
+        assert!(ComposerVersion::from_branch_alias_target("dev-master").is_none());
+        assert!(ComposerVersion::from_branch_alias_target("2.0.0").is_none());
+        assert!(ComposerVersion::from_branch_alias_target("").is_none());
+    }
+
+    /// Test that a branch alias entry created from "dev-master" aliased to "2.x-dev"
+    /// is contained in the ^2.0 constraint range.
+    #[test]
+    fn test_branch_alias_in_range() {
+        // "2.x-dev" alias target → ComposerVersion { major: 2, stability: STABILITY_DEV }
+        let aliased_cv = ComposerVersion::from_branch_alias_target("2.x-dev").unwrap();
+        // ^2.0 → >=2.0.0.0-dev <3.0.0.0-dev
+        let range = constraint_to_ranges("^2.0").unwrap();
+        assert!(
+            range.contains(&aliased_cv),
+            "dev-master aliased to 2.x-dev should satisfy ^2.0"
+        );
+    }
+
+    /// Test that a branch alias entry for "1.0.x-dev" satisfies a ^1.0 constraint.
+    #[test]
+    fn test_branch_alias_1_x_in_range() {
+        let aliased_cv = ComposerVersion::from_branch_alias_target("1.0.x-dev").unwrap();
+        let range = constraint_to_ranges("^1.0").unwrap();
+        assert!(
+            range.contains(&aliased_cv),
+            "dev branch aliased to 1.0.x-dev should satisfy ^1.0"
+        );
+        // But should NOT satisfy ^2.0
+        let range2 = constraint_to_ranges("^2.0").unwrap();
+        assert!(
+            !range2.contains(&aliased_cv),
+            "1.0.x-dev alias should not satisfy ^2.0"
         );
     }
 

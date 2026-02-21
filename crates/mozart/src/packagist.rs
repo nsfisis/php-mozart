@@ -69,6 +69,41 @@ pub struct PackagistVersion {
     pub notification_url: Option<String>,
 }
 
+impl PackagistVersion {
+    /// Extract the `extra.branch-alias` map from this version's metadata.
+    ///
+    /// Composer packages can declare branch aliases in `extra.branch-alias`:
+    /// ```json
+    /// {
+    ///   "extra": {
+    ///     "branch-alias": {
+    ///       "dev-master": "2.x-dev"
+    ///     }
+    ///   }
+    /// }
+    /// ```
+    ///
+    /// Returns a map from branch name (e.g. `"dev-master"`) to alias target
+    /// (e.g. `"2.x-dev"`). Returns an empty map when no aliases are declared.
+    pub fn branch_aliases(&self) -> BTreeMap<String, String> {
+        let Some(extra) = &self.extra else {
+            return BTreeMap::new();
+        };
+
+        let Some(branch_alias) = extra.get("branch-alias") else {
+            return BTreeMap::new();
+        };
+
+        let Some(map) = branch_alias.as_object() else {
+            return BTreeMap::new();
+        };
+
+        map.iter()
+            .filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_string())))
+            .collect()
+    }
+}
+
 /// Parse a Packagist p2 API JSON response.
 ///
 /// The response format is: `{"packages": {"vendor/package": [...]}}`.
@@ -178,5 +213,100 @@ mod tests {
         assert_eq!(versions.len(), 2);
         assert_eq!(versions[0].version, "dev-master");
         assert_eq!(versions[1].version, "1.0.0");
+    }
+
+    // ──────────── branch_aliases() tests ────────────
+
+    #[test]
+    fn test_branch_aliases_present() {
+        let json = r#"{
+            "packages": {
+                "test/pkg": [
+                    {
+                        "version": "dev-master",
+                        "version_normalized": "dev-master",
+                        "require": {},
+                        "extra": {
+                            "branch-alias": {
+                                "dev-master": "2.x-dev"
+                            }
+                        }
+                    }
+                ]
+            }
+        }"#;
+
+        let versions = parse_p2_response(json, "test/pkg").unwrap();
+        let aliases = versions[0].branch_aliases();
+        assert_eq!(aliases.len(), 1);
+        assert_eq!(aliases.get("dev-master").unwrap(), "2.x-dev");
+    }
+
+    #[test]
+    fn test_branch_aliases_multiple() {
+        let json = r#"{
+            "packages": {
+                "test/pkg": [
+                    {
+                        "version": "dev-master",
+                        "version_normalized": "dev-master",
+                        "require": {},
+                        "extra": {
+                            "branch-alias": {
+                                "dev-master": "2.x-dev",
+                                "dev-1.x": "1.5.x-dev"
+                            }
+                        }
+                    }
+                ]
+            }
+        }"#;
+
+        let versions = parse_p2_response(json, "test/pkg").unwrap();
+        let aliases = versions[0].branch_aliases();
+        assert_eq!(aliases.len(), 2);
+        assert_eq!(aliases.get("dev-master").unwrap(), "2.x-dev");
+        assert_eq!(aliases.get("dev-1.x").unwrap(), "1.5.x-dev");
+    }
+
+    #[test]
+    fn test_branch_aliases_no_extra() {
+        let json = r#"{
+            "packages": {
+                "test/pkg": [
+                    {
+                        "version": "dev-master",
+                        "version_normalized": "dev-master",
+                        "require": {}
+                    }
+                ]
+            }
+        }"#;
+
+        let versions = parse_p2_response(json, "test/pkg").unwrap();
+        let aliases = versions[0].branch_aliases();
+        assert!(aliases.is_empty());
+    }
+
+    #[test]
+    fn test_branch_aliases_extra_without_branch_alias_key() {
+        let json = r#"{
+            "packages": {
+                "test/pkg": [
+                    {
+                        "version": "dev-master",
+                        "version_normalized": "dev-master",
+                        "require": {},
+                        "extra": {
+                            "installer-name": "my-plugin"
+                        }
+                    }
+                ]
+            }
+        }"#;
+
+        let versions = parse_p2_response(json, "test/pkg").unwrap();
+        let aliases = versions[0].branch_aliases();
+        assert!(aliases.is_empty());
     }
 }
