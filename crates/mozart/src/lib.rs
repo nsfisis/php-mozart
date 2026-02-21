@@ -1,3 +1,4 @@
+pub mod archiver;
 pub mod autoload;
 pub mod cache;
 pub mod commands;
