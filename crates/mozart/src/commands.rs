@@ -5,6 +5,7 @@ pub mod browse;
 pub mod bump;
 pub mod check_platform_reqs;
 pub mod clear_cache;
+pub mod completion;
 pub mod config;
 pub mod create_project;
 pub mod dependency;
@@ -105,6 +106,9 @@ pub enum Commands {
     #[command(name = "clear-cache", alias = "clearcache", alias = "cc")]
     ClearCache(clear_cache::ClearCacheArgs),
 
+    /// Generate shell completion scripts
+    Completion(completion::CompletionArgs),
+
     /// Sets config options
     Config(config::ConfigArgs),
 
@@ -203,6 +207,7 @@ pub fn execute(cli: &Cli) -> anyhow::Result<()> {
         Commands::Bump(args) => bump::execute(args, cli, &console),
         Commands::CheckPlatformReqs(args) => check_platform_reqs::execute(args, cli, &console),
         Commands::ClearCache(args) => clear_cache::execute(args, cli, &console),
+        Commands::Completion(args) => completion::execute(args, cli, &console),
         Commands::Config(args) => config::execute(args, cli, &console),
         Commands::CreateProject(args) => create_project::execute(args, cli, &console),
         Commands::Depends(args) => depends::execute(args, cli, &console),
