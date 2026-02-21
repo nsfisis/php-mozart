@@ -1,4 +1,5 @@
 use clap::Args;
+use std::path::PathBuf;
 
 #[derive(Args)]
 pub struct DumpAutoloadArgs {
@@ -47,6 +48,31 @@ pub struct DumpAutoloadArgs {
     pub strict_ambiguous: bool,
 }
 
-pub fn execute(_args: &DumpAutoloadArgs, _cli: &super::Cli) -> anyhow::Result<()> {
-    todo!()
+pub fn execute(args: &DumpAutoloadArgs, cli: &super::Cli) -> anyhow::Result<()> {
+    let working_dir = match &cli.working_dir {
+        Some(dir) => PathBuf::from(dir),
+        None => std::env::current_dir()?,
+    };
+
+    let vendor_dir = working_dir.join("vendor");
+    let dev_mode = !args.no_dev;
+
+    // Determine suffix: read from existing autoload.php, or from lock file, or generate
+    let suffix = crate::autoload::determine_suffix(&working_dir, &vendor_dir)?;
+
+    if args.dry_run {
+        eprintln!("Dry run: would generate autoload files");
+        return Ok(());
+    }
+
+    crate::autoload::generate(&crate::autoload::AutoloadConfig {
+        project_dir: working_dir,
+        vendor_dir,
+        dev_mode,
+        suffix,
+    })?;
+
+    eprintln!("Generated autoload files");
+
+    Ok(())
 }

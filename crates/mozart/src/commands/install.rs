@@ -395,6 +395,22 @@ pub fn execute(args: &InstallArgs, cli: &super::Cli) -> anyhow::Result<()> {
         }
 
         new_installed.write(&vendor_dir)?;
+
+        // Step 14: Generate autoloader (unless --no-autoloader)
+        if !args.no_autoloader {
+            eprintln!("Generating autoload files");
+
+            let suffix = lock.content_hash.clone();
+
+            crate::autoload::generate(&crate::autoload::AutoloadConfig {
+                project_dir: working_dir.clone(),
+                vendor_dir: vendor_dir.clone(),
+                dev_mode,
+                suffix,
+            })?;
+
+            eprintln!("Generated autoload files");
+        }
     }
 
     Ok(())
