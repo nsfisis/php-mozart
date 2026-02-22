@@ -137,18 +137,11 @@ pub async fn execute(
 
     let mut raw = package::read_from_file(&composer_path)?;
 
-    // Step 4: Handle --unused flag (deferred implementation)
-    if args.unused {
-        console.info(&format!(
-            "{}",
-            console::warning(
-                "--unused is not yet fully implemented. The resolver will naturally prune unreachable packages."
-            )
-        ));
-        // Fall through: if no explicit packages were named, nothing to remove.
-        if args.packages.is_empty() {
-            return Ok(());
-        }
+    // Step 4: Handle --unused flag
+    // When --unused is set with no explicit packages, we re-resolve to detect
+    // packages in the lock file that are no longer reachable from root requirements.
+    if args.unused && args.packages.is_empty() {
+        return remove_unused(&raw, &working_dir, args, console).await;
     }
 
     // Step 5: Determine which packages to remove and remove them
@@ -462,6 +455,145 @@ pub async fn execute(
                 dev_mode,
                 dry_run: false,       // dry_run already handled above
                 no_autoloader: false, // always generate autoloader
+                no_progress: args.no_progress,
+                ignore_platform_reqs: args.ignore_platform_reqs,
+                ignore_platform_req: args.ignore_platform_req.clone(),
+                optimize_autoloader: args.optimize_autoloader,
+                classmap_authoritative: args.classmap_authoritative,
+                apcu_autoloader: false,
+                apcu_autoloader_prefix: None,
+            },
+        )
+        .await?;
+    }
+
+    Ok(())
+}
+
+/// Remove unused packages by re-resolving and comparing with the current lock file.
+async fn remove_unused(
+    raw: &package::RawPackageData,
+    working_dir: &std::path::Path,
+    args: &RemoveArgs,
+    console: &mozart_core::console::Console,
+) -> anyhow::Result<()> {
+    let lock_path = working_dir.join("composer.lock");
+
+    if !lock_path.exists() {
+        console.info("No lock file found. Nothing to prune.");
+        return Ok(());
+    }
+
+    let old_lock = lockfile::LockFile::read_from_file(&lock_path)?;
+
+    let dev_mode = !args.update_no_dev;
+
+    let require: Vec<(String, String)> = raw
+        .require
+        .iter()
+        .map(|(k, v)| (k.clone(), v.clone()))
+        .collect();
+    let require_dev: Vec<(String, String)> = raw
+        .require_dev
+        .iter()
+        .map(|(k, v)| (k.clone(), v.clone()))
+        .collect();
+
+    let minimum_stability_str = raw.minimum_stability.as_deref().unwrap_or("stable");
+    let minimum_stability = package::Stability::parse(minimum_stability_str);
+    let composer_prefer_stable = raw
+        .extra_fields
+        .get("prefer-stable")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+
+    let request = ResolveRequest {
+        root_name: raw.name.clone(),
+        require,
+        require_dev,
+        include_dev: dev_mode,
+        minimum_stability,
+        stability_flags: HashMap::new(),
+        prefer_stable: composer_prefer_stable,
+        prefer_lowest: false,
+        platform: PlatformConfig::new(),
+        ignore_platform_reqs: args.ignore_platform_reqs,
+        ignore_platform_req_list: args.ignore_platform_req.clone(),
+        repo_cache: None,
+    };
+
+    console.info("Resolving dependencies to detect unused packages...");
+
+    let resolved = resolver::resolve(&request).await.map_err(|e| {
+        mozart_core::exit_code::bail(
+            mozart_core::exit_code::DEPENDENCY_RESOLUTION_FAILED,
+            e.to_string(),
+        )
+    })?;
+
+    // Build set of resolved package names
+    let resolved_names: std::collections::HashSet<String> = resolved
+        .iter()
+        .map(|p| p.name.to_lowercase())
+        .collect();
+
+    // Find packages in the old lock that are not in the new resolution
+    let mut unused: Vec<String> = Vec::new();
+    for pkg in &old_lock.packages {
+        if !resolved_names.contains(&pkg.name.to_lowercase()) {
+            unused.push(pkg.name.clone());
+        }
+    }
+    if let Some(ref dev_pkgs) = old_lock.packages_dev {
+        for pkg in dev_pkgs {
+            if !resolved_names.contains(&pkg.name.to_lowercase()) {
+                unused.push(pkg.name.clone());
+            }
+        }
+    }
+
+    if unused.is_empty() {
+        console.info("No unused packages found.");
+        return Ok(());
+    }
+
+    for name in &unused {
+        console.info(&format!("  - Removing unused package: {name}"));
+    }
+    console.info(&format!("Found {} unused package(s).", unused.len()));
+
+    if args.dry_run {
+        console.info(&console::comment(
+            "Dry run: lock file not modified.",
+        ));
+        return Ok(());
+    }
+
+    // Re-generate lock file without unused packages
+    let composer_json_content = std::fs::read_to_string(&working_dir.join("composer.json"))?;
+    let new_lock = lockfile::generate_lock_file(&lockfile::LockFileGenerationRequest {
+        resolved_packages: resolved,
+        composer_json_content,
+        composer_json: raw.clone(),
+        include_dev: dev_mode,
+        repo_cache: None,
+    })
+    .await?;
+
+    console.info("Writing lock file");
+    new_lock.write_to_file(&lock_path)?;
+
+    // Install
+    if !args.no_install {
+        let vendor_dir = working_dir.join("vendor");
+        super::install::install_from_lock(
+            &new_lock,
+            working_dir,
+            &vendor_dir,
+            &super::install::InstallConfig {
+                dev_mode,
+                dry_run: false,
+                no_autoloader: false,
                 no_progress: args.no_progress,
                 ignore_platform_reqs: args.ignore_platform_reqs,
                 ignore_platform_req: args.ignore_platform_req.clone(),
