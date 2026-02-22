@@ -251,6 +251,21 @@ fn check_git() -> CheckResult {
         return CheckResult::Warning("git --version returned a non-zero exit code".to_string());
     }
 
+    // Check color.ui setting before parsing the version
+    if let Ok(color_output) = std::process::Command::new("git")
+        .args(["config", "color.ui"])
+        .output()
+    {
+        let color_val = String::from_utf8_lossy(&color_output.stdout);
+        if color_val.trim().eq_ignore_ascii_case("always") {
+            return CheckResult::Warning(
+                "Your git color.ui setting is set to always, this is known to create issues. \
+                 Use \"git config --global color.ui true\" to set it correctly."
+                    .to_string(),
+            );
+        }
+    }
+
     let stdout = String::from_utf8_lossy(&output.stdout);
     let version_str = stdout.trim();
 
@@ -470,7 +485,7 @@ pub async fn execute(
     }
 
     if exit_code != 0 {
-        std::process::exit(exit_code);
+        return Err(mozart_core::exit_code::bail_silent(exit_code));
     }
     Ok(())
 }
