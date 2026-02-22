@@ -192,7 +192,7 @@ fn load_from_installed(working_dir: &Path) -> Result<Vec<PackageInfo>> {
 pub fn get_dependents(
     packages: &[PackageInfo],
     needles: &[String],
-    constraint: Option<&mozart_constraint::VersionConstraint>,
+    constraint: Option<&mozart_semver::VersionConstraint>,
     inverted: bool,
     recursive: bool,
 ) -> Result<Vec<DependencyResult>> {
@@ -317,7 +317,7 @@ fn recurse_dependents(
 fn get_prohibitors(
     packages: &[PackageInfo],
     needles: &[String],
-    constraint: Option<&mozart_constraint::VersionConstraint>,
+    constraint: Option<&mozart_semver::VersionConstraint>,
     _recursive: bool,
 ) -> Result<Vec<DependencyResult>> {
     let mut results: Vec<DependencyResult> = Vec::new();
@@ -333,7 +333,7 @@ fn get_prohibitors(
                 .find(|(k, _)| k.to_lowercase() == needle_lower)
                 && let Some(requested_version) = constraint
                 && let Ok(pkg_constraint) =
-                    mozart_constraint::VersionConstraint::parse(req_constraint_str)
+                    mozart_semver::VersionConstraint::parse(req_constraint_str)
             {
                 // The package requires `needle` but with a different
                 // (incompatible) constraint — it blocks the requested version.
@@ -359,7 +359,7 @@ fn get_prohibitors(
                     .find(|(k, _)| k.to_lowercase() == needle_lower)
                 && let Some(requested_version) = constraint
                 && let Ok(pkg_constraint) =
-                    mozart_constraint::VersionConstraint::parse(req_constraint_str)
+                    mozart_semver::VersionConstraint::parse(req_constraint_str)
                 && constraint_prohibits(requested_version, &pkg_constraint)
             {
                 results.push(DependencyResult {
@@ -380,7 +380,7 @@ fn get_prohibitors(
                 .find(|(k, _)| k.to_lowercase() == needle_lower)
                 && let Some(requested_version) = constraint
                 && let Ok(conflict_constraint) =
-                    mozart_constraint::VersionConstraint::parse(conflict_constraint_str)
+                    mozart_semver::VersionConstraint::parse(conflict_constraint_str)
             {
                 // If the conflict constraint overlaps with (matches) the
                 // requested version range, this package conflicts with it.
@@ -408,8 +408,8 @@ fn get_prohibitors(
 /// We sample a set of "representative versions" from the requested constraint
 /// and check whether none of them satisfy the package's constraint.
 fn constraint_prohibits(
-    requested: &mozart_constraint::VersionConstraint,
-    pkg_constraint: &mozart_constraint::VersionConstraint,
+    requested: &mozart_semver::VersionConstraint,
+    pkg_constraint: &mozart_semver::VersionConstraint,
 ) -> bool {
     // We try to determine if there is any version satisfying *requested* that
     // does NOT satisfy *pkg_constraint*.
@@ -430,8 +430,8 @@ fn constraint_prohibits(
 /// That is, if the conflict constraint matches at least one version that the
 /// requested constraint also matches.
 fn constraint_overlaps(
-    requested: &mozart_constraint::VersionConstraint,
-    conflict_constraint: &mozart_constraint::VersionConstraint,
+    requested: &mozart_semver::VersionConstraint,
+    conflict_constraint: &mozart_semver::VersionConstraint,
 ) -> bool {
     let probes = sample_versions_from_constraint(requested);
     if probes.is_empty() {
@@ -446,9 +446,9 @@ fn constraint_overlaps(
 /// constraint.  These are used for the "does this constraint overlap/prohibit
 /// that constraint?" heuristic.
 fn sample_versions_from_constraint(
-    constraint: &mozart_constraint::VersionConstraint,
-) -> Vec<mozart_constraint::Version> {
-    use mozart_constraint::Version;
+    constraint: &mozart_semver::VersionConstraint,
+) -> Vec<mozart_semver::Version> {
+    use mozart_semver::Version;
 
     // Broad grid of versions to probe
     let candidates: &[&str] = &[
@@ -685,7 +685,7 @@ mod tests {
             make_pkg("root/project", "ROOT", &[("vendor/a", "^1.0")], &[], true),
             make_pkg("vendor/a", "1.0.0", &[], &[], false),
         ];
-        let constraint = mozart_constraint::VersionConstraint::parse("2.0.0").unwrap();
+        let constraint = mozart_semver::VersionConstraint::parse("2.0.0").unwrap();
         let needles = vec!["vendor/a".to_string()];
         let results = get_dependents(&packages, &needles, Some(&constraint), true, false).unwrap();
         assert!(!results.is_empty(), "root should prohibit vendor/a 2.0");
@@ -713,7 +713,7 @@ mod tests {
                 false,
             ),
         ];
-        let constraint = mozart_constraint::VersionConstraint::parse("2.0.0").unwrap();
+        let constraint = mozart_semver::VersionConstraint::parse("2.0.0").unwrap();
         let needles = vec!["vendor/a".to_string()];
         let results = get_dependents(&packages, &needles, Some(&constraint), true, false).unwrap();
         // vendor/b conflicts with vendor/a ^2.0 which covers 2.0.0
@@ -733,7 +733,7 @@ mod tests {
             make_pkg("root/project", "ROOT", &[("vendor/a", "^2.0")], &[], true),
             make_pkg("vendor/a", "2.0.0", &[], &[], false),
         ];
-        let constraint = mozart_constraint::VersionConstraint::parse("2.5.0").unwrap();
+        let constraint = mozart_semver::VersionConstraint::parse("2.5.0").unwrap();
         let needles = vec!["vendor/a".to_string()];
         let results = get_dependents(&packages, &needles, Some(&constraint), true, false).unwrap();
         assert!(

@@ -273,7 +273,7 @@ fn filter_advisories(
             .as_deref()
             .unwrap_or(pkg.version.as_str());
 
-        let installed_ver = match mozart_constraint::Version::parse(version_str) {
+        let installed_ver = match mozart_semver::Version::parse(version_str) {
             Ok(v) => v,
             Err(_) => {
                 eprintln!(
@@ -298,9 +298,7 @@ fn filter_advisories(
             // Normalize single-pipe OR separators (`|`) to double-pipe (`||`)
             // since the Packagist API may use either form.
             let normalized_constraint = normalize_or_separator(&advisory.affected_versions);
-            let constraint = match mozart_constraint::VersionConstraint::parse(
-                &normalized_constraint,
-            ) {
+            let constraint = match mozart_semver::VersionConstraint::parse(&normalized_constraint) {
                 Ok(c) => c,
                 Err(_) => {
                     eprintln!(

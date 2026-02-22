@@ -279,21 +279,21 @@ fn check_requirements(
             }
             Some(detected) => {
                 // Check all constraints
-                let detected_version = match mozart_constraint::Version::parse(&detected.version) {
+                let detected_version = match mozart_semver::Version::parse(&detected.version) {
                     Ok(v) => v,
                     Err(_) => {
                         // Unparseable version → treat as 0.0.0
-                        mozart_constraint::Version::parse("0.0.0").unwrap()
+                        mozart_semver::Version::parse("0.0.0").unwrap()
                     }
                 };
 
                 let mut failed_req: Option<(String, String)> = None;
                 for req in reqs {
-                    let constraint =
-                        match mozart_constraint::VersionConstraint::parse(&req.constraint) {
-                            Ok(c) => c,
-                            Err(_) => continue, // skip unparseable constraints
-                        };
+                    let constraint = match mozart_semver::VersionConstraint::parse(&req.constraint)
+                    {
+                        Ok(c) => c,
+                        Err(_) => continue, // skip unparseable constraints
+                    };
                     if !constraint.matches(&detected_version) {
                         failed_req = Some((req.constraint.clone(), req.provider.clone()));
                         break;

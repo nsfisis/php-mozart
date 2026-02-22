@@ -1,4 +1,4 @@
 [package]
-name = "mozart-constraint"
+name = "mozart-semver"
 version.workspace = true
 edition.workspace = true

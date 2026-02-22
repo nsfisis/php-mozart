@@ -15,8 +15,8 @@ use pubgrub::{
 
 use crate::cache::Cache;
 use crate::packagist;
-use mozart_constraint::{Constraint, VersionConstraint};
 use mozart_core::package::Stability;
+use mozart_semver::{Constraint, VersionConstraint};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Stability constants
@@ -372,7 +372,7 @@ fn single_constraint_to_ranges(c: &Constraint) -> Result<ComposerVS, String> {
 }
 
 /// Convert a `constraint::Version` to a `ComposerVersion`.
-fn version_to_composer(v: &mozart_constraint::Version) -> Result<ComposerVersion, String> {
+fn version_to_composer(v: &mozart_semver::Version) -> Result<ComposerVersion, String> {
     // Dev branches cannot be represented as ComposerVersion
     if v.is_dev_branch {
         return Err(format!(

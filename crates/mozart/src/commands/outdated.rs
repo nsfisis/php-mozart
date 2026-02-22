@@ -371,8 +371,8 @@ fn classify_update(
 
     // We have an update available — classify it
     if let Some(constraint_str) = root_constraint
-        && let Ok(constraint) = mozart_constraint::VersionConstraint::parse(constraint_str)
-        && let Ok(latest_ver) = mozart_constraint::Version::parse(latest_normalized)
+        && let Ok(constraint) = mozart_semver::VersionConstraint::parse(constraint_str)
+        && let Ok(latest_ver) = mozart_semver::Version::parse(latest_normalized)
     {
         if constraint.matches(&latest_ver) {
             return UpdateCategory::SemverCompatible;

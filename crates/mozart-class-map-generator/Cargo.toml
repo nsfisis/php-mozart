@@ -1,16 +1,11 @@
 [package]
-name = "mozart-core"
+name = "mozart-class-map-generator"
 version.workspace = true
 edition.workspace = true
 
 [dependencies]
-mozart-spdx-licenses.workspace = true
 anyhow.workspace = true
-colored.workspace = true
-dialoguer.workspace = true
 regex.workspace = true
-serde.workspace = true
-serde_json.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

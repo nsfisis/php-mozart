@@ -7,14 +7,16 @@ version = "0.1.0"
 edition = "2024"
 
 [workspace.dependencies]
-mozart-constraint = { path = "crates/mozart-constraint" }
-mozart-core = { path = "crates/mozart-core" }
 mozart-archiver = { path = "crates/mozart-archiver" }
-mozart-metadata-minifier = { path = "crates/mozart-metadata-minifier" }
-mozart-spdx-licenses = { path = "crates/mozart-spdx-licenses" }
-mozart-registry = { path = "crates/mozart-registry" }
 mozart-autoload = { path = "crates/mozart-autoload" }
+mozart-class-map-generator = { path = "crates/mozart-class-map-generator" }
+mozart-core = { path = "crates/mozart-core" }
+mozart-metadata-minifier = { path = "crates/mozart-metadata-minifier" }
+mozart-registry = { path = "crates/mozart-registry" }
+mozart-semver = { path = "crates/mozart-semver" }
+mozart-spdx-licenses = { path = "crates/mozart-spdx-licenses" }
 anyhow = "1.0.102"
+assert_cmd = "2.1.2"
 bzip2 = "0.5.2"
 clap = { version = "4.5.60", features = ["derive"] }
 clap_complete = "4.5.66"
@@ -23,6 +25,7 @@ dialoguer = "0.12.0"
 filetime = "0.2.27"
 flate2 = "1.1.9"
 md5 = "0.7.0"
+predicates = "3.1.4"
 pubgrub = "0.3.0"
 regex = "1.12.3"
 reqwest = { version = "0.13.2", features = ["json"] }
@@ -36,5 +39,3 @@ tokio = { version = "1.49.0", features = ["full"] }
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.22", features = ["env-filter", "fmt"] }
 zip = { version = "2.4.2", default-features = false, features = ["deflate"] }
-assert_cmd = "2.1.2"
-predicates = "3.1.4"

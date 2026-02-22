@@ -1078,9 +1078,9 @@ dependencies = [
  "colored",
  "mozart-archiver",
  "mozart-autoload",
- "mozart-constraint",
  "mozart-core",
  "mozart-registry",
+ "mozart-semver",
  "predicates",
  "regex",
  "reqwest",
@@ -1114,15 +1114,20 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "md5",
+ "mozart-class-map-generator",
  "mozart-registry",
- "regex",
  "serde_json",
  "tempfile",
 ]
 
 [[package]]
-name = "mozart-constraint"
+name = "mozart-class-map-generator"
 version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "regex",
+ "tempfile",
+]
 
 [[package]]
 name = "mozart-core"
@@ -1153,9 +1158,9 @@ dependencies = [
  "filetime",
  "flate2",
  "md5",
- "mozart-constraint",
  "mozart-core",
  "mozart-metadata-minifier",
+ "mozart-semver",
  "pubgrub",
  "reqwest",
  "serde",
@@ -1166,6 +1171,10 @@ dependencies = [
  "tokio",
  "zip",
 ]
+
+[[package]]
+name = "mozart-semver"
+version = "0.1.0"
 
 [[package]]
 name = "mozart-spdx-licenses"

@@ -43,7 +43,7 @@ pub async fn execute(
     }
 
     // Parse the version constraint the user is asking about
-    let version_constraint = mozart_constraint::VersionConstraint::parse(&args.version)
+    let version_constraint = mozart_semver::VersionConstraint::parse(&args.version)
         .map_err(|e| anyhow::anyhow!("Invalid version constraint '{}': {}", args.version, e))?;
 
     let recursive = args.tree || args.recursive;
