@@ -48,16 +48,29 @@ pub async fn execute(
         serde_json::from_str(&composer_json_content)?;
 
     // Warn if package is not a project (libraries shouldn't bump)
-    if let Some(ref pkg_type) = root.package_type
-        && pkg_type != "project"
-    {
-        console.info(&format!(
-            "{}",
-            mozart_core::console::warning(&format!(
-                "Warning: Bumping constraints for a non-project package (type=\"{pkg_type}\"). \
-                 Libraries should not pin their dependencies."
-            ))
-        ));
+    match root.package_type.as_deref() {
+        Some("project") => {}
+        Some(pkg_type) => {
+            console.info(&format!(
+                "{}",
+                mozart_core::console::warning(&format!(
+                    "Warning: Bumping constraints for a non-project package (type=\"{pkg_type}\"). \
+                     Libraries should not pin their dependencies."
+                ))
+            ));
+        }
+        None if !args.dev_only => {
+            console.info(&format!(
+                "{}",
+                mozart_core::console::warning(
+                    "Warning: Bumping constraints for a non-project package. \
+                     No type was set so it defaults to \"library\". \
+                     Libraries should not pin their dependencies. \
+                     Consider using --dev-only or setting the type to \"project\"."
+                )
+            ));
+        }
+        None => {}
     }
 
     // Check lock file existence
@@ -171,7 +184,10 @@ pub async fn execute(
 
     if args.dry_run {
         println!("\n{} constraint(s) would be bumped.", total_changes);
-        return Ok(());
+        // Return exit code 1 when dry-run detects changes (useful for CI to detect un-bumped constraints)
+        return Err(mozart_core::exit_code::bail_silent(
+            mozart_core::exit_code::GENERAL_ERROR,
+        ));
     }
 
     // Apply changes to root package
@@ -387,7 +403,14 @@ mod tests {
             verbosity: mozart_core::console::Verbosity::Normal,
             decorated: false,
         };
-        execute(&args, &cli, &console).await.unwrap();
+        let result = execute(&args, &cli, &console).await;
+
+        // dry-run with changes returns exit code 1 (for CI usage)
+        let err = result.unwrap_err();
+        let mozart_err = err
+            .downcast_ref::<mozart_core::exit_code::MozartError>()
+            .expect("should be MozartError");
+        assert_eq!(mozart_err.exit_code, mozart_core::exit_code::GENERAL_ERROR);
 
         // composer.json should be unchanged
         let content = std::fs::read_to_string(dir.path().join("composer.json")).unwrap();
