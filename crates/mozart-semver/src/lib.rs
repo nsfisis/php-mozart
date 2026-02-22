@@ -1,4 +1,5 @@
 use std::cmp::Ordering;
+use std::fmt;
 
 /// A parsed Composer version (always 4 numeric segments + optional stability suffix).
 /// Composer normalizes all versions to `major.minor.patch.build[-stability[N]]`.
@@ -70,11 +71,26 @@ impl Ord for Version {
             return num_cmp;
         }
 
-        // Compare pre-release: None (stable) > any pre-release
+        // Compare pre-release: None (stable) > most pre-releases,
+        // but patch/pl/p pre-releases (stability_rank 5) rank ABOVE stable.
         match (&self.pre_release, &other.pre_release) {
             (None, None) => Ordering::Equal,
-            (None, Some(_)) => Ordering::Greater,
-            (Some(_), None) => Ordering::Less,
+            (None, Some(b)) => {
+                if stability_rank(b) == 5 {
+                    // patch pre-release ranks above stable
+                    Ordering::Less
+                } else {
+                    Ordering::Greater
+                }
+            }
+            (Some(a), None) => {
+                if stability_rank(a) == 5 {
+                    // patch pre-release ranks above stable
+                    Ordering::Greater
+                } else {
+                    Ordering::Less
+                }
+            }
             (Some(a), Some(b)) => {
                 let rank_a = stability_rank(a);
                 let rank_b = stability_rank(b);
@@ -89,6 +105,23 @@ impl Ord for Version {
                 }
             }
         }
+    }
+}
+
+impl fmt::Display for Version {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if self.is_dev_branch {
+            if let Some(ref name) = self.dev_branch_name {
+                return write!(f, "dev-{}", name);
+            }
+            // Numeric dev branch (e.g. "2.x-dev")
+            return write!(f, "{}.{}.{}.{}-dev", self.major, self.minor, self.patch, self.build);
+        }
+        write!(f, "{}.{}.{}.{}", self.major, self.minor, self.patch, self.build)?;
+        if let Some(ref pre) = self.pre_release {
+            write!(f, "-{}", pre)?;
+        }
+        Ok(())
     }
 }
 
@@ -1224,14 +1257,12 @@ mod tests {
     }
 
     #[test]
-    fn test_ordering_stable_lt_patch() {
-        // The Ord impl: (None, Some(_)) => Greater — stable (pre_release=None) beats any
-        // pre_release including "patch1". Even though stability_rank("patch")=5 which is
-        // higher than stable's implicit 0, that path is only reached when both sides are
-        // Some(_). Since stable has pre_release=None, stable > patch version.
+    fn test_ordering_patch_gt_stable() {
+        // In Composer, patch/pl/p pre-releases rank ABOVE stable.
+        // e.g. 1.0.0-patch1 > 1.0.0
         let stable = Version::parse("1.0.0").unwrap();
         let patch = Version::parse("1.0.0-patch1").unwrap();
-        assert!(stable > patch);
+        assert!(patch > stable);
     }
 
     #[test]
@@ -1757,15 +1788,13 @@ mod tests {
 
     #[test]
     fn test_stability_rank_patch_via_ordering() {
-        // The Ord impl: (None, Some(_)) => Greater.
-        // stable has pre_release=None; patch version has pre_release=Some("patch1").
-        // The None arm wins unconditionally: stable is always Greater than any pre_release.
-        // This means "patch" releases (post-release fixes) sort BELOW stable in this impl.
+        // In Composer, patch/pl/p pre-releases rank ABOVE stable.
+        // patch1 > stable for the same numeric version.
         let patch_ver = Version::parse("1.0.0-patch1").unwrap();
         let stable = Version::parse("1.0.0").unwrap();
         assert!(
-            stable > patch_ver,
-            "stable (None pre_release) beats patch pre-release"
+            patch_ver > stable,
+            "patch pre-release ranks above stable"
         );
     }
 

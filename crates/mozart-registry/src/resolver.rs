@@ -1,6 +1,6 @@
 //! Dependency resolver using the pubgrub v0.3.0 algorithm.
 //!
-//! This module converts Composer-style dependency constraints into pubgrub's `Ranges<ComposerVersion>`
+//! This module converts Composer-style dependency constraints into pubgrub's `Ranges<Version>`
 //! and implements `DependencyProvider` for Mozart's package resolution.
 
 use std::cell::RefCell;
@@ -16,250 +16,77 @@ use pubgrub::{
 use crate::cache::Cache;
 use crate::packagist;
 use mozart_core::package::Stability;
-use mozart_semver::{Constraint, VersionConstraint};
+use mozart_semver::{Constraint, Version, VersionConstraint};
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Stability constants
+// Version helpers
 // ─────────────────────────────────────────────────────────────────────────────
 
-const STABILITY_DEV: u16 = 0;
-const STABILITY_ALPHA_BASE: u16 = 1000;
-const STABILITY_BETA_BASE: u16 = 2000;
-const STABILITY_RC_BASE: u16 = 3000;
-const STABILITY_STABLE: u16 = 4000;
-const STABILITY_PATCH_BASE: u16 = 5000;
-
-// ─────────────────────────────────────────────────────────────────────────────
-// ComposerVersion
-// ─────────────────────────────────────────────────────────────────────────────
-
-/// A Composer version suitable for use with pubgrub.
-///
-/// Encodes a 4-segment Composer version plus stability into an ordered struct.
-/// Stability is encoded numerically so that higher values are more stable:
-/// - dev=0, alpha(N)=1000+N, beta(N)=2000+N, RC(N)=3000+N, stable=4000, patch(N)=5000+N
-///
-/// This ensures natural `Ord` comparison matches Composer's version ordering.
-/// Dev branches (dev-master, dev-*) are NOT representable and return `None` from `from_normalized`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct ComposerVersion {
-    pub major: u16,
-    pub minor: u16,
-    pub patch: u16,
-    pub build: u16,
-    /// Stability encoded as a comparable integer. Higher = more stable.
-    pub stability: u16,
-}
-
-impl PartialOrd for ComposerVersion {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-impl Ord for ComposerVersion {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        (
-            self.major,
-            self.minor,
-            self.patch,
-            self.build,
-            self.stability,
-        )
-            .cmp(&(
-                other.major,
-                other.minor,
-                other.patch,
-                other.build,
-                other.stability,
-            ))
-    }
-}
-
-impl fmt::Display for ComposerVersion {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "{}.{}.{}.{}",
-            self.major, self.minor, self.patch, self.build
-        )?;
-        let s = self.stability;
-        if s == STABILITY_STABLE {
-            // no suffix
-        } else if s >= STABILITY_PATCH_BASE {
-            write!(f, "-patch{}", s - STABILITY_PATCH_BASE)?;
-        } else if s >= STABILITY_RC_BASE {
-            write!(f, "-RC{}", s - STABILITY_RC_BASE)?;
-        } else if s >= STABILITY_BETA_BASE {
-            write!(f, "-beta{}", s - STABILITY_BETA_BASE)?;
-        } else if s >= STABILITY_ALPHA_BASE {
-            write!(f, "-alpha{}", s - STABILITY_ALPHA_BASE)?;
-        } else {
-            write!(f, "-dev")?;
-        }
-        Ok(())
-    }
-}
-
-impl ComposerVersion {
-    /// Parse a branch alias target like "2.x-dev" or "1.0.x-dev" into a ComposerVersion
-    /// with dev stability.
-    ///
-    /// Used to represent aliased dev branches in the resolver. The version number is taken
-    /// from the numeric prefix (e.g. "2.x-dev" → major=2, minor=0, patch=0, build=0, stability=dev).
-    /// This allows constraints like `^2.0` to match `dev-master` when it is aliased to `2.x-dev`.
-    pub fn from_branch_alias_target(alias_target: &str) -> Option<ComposerVersion> {
-        let s = alias_target.trim().to_lowercase();
-        // Must end with "-dev" or ".x-dev"
-        if !s.ends_with("-dev") {
-            return None;
-        }
-        // Strip the trailing "-dev"
-        let base = &s[..s.len() - 4];
-        // Strip optional trailing ".x" segments (e.g. "2.x" → "2", "1.0.x" → "1.0")
-        let base = base.trim_end_matches(".x");
-        // Now parse whatever numeric segments remain
-        let parts: Vec<&str> = base.split('.').collect();
-        let major: u16 = parts.first().and_then(|p| p.parse().ok())?;
-        let minor: u16 = parts.get(1).and_then(|p| p.parse().ok()).unwrap_or(0);
-        let patch: u16 = parts.get(2).and_then(|p| p.parse().ok()).unwrap_or(0);
-        let build: u16 = parts.get(3).and_then(|p| p.parse().ok()).unwrap_or(0);
-        Some(ComposerVersion {
-            major,
-            minor,
-            patch,
-            build,
-            stability: STABILITY_DEV,
-        })
-    }
-
-    /// Parse from a Packagist normalized version string like "1.2.3.0", "1.0.0.0-beta1", "1.0.0.0-RC2".
-    /// Returns `None` for dev branches (dev-master, dev-*, *.x-dev).
-    pub fn from_normalized(normalized: &str) -> Option<ComposerVersion> {
-        let s = normalized.trim();
-
-        // Reject dev branches
-        if s.to_lowercase().starts_with("dev-") {
-            return None;
-        }
-        // Reject *.x-dev style (e.g. "9999999.9999999.9999999.9999999-dev" from packagist sometimes)
-        // Also reject anything like "2.1.x-dev"
-        if s.to_lowercase().ends_with("-dev") && s.contains(".x") {
-            return None;
-        }
-        // Packagist uses 9999999.9999999.9999999.9999999 for dev branches too
-        if s.starts_with("9999999") {
-            return None;
-        }
-
-        // Split on '-' for pre-release
-        let (version_part, pre_part) = if let Some(pos) = s.find('-') {
-            (&s[..pos], Some(&s[pos + 1..]))
-        } else {
-            (s, None)
-        };
-
-        let segments: Vec<&str> = version_part.split('.').collect();
-        if segments.is_empty() || segments[0].is_empty() {
-            return None;
-        }
-
-        let major: u16 = segments[0].parse().ok()?;
-        let minor: u16 = segments.get(1).and_then(|p| p.parse().ok()).unwrap_or(0);
-        let patch: u16 = segments.get(2).and_then(|p| p.parse().ok()).unwrap_or(0);
-        let build: u16 = segments.get(3).and_then(|p| p.parse().ok()).unwrap_or(0);
-
-        let stability = match pre_part {
-            None => STABILITY_STABLE,
-            Some(pre) => encode_pre_release_str(pre),
-        };
-
-        Some(ComposerVersion {
-            major,
-            minor,
-            patch,
-            build,
-            stability,
-        })
-    }
-
-    /// Construct a stable version from numeric segments.
-    pub fn stable(major: u16, minor: u16, patch: u16, build: u16) -> ComposerVersion {
-        ComposerVersion {
-            major,
-            minor,
-            patch,
-            build,
-            stability: STABILITY_STABLE,
-        }
-    }
-
-    /// Get the `Stability` enum value for this version.
-    pub fn stability_enum(&self) -> Stability {
-        if self.stability < STABILITY_ALPHA_BASE {
-            // Covers both STABILITY_DEV (0) and any value below ALPHA_BASE
-            Stability::Dev
-        } else if self.stability < STABILITY_BETA_BASE {
-            Stability::Alpha
-        } else if self.stability < STABILITY_RC_BASE {
-            Stability::Beta
-        } else if self.stability < STABILITY_STABLE {
-            Stability::RC
-        } else {
-            // >= STABILITY_STABLE (includes patch)
-            Stability::Stable
-        }
-    }
-}
-
-fn encode_pre_release_str(pre: &str) -> u16 {
-    let lower = pre.to_lowercase();
-    if lower == "dev" {
-        STABILITY_DEV
-    } else if lower.starts_with("alpha") || lower.starts_with('a') {
-        let n = extract_pre_release_number_from(
-            &lower,
-            if lower.starts_with("alpha") {
-                "alpha"
+/// Determine the `Stability` of a `Version` from its pre_release string.
+fn version_stability(v: &Version) -> Stability {
+    match &v.pre_release {
+        None => Stability::Stable,
+        Some(pre) => {
+            let lower = pre.to_lowercase();
+            if lower.starts_with("dev") {
+                Stability::Dev
+            } else if lower.starts_with("alpha") || lower.starts_with('a') {
+                Stability::Alpha
+            } else if lower.starts_with("beta") || lower.starts_with('b') {
+                Stability::Beta
+            } else if lower.starts_with("rc") {
+                Stability::RC
             } else {
-                "a"
-            },
-        );
-        STABILITY_ALPHA_BASE + n
-    } else if lower.starts_with("beta") || lower.starts_with('b') {
-        let n = extract_pre_release_number_from(
-            &lower,
-            if lower.starts_with("beta") {
-                "beta"
-            } else {
-                "b"
-            },
-        );
-        STABILITY_BETA_BASE + n
-    } else if lower.starts_with("rc") {
-        let n = extract_pre_release_number_from(&lower, "rc");
-        STABILITY_RC_BASE + n
-    } else if lower.starts_with("patch") || lower.starts_with("pl") {
-        let n = extract_pre_release_number_from(
-            &lower,
-            if lower.starts_with("patch") {
-                "patch"
-            } else {
-                "pl"
-            },
-        );
-        STABILITY_PATCH_BASE + n
-    } else if lower == "p" {
-        STABILITY_PATCH_BASE
-    } else {
-        STABILITY_STABLE
+                // patch/pl/p and unknown → stable
+                Stability::Stable
+            }
+        }
     }
 }
 
-fn extract_pre_release_number_from(s: &str, prefix: &str) -> u16 {
-    let after = &s[prefix.len()..];
-    let digits: String = after.chars().filter(|c| c.is_ascii_digit()).collect();
-    digits.parse().unwrap_or(0)
+/// Parse a Packagist normalized version string like "1.2.3.0", "1.0.0.0-beta1".
+/// Returns `None` for dev branches (dev-master, dev-*, *.x-dev).
+fn parse_normalized(normalized: &str) -> Option<Version> {
+    let s = normalized.trim();
+
+    // Reject dev branches
+    if s.to_lowercase().starts_with("dev-") {
+        return None;
+    }
+    // Reject *.x-dev style
+    if s.to_lowercase().ends_with("-dev") && s.contains(".x") {
+        return None;
+    }
+    // Packagist uses 9999999.9999999.9999999.9999999 for dev branches
+    if s.starts_with("9999999") {
+        return None;
+    }
+
+    Version::parse(s).ok()
+}
+
+/// Parse a branch alias target like "2.x-dev" or "1.0.x-dev" into a `Version` with dev pre-release.
+fn parse_branch_alias_target(alias_target: &str) -> Option<Version> {
+    let s = alias_target.trim().to_lowercase();
+    if !s.ends_with("-dev") {
+        return None;
+    }
+    let base = &s[..s.len() - 4];
+    let base = base.trim_end_matches(".x");
+    let parts: Vec<&str> = base.split('.').collect();
+    let major: u64 = parts.first().and_then(|p| p.parse().ok())?;
+    let minor: u64 = parts.get(1).and_then(|p| p.parse().ok()).unwrap_or(0);
+    let patch: u64 = parts.get(2).and_then(|p| p.parse().ok()).unwrap_or(0);
+    let build: u64 = parts.get(3).and_then(|p| p.parse().ok()).unwrap_or(0);
+    Some(Version {
+        major,
+        minor,
+        patch,
+        build,
+        pre_release: Some("dev".to_string()),
+        is_dev_branch: false,
+        dev_branch_name: None,
+    })
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -305,13 +132,13 @@ impl PackageName {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// The version set type used throughout the resolver.
-pub type ComposerVS = Ranges<ComposerVersion>;
+pub type ComposerVS = Ranges<Version>;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Constraint-to-Ranges conversion
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Convert a Composer version constraint string to a pubgrub `Ranges<ComposerVersion>`.
+/// Convert a Composer version constraint string to a pubgrub `Ranges<Version>`.
 ///
 /// Supports: exact, >=, >, <=, <, !=, ^, ~, *, wildcards, hyphen ranges, AND, OR.
 pub fn constraint_to_ranges(constraint: &str) -> Result<ComposerVS, String> {
@@ -343,76 +170,14 @@ fn version_constraint_to_ranges(vc: &VersionConstraint) -> Result<ComposerVS, St
 fn single_constraint_to_ranges(c: &Constraint) -> Result<ComposerVS, String> {
     match c {
         Constraint::Any => Ok(Ranges::full()),
-        Constraint::Exact(v) => {
-            let cv = version_to_composer(v)?;
-            Ok(Ranges::singleton(cv))
-        }
-        Constraint::GreaterThan(v) => {
-            let cv = version_to_composer(v)?;
-            Ok(Ranges::strictly_higher_than(cv))
-        }
-        Constraint::GreaterThanOrEqual(v) => {
-            let cv = version_to_composer(v)?;
-            Ok(Ranges::higher_than(cv))
-        }
-        Constraint::LessThan(v) => {
-            let cv = version_to_composer(v)?;
-            Ok(Ranges::strictly_lower_than(cv))
-        }
+        Constraint::Exact(v) => Ok(Ranges::singleton(v.clone())),
+        Constraint::GreaterThan(v) => Ok(Ranges::strictly_higher_than(v.clone())),
+        Constraint::GreaterThanOrEqual(v) => Ok(Ranges::higher_than(v.clone())),
+        Constraint::LessThan(v) => Ok(Ranges::strictly_lower_than(v.clone())),
         Constraint::LessThanOrEqual(v) => {
-            let cv = version_to_composer(v)?;
-            // No Ranges::lower_than in version-ranges 0.1.x, so use complement of strictly_higher_than
-            Ok(Ranges::strictly_higher_than(cv).complement())
+            Ok(Ranges::strictly_higher_than(v.clone()).complement())
         }
-        Constraint::NotEqual(v) => {
-            let cv = version_to_composer(v)?;
-            Ok(Ranges::singleton(cv).complement())
-        }
-    }
-}
-
-/// Convert a `constraint::Version` to a `ComposerVersion`.
-fn version_to_composer(v: &mozart_semver::Version) -> Result<ComposerVersion, String> {
-    // Dev branches cannot be represented as ComposerVersion
-    if v.is_dev_branch {
-        return Err(format!(
-            "Dev branch versions cannot be used in Ranges (branch: {:?})",
-            v.dev_branch_name
-        ));
-    }
-
-    let major: u16 = v
-        .major
-        .try_into()
-        .map_err(|_| format!("Major version {} too large for u16", v.major))?;
-    let minor: u16 = v
-        .minor
-        .try_into()
-        .map_err(|_| format!("Minor version {} too large for u16", v.minor))?;
-    let patch: u16 = v
-        .patch
-        .try_into()
-        .map_err(|_| format!("Patch version {} too large for u16", v.patch))?;
-    let build: u16 = v
-        .build
-        .try_into()
-        .map_err(|_| format!("Build version {} too large for u16", v.build))?;
-
-    let stability = encode_pre_release(&v.pre_release);
-
-    Ok(ComposerVersion {
-        major,
-        minor,
-        patch,
-        build,
-        stability,
-    })
-}
-
-fn encode_pre_release(pre: &Option<String>) -> u16 {
-    match pre {
-        None => STABILITY_STABLE,
-        Some(s) => encode_pre_release_str(s),
+        Constraint::NotEqual(v) => Ok(Ranges::singleton(v.clone()).complement()),
     }
 }
 
@@ -441,32 +206,19 @@ impl PlatformConfig {
         let detected = mozart_core::platform::detect_platform();
         let mut packages = HashMap::new();
         for pkg in detected {
-            // Normalize version to four-component form (e.g. "8.2.1" → "8.2.1.0")
-            let normalized = normalize_platform_version(&pkg.version);
-            packages.insert(pkg.name, normalized);
+            packages.insert(pkg.name, pkg.version);
         }
         Self { packages }
     }
 
-    /// Parse platform packages into `ComposerVersion` values.
-    pub fn to_versions(&self) -> HashMap<String, ComposerVersion> {
+    /// Parse platform packages into `Version` values.
+    pub fn to_versions(&self) -> HashMap<String, Version> {
         self.packages
             .iter()
             .filter_map(|(name, version_str)| {
-                ComposerVersion::from_normalized(version_str).map(|v| (name.clone(), v))
+                Version::parse(version_str).ok().map(|v| (name.clone(), v))
             })
             .collect()
-    }
-}
-
-/// Pad a version string to four dot-separated components (e.g. "8.2.1" → "8.2.1.0").
-fn normalize_platform_version(version: &str) -> String {
-    let parts: Vec<&str> = version.split('.').collect();
-    match parts.len() {
-        1 => format!("{}.0.0.0", parts[0]),
-        2 => format!("{}.{}.0.0", parts[0], parts[1]),
-        3 => format!("{}.{}.{}.0", parts[0], parts[1], parts[2]),
-        _ => version.to_string(),
     }
 }
 
@@ -551,8 +303,8 @@ pub struct ResolverPriority {
 
 /// Cached version data for a single package.
 struct PackageVersions {
-    /// All versions that pass the stability filter, sorted by ComposerVersion.
-    versions: BTreeMap<ComposerVersion, VersionDependencies>,
+    /// All versions that pass the stability filter, sorted by Version.
+    versions: BTreeMap<Version, VersionDependencies>,
 }
 
 /// Dependencies of a specific package version.
@@ -591,7 +343,7 @@ pub struct MozartProvider {
     repo_cache: Option<Cache>,
 
     /// Platform packages (php, ext-*, lib-*) with their fixed versions.
-    platform_packages: HashMap<String, ComposerVersion>,
+    platform_packages: HashMap<String, Version>,
 
     /// Minimum stability threshold. Versions below this are excluded.
     minimum_stability: Stability,
@@ -672,12 +424,12 @@ impl MozartProvider {
                     version_normalized,
                 };
 
-            match ComposerVersion::from_normalized(&pv.version_normalized) {
-                Some(cv) => {
+            match parse_normalized(&pv.version_normalized) {
+                Some(v) => {
                     // Regular (non-dev) version
-                    if self.passes_stability_filter(package_name, &cv) {
+                    if self.passes_stability_filter(package_name, &v) {
                         let deps = make_deps(pv.version.clone(), pv.version_normalized.clone());
-                        versions.insert(cv, deps);
+                        versions.insert(v, deps);
                     }
                 }
                 None => {
@@ -689,15 +441,15 @@ impl MozartProvider {
                         if branch.to_lowercase() != pv.version.to_lowercase() {
                             continue;
                         }
-                        if let Some(alias_cv) =
-                            ComposerVersion::from_branch_alias_target(alias_target)
-                            && self.passes_stability_filter(package_name, &alias_cv)
+                        if let Some(alias_v) =
+                            parse_branch_alias_target(alias_target)
+                            && self.passes_stability_filter(package_name, &alias_v)
                         {
                             // Use the alias target as the normalized version string so
                             // that constraint matching works correctly.
                             let deps = make_deps(pv.version.clone(), alias_target.clone());
                             // Only insert if no real release already occupies this slot
-                            versions.entry(alias_cv).or_insert(deps);
+                            versions.entry(alias_v).or_insert(deps);
                         }
                     }
                 }
@@ -711,7 +463,7 @@ impl MozartProvider {
     }
 
     /// Check if a version passes the minimum-stability filter for the given package.
-    fn passes_stability_filter(&self, package_name: &str, version: &ComposerVersion) -> bool {
+    fn passes_stability_filter(&self, package_name: &str, version: &Version) -> bool {
         // Per-package stability override takes precedence
         let min_stability = self
             .stability_flags
@@ -719,12 +471,12 @@ impl MozartProvider {
             .copied()
             .unwrap_or(self.minimum_stability);
 
-        let version_stability = version.stability_enum();
+        let vs = version_stability(version);
 
         // `Stability` enum: Stable=0, RC=5, Beta=10, Alpha=15, Dev=20
         // Lower enum value = more stable.
-        // version_stability must be <= min_stability (i.e., at least as stable as minimum).
-        version_stability <= min_stability
+        // vs must be <= min_stability (i.e., at least as stable as minimum).
+        vs <= min_stability
     }
 
     /// Check whether a platform dependency should be skipped.
@@ -741,7 +493,7 @@ impl MozartProvider {
 
 impl DependencyProvider for MozartProvider {
     type P = PackageName;
-    type V = ComposerVersion;
+    type V = Version;
     type VS = ComposerVS;
     type Priority = ResolverPriority;
     type M = String;
@@ -751,10 +503,13 @@ impl DependencyProvider for MozartProvider {
         &self,
         package: &PackageName,
         range: &ComposerVS,
-    ) -> Result<Option<ComposerVersion>, ResolverError> {
-        // Root package: always version 0.0.0.0-stable
+    ) -> Result<Option<Version>, ResolverError> {
+        // Root package: always version 0.0.0.0 (stable)
         if package.is_root() {
-            let root_v = ComposerVersion::stable(0, 0, 0, 0);
+            let root_v = Version {
+                major: 0, minor: 0, patch: 0, build: 0,
+                pre_release: None, is_dev_branch: false, dev_branch_name: None,
+            };
             if range.contains(&root_v) {
                 return Ok(Some(root_v));
             }
@@ -766,7 +521,7 @@ impl DependencyProvider for MozartProvider {
             if let Some(v) = self.platform_packages.get(&package.0)
                 && range.contains(v)
             {
-                return Ok(Some(*v));
+                return Ok(Some(v.clone()));
             }
             return Ok(None);
         }
@@ -785,7 +540,7 @@ impl DependencyProvider for MozartProvider {
                 .versions
                 .keys()
                 .find(|v| range.contains(*v))
-                .copied());
+                .cloned());
         }
 
         if self.prefer_stable {
@@ -794,9 +549,9 @@ impl DependencyProvider for MozartProvider {
                 .versions
                 .keys()
                 .rev()
-                .find(|v| v.stability >= STABILITY_STABLE && range.contains(*v))
+                .find(|v| version_stability(v) == Stability::Stable && range.contains(*v))
             {
-                return Ok(Some(*v));
+                return Ok(Some(v.clone()));
             }
         }
 
@@ -806,7 +561,7 @@ impl DependencyProvider for MozartProvider {
             .keys()
             .rev()
             .find(|v| range.contains(*v))
-            .copied())
+            .cloned())
     }
 
     fn prioritize(
@@ -838,7 +593,7 @@ impl DependencyProvider for MozartProvider {
     fn get_dependencies(
         &self,
         package: &PackageName,
-        version: &ComposerVersion,
+        version: &Version,
     ) -> Result<Dependencies<PackageName, ComposerVS, String>, ResolverError> {
         // Root package: return the configured root dependencies
         if package.is_root() {
@@ -1049,7 +804,10 @@ pub async fn resolve(request: &ResolveRequest) -> Result<Vec<ResolvedPackage>, R
         };
 
         let root = PackageName::root();
-        let root_version = ComposerVersion::stable(0, 0, 0, 0);
+        let root_version = Version {
+            major: 0, minor: 0, patch: 0, build: 0,
+            pre_release: None, is_dev_branch: false, dev_branch_name: None,
+        };
 
         match pubgrub::resolve(&provider, root, root_version) {
             Ok(solution) => {
@@ -1074,7 +832,7 @@ pub async fn resolve(request: &ResolveRequest) -> Result<Vec<ResolvedPackage>, R
                         name: pkg.0.clone(),
                         version: version_str,
                         version_normalized,
-                        is_dev: version.stability < STABILITY_ALPHA_BASE,
+                        is_dev: version_stability(&version) == Stability::Dev,
                     });
                 }
                 Ok(result)
@@ -1131,83 +889,110 @@ mod tests {
             .clone()
     }
 
-    // ──────────── ComposerVersion parsing ────────────
+    // ──────────── Version parsing helpers ────────────
+
+    fn v(major: u64, minor: u64, patch: u64, build: u64) -> Version {
+        Version {
+            major, minor, patch, build,
+            pre_release: None,
+            is_dev_branch: false,
+            dev_branch_name: None,
+        }
+    }
+
+    fn v_dev(major: u64, minor: u64, patch: u64, build: u64) -> Version {
+        Version {
+            major, minor, patch, build,
+            pre_release: Some("dev".to_string()),
+            is_dev_branch: false,
+            dev_branch_name: None,
+        }
+    }
+
+    fn v_pre(major: u64, minor: u64, patch: u64, build: u64, pre: &str) -> Version {
+        Version {
+            major, minor, patch, build,
+            pre_release: Some(pre.to_string()),
+            is_dev_branch: false,
+            dev_branch_name: None,
+        }
+    }
+
+    // ──────────── parse_normalized ────────────
 
     #[test]
-    fn test_composer_version_parse_stable() {
-        let v = ComposerVersion::from_normalized("1.2.3.0").unwrap();
-        assert_eq!(v.major, 1);
-        assert_eq!(v.minor, 2);
-        assert_eq!(v.patch, 3);
-        assert_eq!(v.build, 0);
-        assert_eq!(v.stability, STABILITY_STABLE);
+    fn test_parse_normalized_stable() {
+        let ver = parse_normalized("1.2.3.0").unwrap();
+        assert_eq!((ver.major, ver.minor, ver.patch, ver.build), (1, 2, 3, 0));
+        assert_eq!(ver.pre_release, None);
     }
 
     #[test]
-    fn test_composer_version_parse_beta() {
-        let v = ComposerVersion::from_normalized("1.0.0.0-beta1").unwrap();
-        assert_eq!(v.major, 1);
-        assert_eq!(v.minor, 0);
-        assert_eq!(v.patch, 0);
-        assert_eq!(v.build, 0);
-        assert_eq!(v.stability, STABILITY_BETA_BASE + 1);
+    fn test_parse_normalized_beta() {
+        let ver = parse_normalized("1.0.0.0-beta1").unwrap();
+        assert_eq!(ver.major, 1);
+        assert_eq!(ver.pre_release, Some("beta1".to_string()));
     }
 
     #[test]
-    fn test_composer_version_parse_rc() {
-        let v = ComposerVersion::from_normalized("2.0.0.0-RC3").unwrap();
-        assert_eq!(v.major, 2);
-        assert_eq!(v.stability, STABILITY_RC_BASE + 3);
+    fn test_parse_normalized_rc() {
+        let ver = parse_normalized("2.0.0.0-RC3").unwrap();
+        assert_eq!(ver.major, 2);
+        assert_eq!(ver.pre_release, Some("RC3".to_string()));
     }
 
     #[test]
-    fn test_composer_version_parse_alpha() {
-        let v = ComposerVersion::from_normalized("1.0.0.0-alpha2").unwrap();
-        assert_eq!(v.stability, STABILITY_ALPHA_BASE + 2);
+    fn test_parse_normalized_alpha() {
+        let ver = parse_normalized("1.0.0.0-alpha2").unwrap();
+        assert_eq!(ver.pre_release, Some("alpha2".to_string()));
     }
 
     #[test]
-    fn test_composer_version_parse_dev() {
-        let v = ComposerVersion::from_normalized("1.0.0.0-dev").unwrap();
-        assert_eq!(v.stability, STABILITY_DEV);
+    fn test_parse_normalized_dev() {
+        let ver = parse_normalized("1.0.0.0-dev").unwrap();
+        assert_eq!(ver.pre_release, Some("dev".to_string()));
     }
 
     #[test]
-    fn test_composer_version_parse_dev_branch() {
-        let v = ComposerVersion::from_normalized("dev-master");
-        assert!(
-            v.is_none(),
-            "dev-master should not parse as ComposerVersion"
-        );
+    fn test_parse_normalized_dev_branch() {
+        let ver = parse_normalized("dev-master");
+        assert!(ver.is_none(), "dev-master should not parse as normalized version");
     }
 
     #[test]
-    fn test_composer_version_parse_x_dev() {
-        let v = ComposerVersion::from_normalized("dev-feature/foo");
-        assert!(v.is_none());
+    fn test_parse_normalized_x_dev() {
+        let ver = parse_normalized("dev-feature/foo");
+        assert!(ver.is_none());
     }
 
     #[test]
-    fn test_composer_version_parse_9999999_dev() {
-        // Packagist sometimes uses 9999999.9999999.9999999.9999999 for dev
-        let v = ComposerVersion::from_normalized("9999999.9999999.9999999.9999999-dev");
-        assert!(v.is_none());
+    fn test_parse_normalized_9999999_dev() {
+        let ver = parse_normalized("9999999.9999999.9999999.9999999-dev");
+        assert!(ver.is_none());
     }
 
     #[test]
-    fn test_composer_version_ordering_stable() {
-        let v1 = ComposerVersion::from_normalized("2.0.0.0").unwrap();
-        let v2 = ComposerVersion::from_normalized("1.0.0.0").unwrap();
+    fn test_parse_normalized_large_version() {
+        // ext-dom version 20031129 — this was the u16 overflow bug
+        let ver = parse_normalized("20031129").unwrap();
+        assert_eq!(ver.major, 20031129);
+        assert_eq!(ver.pre_release, None);
+    }
+
+    #[test]
+    fn test_version_ordering_stable() {
+        let v1 = parse_normalized("2.0.0.0").unwrap();
+        let v2 = parse_normalized("1.0.0.0").unwrap();
         assert!(v1 > v2);
     }
 
     #[test]
-    fn test_composer_version_ordering_stability() {
-        let stable = ComposerVersion::from_normalized("1.0.0.0").unwrap();
-        let rc = ComposerVersion::from_normalized("1.0.0.0-RC1").unwrap();
-        let beta = ComposerVersion::from_normalized("1.0.0.0-beta1").unwrap();
-        let alpha = ComposerVersion::from_normalized("1.0.0.0-alpha1").unwrap();
-        let dev = ComposerVersion::from_normalized("1.0.0.0-dev").unwrap();
+    fn test_version_ordering_stability() {
+        let stable = parse_normalized("1.0.0.0").unwrap();
+        let rc = parse_normalized("1.0.0.0-RC1").unwrap();
+        let beta = parse_normalized("1.0.0.0-beta1").unwrap();
+        let alpha = parse_normalized("1.0.0.0-alpha1").unwrap();
+        let dev = parse_normalized("1.0.0.0-dev").unwrap();
         assert!(stable > rc);
         assert!(rc > beta);
         assert!(beta > alpha);
@@ -1215,222 +1000,147 @@ mod tests {
     }
 
     #[test]
-    fn test_composer_version_ordering_pre_number() {
-        let beta2 = ComposerVersion::from_normalized("1.0.0.0-beta2").unwrap();
-        let beta1 = ComposerVersion::from_normalized("1.0.0.0-beta1").unwrap();
+    fn test_version_ordering_pre_number() {
+        let beta2 = parse_normalized("1.0.0.0-beta2").unwrap();
+        let beta1 = parse_normalized("1.0.0.0-beta1").unwrap();
         assert!(beta2 > beta1);
     }
 
     #[test]
-    fn test_composer_version_display() {
-        let stable = ComposerVersion::stable(1, 2, 3, 0);
+    fn test_version_display() {
+        let stable = v(1, 2, 3, 0);
         assert_eq!(format!("{stable}"), "1.2.3.0");
 
-        let beta1 = ComposerVersion {
-            major: 1,
-            minor: 0,
-            patch: 0,
-            build: 0,
-            stability: STABILITY_BETA_BASE + 1,
-        };
+        let beta1 = v_pre(1, 0, 0, 0, "beta1");
         assert_eq!(format!("{beta1}"), "1.0.0.0-beta1");
 
-        let rc2 = ComposerVersion {
-            major: 2,
-            minor: 0,
-            patch: 0,
-            build: 0,
-            stability: STABILITY_RC_BASE + 2,
-        };
+        let rc2 = v_pre(2, 0, 0, 0, "RC2");
         assert_eq!(format!("{rc2}"), "2.0.0.0-RC2");
 
-        let dev = ComposerVersion {
-            major: 1,
-            minor: 0,
-            patch: 0,
-            build: 0,
-            stability: STABILITY_DEV,
-        };
+        let dev = v_pre(1, 0, 0, 0, "dev");
         assert_eq!(format!("{dev}"), "1.0.0.0-dev");
     }
 
     #[test]
-    fn test_composer_version_stability_enum() {
-        let stable = ComposerVersion::stable(1, 0, 0, 0);
-        assert_eq!(stable.stability_enum(), Stability::Stable);
-
-        let rc = ComposerVersion {
-            major: 1,
-            minor: 0,
-            patch: 0,
-            build: 0,
-            stability: STABILITY_RC_BASE,
-        };
-        assert_eq!(rc.stability_enum(), Stability::RC);
-
-        let beta = ComposerVersion {
-            major: 1,
-            minor: 0,
-            patch: 0,
-            build: 0,
-            stability: STABILITY_BETA_BASE,
-        };
-        assert_eq!(beta.stability_enum(), Stability::Beta);
-
-        let alpha = ComposerVersion {
-            major: 1,
-            minor: 0,
-            patch: 0,
-            build: 0,
-            stability: STABILITY_ALPHA_BASE,
-        };
-        assert_eq!(alpha.stability_enum(), Stability::Alpha);
-
-        let dev = ComposerVersion {
-            major: 1,
-            minor: 0,
-            patch: 0,
-            build: 0,
-            stability: STABILITY_DEV,
-        };
-        assert_eq!(dev.stability_enum(), Stability::Dev);
+    fn test_version_stability_fn() {
+        assert_eq!(version_stability(&v(1, 0, 0, 0)), Stability::Stable);
+        assert_eq!(version_stability(&v_pre(1, 0, 0, 0, "RC1")), Stability::RC);
+        assert_eq!(version_stability(&v_pre(1, 0, 0, 0, "beta1")), Stability::Beta);
+        assert_eq!(version_stability(&v_pre(1, 0, 0, 0, "alpha1")), Stability::Alpha);
+        assert_eq!(version_stability(&v_pre(1, 0, 0, 0, "dev")), Stability::Dev);
+        // patch is treated as stable
+        assert_eq!(version_stability(&v_pre(1, 0, 0, 0, "patch1")), Stability::Stable);
     }
 
     // ──────────── Constraint conversion ────────────
 
-    fn cv(major: u16, minor: u16, patch: u16, build: u16) -> ComposerVersion {
-        ComposerVersion::stable(major, minor, patch, build)
-    }
-
-    fn cv_dev(major: u16, minor: u16, patch: u16, build: u16) -> ComposerVersion {
-        ComposerVersion {
-            major,
-            minor,
-            patch,
-            build,
-            stability: STABILITY_DEV,
-        }
-    }
-
     #[test]
     fn test_constraint_any() {
         let range = constraint_to_ranges("*").unwrap();
-        assert!(range.contains(&cv(1, 2, 3, 0)));
-        assert!(range.contains(&cv(0, 0, 0, 0)));
+        assert!(range.contains(&v(1, 2, 3, 0)));
+        assert!(range.contains(&v(0, 0, 0, 0)));
     }
 
     #[test]
     fn test_constraint_exact() {
         let range = constraint_to_ranges("1.2.3").unwrap();
-        // Exact "1.2.3" is parsed as Version { 1, 2, 3, 0, pre_release: None } → stable
-        assert!(range.contains(&cv(1, 2, 3, 0)));
-        assert!(!range.contains(&cv(1, 2, 4, 0)));
-        assert!(!range.contains(&cv(1, 2, 2, 0)));
+        assert!(range.contains(&v(1, 2, 3, 0)));
+        assert!(!range.contains(&v(1, 2, 4, 0)));
+        assert!(!range.contains(&v(1, 2, 2, 0)));
     }
 
     #[test]
     fn test_constraint_gte() {
         let range = constraint_to_ranges(">=1.0").unwrap();
-        // >=1.0 parses "1.0" as a stable version (no dev_boundary), so >= 1.0.0.0 (stable)
-        assert!(range.contains(&cv(1, 0, 0, 0)));
-        assert!(range.contains(&cv(2, 0, 0, 0)));
-        // 0.9.0.0 should not be in range
-        assert!(!range.contains(&cv(0, 9, 0, 0)));
-        // 1.0.0.0-dev (stability=0) is LESS than 1.0.0.0 (stability=4000), so NOT in >=1.0
-        assert!(!range.contains(&cv_dev(1, 0, 0, 0)));
+        assert!(range.contains(&v(1, 0, 0, 0)));
+        assert!(range.contains(&v(2, 0, 0, 0)));
+        assert!(!range.contains(&v(0, 9, 0, 0)));
+        // 1.0.0.0-dev is LESS than 1.0.0.0 (stable), so NOT in >=1.0
+        assert!(!range.contains(&v_dev(1, 0, 0, 0)));
     }
 
     #[test]
     fn test_constraint_lt() {
         let range = constraint_to_ranges("<2.0").unwrap();
-        // <2.0 parses "2.0" as a stable version, so strictly < 2.0.0.0 (stable)
-        // 2.0.0.0-dev (stability=0) is LESS than 2.0.0.0 (stability=4000), so IS in <2.0
-        assert!(range.contains(&cv(1, 9, 9, 0)));
-        assert!(range.contains(&cv_dev(2, 0, 0, 0))); // 2.0.0.0-dev < 2.0.0.0 (stable)
-        // 2.0.0.0 (stable) and higher should not be in range
-        assert!(!range.contains(&cv(2, 0, 0, 0)));
+        assert!(range.contains(&v(1, 9, 9, 0)));
+        assert!(range.contains(&v_dev(2, 0, 0, 0))); // 2.0.0.0-dev < 2.0.0.0 (stable)
+        assert!(!range.contains(&v(2, 0, 0, 0)));
     }
 
     #[test]
     fn test_constraint_caret() {
         // ^1.2 → >=1.2.0.0-dev <2.0.0.0-dev
         let range = constraint_to_ranges("^1.2").unwrap();
-        assert!(range.contains(&cv_dev(1, 2, 0, 0)));
-        assert!(range.contains(&cv(1, 2, 0, 0)));
-        assert!(range.contains(&cv(1, 9, 9, 0)));
-        assert!(!range.contains(&cv_dev(2, 0, 0, 0)));
-        assert!(!range.contains(&cv(2, 0, 0, 0)));
-        // Below 1.2.0.0-dev should not match
-        assert!(!range.contains(&cv(1, 1, 9, 0)));
+        assert!(range.contains(&v_dev(1, 2, 0, 0)));
+        assert!(range.contains(&v(1, 2, 0, 0)));
+        assert!(range.contains(&v(1, 9, 9, 0)));
+        assert!(!range.contains(&v_dev(2, 0, 0, 0)));
+        assert!(!range.contains(&v(2, 0, 0, 0)));
+        assert!(!range.contains(&v(1, 1, 9, 0)));
     }
 
     #[test]
     fn test_constraint_caret_zero() {
         // ^0.2.3 → >=0.2.3.0-dev <0.3.0.0-dev
         let range = constraint_to_ranges("^0.2.3").unwrap();
-        assert!(range.contains(&cv(0, 2, 3, 0)));
-        assert!(range.contains(&cv(0, 2, 9, 0)));
-        assert!(!range.contains(&cv_dev(0, 3, 0, 0)));
-        assert!(!range.contains(&cv(1, 0, 0, 0)));
+        assert!(range.contains(&v(0, 2, 3, 0)));
+        assert!(range.contains(&v(0, 2, 9, 0)));
+        assert!(!range.contains(&v_dev(0, 3, 0, 0)));
+        assert!(!range.contains(&v(1, 0, 0, 0)));
     }
 
     #[test]
     fn test_constraint_tilde() {
         // ~1.2.3 → >=1.2.3.0-dev <1.3.0.0-dev
         let range = constraint_to_ranges("~1.2.3").unwrap();
-        assert!(range.contains(&cv(1, 2, 3, 0)));
-        assert!(range.contains(&cv(1, 2, 9, 0)));
-        assert!(!range.contains(&cv_dev(1, 3, 0, 0)));
+        assert!(range.contains(&v(1, 2, 3, 0)));
+        assert!(range.contains(&v(1, 2, 9, 0)));
+        assert!(!range.contains(&v_dev(1, 3, 0, 0)));
     }
 
     #[test]
     fn test_constraint_wildcard() {
         // 1.2.* → >=1.2.0.0-dev <1.3.0.0-dev
         let range = constraint_to_ranges("1.2.*").unwrap();
-        assert!(range.contains(&cv(1, 2, 0, 0)));
-        assert!(range.contains(&cv(1, 2, 9, 0)));
-        assert!(!range.contains(&cv_dev(1, 3, 0, 0)));
-        assert!(!range.contains(&cv(1, 3, 0, 0)));
+        assert!(range.contains(&v(1, 2, 0, 0)));
+        assert!(range.contains(&v(1, 2, 9, 0)));
+        assert!(!range.contains(&v_dev(1, 3, 0, 0)));
+        assert!(!range.contains(&v(1, 3, 0, 0)));
     }
 
     #[test]
     fn test_constraint_or() {
-        // ^1.0 || ^2.0
         let range = constraint_to_ranges("^1.0 || ^2.0").unwrap();
-        assert!(range.contains(&cv(1, 5, 0, 0)));
-        assert!(range.contains(&cv(2, 3, 0, 0)));
-        assert!(!range.contains(&cv(3, 0, 0, 0)));
+        assert!(range.contains(&v(1, 5, 0, 0)));
+        assert!(range.contains(&v(2, 3, 0, 0)));
+        assert!(!range.contains(&v(3, 0, 0, 0)));
     }
 
     #[test]
     fn test_constraint_and() {
-        // >=1.0 <2.0: >=1.0 means >= 1.0.0.0 (stable); <2.0 means < 2.0.0.0 (stable)
         let range = constraint_to_ranges(">=1.0 <2.0").unwrap();
-        // 1.0.0.0-dev < 1.0.0.0 (stable), so NOT in >=1.0
-        assert!(!range.contains(&cv_dev(1, 0, 0, 0)));
-        assert!(range.contains(&cv(1, 0, 0, 0)));
-        assert!(range.contains(&cv(1, 9, 9, 0)));
-        // 2.0.0.0-dev < 2.0.0.0 (stable), so IS in <2.0 but overall intersection with >=1.0 is yes
-        assert!(range.contains(&cv_dev(2, 0, 0, 0)));
-        assert!(!range.contains(&cv(2, 0, 0, 0)));
+        assert!(!range.contains(&v_dev(1, 0, 0, 0)));
+        assert!(range.contains(&v(1, 0, 0, 0)));
+        assert!(range.contains(&v(1, 9, 9, 0)));
+        assert!(range.contains(&v_dev(2, 0, 0, 0)));
+        assert!(!range.contains(&v(2, 0, 0, 0)));
     }
 
     #[test]
     fn test_constraint_not_equal() {
         let range = constraint_to_ranges("!=1.5.0").unwrap();
-        assert!(range.contains(&cv(1, 4, 0, 0)));
-        assert!(!range.contains(&cv(1, 5, 0, 0)));
-        assert!(range.contains(&cv(1, 6, 0, 0)));
+        assert!(range.contains(&v(1, 4, 0, 0)));
+        assert!(!range.contains(&v(1, 5, 0, 0)));
+        assert!(range.contains(&v(1, 6, 0, 0)));
     }
 
     #[test]
     fn test_constraint_hyphen() {
-        // "1.0 - 2.0" → >=1.0.0.0 <=2.0.0.0
         let range = constraint_to_ranges("1.0 - 2.0").unwrap();
-        assert!(range.contains(&cv(1, 0, 0, 0)));
-        assert!(range.contains(&cv(1, 5, 0, 0)));
-        assert!(range.contains(&cv(2, 0, 0, 0)));
-        assert!(!range.contains(&cv(2, 1, 0, 0)));
+        assert!(range.contains(&v(1, 0, 0, 0)));
+        assert!(range.contains(&v(1, 5, 0, 0)));
+        assert!(range.contains(&v(2, 0, 0, 0)));
+        assert!(!range.contains(&v(2, 1, 0, 0)));
     }
 
     // ──────────── Provider tests (offline) ────────────
@@ -1454,7 +1164,6 @@ mod tests {
     fn test_platform_config_to_versions() {
         let config = PlatformConfig::new();
         let versions = config.to_versions();
-        // If PHP is available on the system, we should have detected it
         if !config.packages.is_empty() {
             assert!(
                 versions.contains_key("php"),
@@ -1465,11 +1174,7 @@ mod tests {
 
     // ──────────── Integration tests (offline, using OfflineDependencyProvider) ────────────
 
-    type TestVS = Ranges<ComposerVersion>;
-
-    fn cv_stable(major: u16, minor: u16, patch: u16) -> ComposerVersion {
-        ComposerVersion::stable(major, minor, patch, 0)
-    }
+    type TestVS = Ranges<Version>;
 
     /// Test simple resolution: root → foo ^1.0, foo 1.0 → bar ^2.0, bar 2.0 → (nothing)
     #[test]
@@ -1477,23 +1182,20 @@ mod tests {
         let mut provider = OfflineDependencyProvider::<PackageName, TestVS>::new();
 
         let root = PackageName::root();
-        let root_v = ComposerVersion::stable(0, 0, 0, 0);
+        let root_v = v(0, 0, 0, 0);
         let foo = PackageName("foo/foo".to_string());
         let bar = PackageName("bar/bar".to_string());
 
-        let foo_1_0 = cv_stable(1, 0, 0);
-        let bar_2_0 = cv_stable(2, 0, 0);
+        let foo_1_0 = v(1, 0, 0, 0);
+        let bar_2_0 = v(2, 0, 0, 0);
 
-        // root depends on foo ^1.0
         let foo_range = constraint_to_ranges("^1.0").unwrap();
-        provider.add_dependencies(root.clone(), root_v, [(foo.clone(), foo_range)]);
+        provider.add_dependencies(root.clone(), root_v.clone(), [(foo.clone(), foo_range)]);
 
-        // foo 1.0 depends on bar ^2.0
         let bar_range = constraint_to_ranges("^2.0").unwrap();
-        provider.add_dependencies(foo.clone(), foo_1_0, [(bar.clone(), bar_range)]);
+        provider.add_dependencies(foo.clone(), foo_1_0.clone(), [(bar.clone(), bar_range)]);
 
-        // bar 2.0 has no dependencies
-        provider.add_dependencies(bar.clone(), bar_2_0, []);
+        provider.add_dependencies(bar.clone(), bar_2_0.clone(), []);
 
         let solution = pubgrub::resolve(&provider, root.clone(), root_v).unwrap();
 
@@ -1507,34 +1209,30 @@ mod tests {
         let mut provider = OfflineDependencyProvider::<PackageName, TestVS>::new();
 
         let root = PackageName::root();
-        let root_v = ComposerVersion::stable(0, 0, 0, 0);
+        let root_v = v(0, 0, 0, 0);
         let foo = PackageName("foo/foo".to_string());
         let bar = PackageName("bar/bar".to_string());
         let dep = PackageName("dep/dep".to_string());
 
-        let foo_1_0 = cv_stable(1, 0, 0);
-        let bar_1_0 = cv_stable(1, 0, 0);
-        let dep_1_0 = cv_stable(1, 0, 0);
-        let dep_2_0 = cv_stable(2, 0, 0);
+        let foo_1_0 = v(1, 0, 0, 0);
+        let bar_1_0 = v(1, 0, 0, 0);
+        let dep_1_0 = v(1, 0, 0, 0);
+        let dep_2_0 = v(2, 0, 0, 0);
 
-        // root depends on foo and bar
-        let foo_range = Ranges::singleton(foo_1_0);
-        let bar_range = Ranges::singleton(bar_1_0);
+        let foo_range = Ranges::singleton(foo_1_0.clone());
+        let bar_range = Ranges::singleton(bar_1_0.clone());
         provider.add_dependencies(
             root.clone(),
-            root_v,
+            root_v.clone(),
             [(foo.clone(), foo_range), (bar.clone(), bar_range)],
         );
 
-        // foo 1.0 requires dep ^1.0 (excludes 2.x)
         let dep_range_1 = constraint_to_ranges("^1.0").unwrap();
         provider.add_dependencies(foo.clone(), foo_1_0, [(dep.clone(), dep_range_1)]);
 
-        // bar 1.0 requires dep ^2.0 (excludes 1.x)
         let dep_range_2 = constraint_to_ranges("^2.0").unwrap();
         provider.add_dependencies(bar.clone(), bar_1_0, [(dep.clone(), dep_range_2)]);
 
-        // dep has versions 1.0 and 2.0
         provider.add_dependencies(dep.clone(), dep_1_0, []);
         provider.add_dependencies(dep.clone(), dep_2_0, []);
 
@@ -1542,27 +1240,14 @@ mod tests {
         assert!(result.is_err(), "Expected no solution for conflicting deps");
     }
 
-    /// Test prefer-stable ordering: with prefer-stable, should pick stable over beta.
+    /// Test prefer-stable: stable version should have Stability::Stable.
     #[test]
     fn test_prefer_stable() {
-        let stable = ComposerVersion::stable(1, 0, 0, 0);
-        let beta = ComposerVersion {
-            major: 1,
-            minor: 1,
-            patch: 0,
-            build: 0,
-            stability: STABILITY_BETA_BASE + 1,
-        };
+        let stable = v(1, 0, 0, 0);
+        let beta = v_pre(1, 1, 0, 0, "beta1");
 
-        // stable should have higher stability numeric value than beta
-        assert!(
-            stable.stability > beta.stability,
-            "stable should be > beta numerically"
-        );
-        // But stable is 1.0.0.0 and beta is 1.1.0.0-beta1; when prefer-stable is on,
-        // we first look for stable version and pick the highest stable
-        assert!(stable.stability >= STABILITY_STABLE);
-        assert!(beta.stability < STABILITY_STABLE);
+        assert_eq!(version_stability(&stable), Stability::Stable);
+        assert_eq!(version_stability(&beta), Stability::Beta);
     }
 
     /// Test stability filter: alpha versions should be excluded when minimum_stability = stable.
@@ -1583,35 +1268,11 @@ mod tests {
             repo_cache: None,
         };
 
-        let stable_v = ComposerVersion::stable(1, 0, 0, 0);
-        let alpha_v = ComposerVersion {
-            major: 1,
-            minor: 1,
-            patch: 0,
-            build: 0,
-            stability: STABILITY_ALPHA_BASE,
-        };
-        let beta_v = ComposerVersion {
-            major: 1,
-            minor: 0,
-            patch: 0,
-            build: 0,
-            stability: STABILITY_BETA_BASE,
-        };
-        let rc_v = ComposerVersion {
-            major: 1,
-            minor: 0,
-            patch: 0,
-            build: 0,
-            stability: STABILITY_RC_BASE,
-        };
-        let dev_v = ComposerVersion {
-            major: 1,
-            minor: 0,
-            patch: 0,
-            build: 0,
-            stability: STABILITY_DEV,
-        };
+        let stable_v = v(1, 0, 0, 0);
+        let alpha_v = v_pre(1, 1, 0, 0, "alpha1");
+        let beta_v = v_pre(1, 0, 0, 0, "beta1");
+        let rc_v = v_pre(1, 0, 0, 0, "RC1");
+        let dev_v = v_pre(1, 0, 0, 0, "dev");
 
         assert!(provider.passes_stability_filter("foo/foo", &stable_v));
         assert!(!provider.passes_stability_filter("foo/foo", &alpha_v));
@@ -1637,28 +1298,10 @@ mod tests {
             repo_cache: None,
         };
 
-        let stable_v = ComposerVersion::stable(1, 0, 0, 0);
-        let beta_v = ComposerVersion {
-            major: 1,
-            minor: 0,
-            patch: 0,
-            build: 0,
-            stability: STABILITY_BETA_BASE,
-        };
-        let alpha_v = ComposerVersion {
-            major: 1,
-            minor: 0,
-            patch: 0,
-            build: 0,
-            stability: STABILITY_ALPHA_BASE,
-        };
-        let dev_v = ComposerVersion {
-            major: 1,
-            minor: 0,
-            patch: 0,
-            build: 0,
-            stability: STABILITY_DEV,
-        };
+        let stable_v = v(1, 0, 0, 0);
+        let beta_v = v_pre(1, 0, 0, 0, "beta1");
+        let alpha_v = v_pre(1, 0, 0, 0, "alpha1");
+        let dev_v = v_pre(1, 0, 0, 0, "dev");
 
         assert!(provider.passes_stability_filter("foo/foo", &stable_v));
         assert!(provider.passes_stability_filter("foo/foo", &beta_v));
@@ -1683,13 +1326,7 @@ mod tests {
             repo_cache: None,
         };
 
-        let dev_v = ComposerVersion {
-            major: 1,
-            minor: 0,
-            patch: 0,
-            build: 0,
-            stability: STABILITY_DEV,
-        };
+        let dev_v = v_pre(1, 0, 0, 0, "dev");
         assert!(provider.passes_stability_filter("foo/foo", &dev_v));
     }
 
@@ -1756,7 +1393,7 @@ mod tests {
         };
 
         let root = PackageName::root();
-        let root_v = ComposerVersion::stable(0, 0, 0, 0);
+        let root_v = v(0, 0, 0, 0);
         let full_range: ComposerVS = Ranges::full();
         let result = provider.choose_version(&root, &full_range).unwrap();
         assert_eq!(result, Some(root_v));
@@ -1765,8 +1402,8 @@ mod tests {
     #[test]
     fn test_platform_choose_version() {
         let mut platform = HashMap::new();
-        let php_v = ComposerVersion::from_normalized("8.1.0.0").unwrap();
-        platform.insert("php".to_string(), php_v);
+        let php_v = Version::parse("8.1.0").unwrap();
+        platform.insert("php".to_string(), php_v.clone());
 
         let provider = MozartProvider {
             handle: test_handle(),
@@ -1788,44 +1425,39 @@ mod tests {
         let result = provider.choose_version(&php, &range).unwrap();
         assert_eq!(result, Some(php_v));
 
-        // Range that excludes 8.1
         let too_new_range = constraint_to_ranges(">=9.0").unwrap();
         let result2 = provider.choose_version(&php, &too_new_range).unwrap();
         assert_eq!(result2, None);
     }
 
-    /// Test constraint_to_ranges produces correct range with version containment checks.
     #[test]
     fn test_constraint_contains_version() {
-        // ^3.0 should contain 3.5.1.0 but not 4.0.0.0
         let range = constraint_to_ranges("^3.0").unwrap();
-        assert!(range.contains(&cv_stable(3, 5, 1)));
-        assert!(!range.contains(&cv_stable(4, 0, 0)));
-        assert!(!range.contains(&cv_stable(2, 9, 9)));
+        assert!(range.contains(&v(3, 5, 1, 0)));
+        assert!(!range.contains(&v(4, 0, 0, 0)));
+        assert!(!range.contains(&v(2, 9, 9, 0)));
     }
 
     // ──────────── Integration test with MozartProvider (no network) ────────────
 
-    /// Test resolve() with root dependencies using offline provider
     #[test]
     fn test_resolve_with_offline_provider_simple() {
         let mut provider = OfflineDependencyProvider::<PackageName, TestVS>::new();
 
         let root = PackageName::root();
-        let root_v = ComposerVersion::stable(0, 0, 0, 0);
+        let root_v = v(0, 0, 0, 0);
         let foo = PackageName("foo/foo".to_string());
 
-        let foo_1_0 = cv_stable(1, 0, 0);
-        let foo_1_1 = cv_stable(1, 1, 0);
+        let foo_1_0 = v(1, 0, 0, 0);
+        let foo_1_1 = v(1, 1, 0, 0);
 
         let foo_range = constraint_to_ranges("^1.0").unwrap();
-        provider.add_dependencies(root.clone(), root_v, [(foo.clone(), foo_range)]);
+        provider.add_dependencies(root.clone(), root_v.clone(), [(foo.clone(), foo_range)]);
         provider.add_dependencies(foo.clone(), foo_1_0, []);
-        provider.add_dependencies(foo.clone(), foo_1_1, []);
+        provider.add_dependencies(foo.clone(), foo_1_1.clone(), []);
 
         let solution = pubgrub::resolve(&provider, root.clone(), root_v).unwrap();
 
-        // Should pick highest version: 1.1.0
         assert_eq!(*solution.get(&foo).unwrap(), foo_1_1);
     }
 
@@ -1834,25 +1466,22 @@ mod tests {
         let mut provider = OfflineDependencyProvider::<PackageName, TestVS>::new();
 
         let root = PackageName::root();
-        let root_v = ComposerVersion::stable(0, 0, 0, 0);
+        let root_v = v(0, 0, 0, 0);
         let foo = PackageName("foo/foo".to_string());
 
-        // foo has versions 1.5.0 and 2.3.0
-        let foo_1_5 = cv_stable(1, 5, 0);
-        let foo_2_3 = cv_stable(2, 3, 0);
+        let foo_1_5 = v(1, 5, 0, 0);
+        let foo_2_3 = v(2, 3, 0, 0);
 
-        // root requires "^1.0 || ^2.0"
         let foo_range = constraint_to_ranges("^1.0 || ^2.0").unwrap();
-        provider.add_dependencies(root.clone(), root_v, [(foo.clone(), foo_range)]);
-        provider.add_dependencies(foo.clone(), foo_1_5, []);
-        provider.add_dependencies(foo.clone(), foo_2_3, []);
+        provider.add_dependencies(root.clone(), root_v.clone(), [(foo.clone(), foo_range)]);
+        provider.add_dependencies(foo.clone(), foo_1_5.clone(), []);
+        provider.add_dependencies(foo.clone(), foo_2_3.clone(), []);
 
         let solution = pubgrub::resolve(&provider, root.clone(), root_v).unwrap();
 
-        // Should pick the highest matching version: 2.3.0
-        let picked = *solution.get(&foo).unwrap();
+        let picked = solution.get(&foo).unwrap();
         assert!(
-            picked == foo_1_5 || picked == foo_2_3,
+            *picked == foo_1_5 || *picked == foo_2_3,
             "picked version should be one of the available versions"
         );
     }
@@ -1860,68 +1489,54 @@ mod tests {
     // ──────────── Branch alias tests ────────────
 
     #[test]
-    fn test_from_branch_alias_target_x_dev() {
-        let cv = ComposerVersion::from_branch_alias_target("2.x-dev").unwrap();
-        assert_eq!(cv.major, 2);
-        assert_eq!(cv.minor, 0);
-        assert_eq!(cv.patch, 0);
-        assert_eq!(cv.build, 0);
-        assert_eq!(cv.stability, STABILITY_DEV);
+    fn test_parse_branch_alias_target_x_dev() {
+        let ver = parse_branch_alias_target("2.x-dev").unwrap();
+        assert_eq!((ver.major, ver.minor, ver.patch, ver.build), (2, 0, 0, 0));
+        assert_eq!(ver.pre_release, Some("dev".to_string()));
     }
 
     #[test]
-    fn test_from_branch_alias_target_minor_x_dev() {
-        let cv = ComposerVersion::from_branch_alias_target("1.5.x-dev").unwrap();
-        assert_eq!(cv.major, 1);
-        assert_eq!(cv.minor, 5);
-        assert_eq!(cv.patch, 0);
-        assert_eq!(cv.stability, STABILITY_DEV);
+    fn test_parse_branch_alias_target_minor_x_dev() {
+        let ver = parse_branch_alias_target("1.5.x-dev").unwrap();
+        assert_eq!((ver.major, ver.minor, ver.patch), (1, 5, 0));
+        assert_eq!(ver.pre_release, Some("dev".to_string()));
     }
 
     #[test]
-    fn test_from_branch_alias_target_patch_x_dev() {
-        let cv = ComposerVersion::from_branch_alias_target("1.0.2.x-dev").unwrap();
-        assert_eq!(cv.major, 1);
-        assert_eq!(cv.minor, 0);
-        assert_eq!(cv.patch, 2);
-        assert_eq!(cv.stability, STABILITY_DEV);
+    fn test_parse_branch_alias_target_patch_x_dev() {
+        let ver = parse_branch_alias_target("1.0.2.x-dev").unwrap();
+        assert_eq!((ver.major, ver.minor, ver.patch), (1, 0, 2));
+        assert_eq!(ver.pre_release, Some("dev".to_string()));
     }
 
     #[test]
-    fn test_from_branch_alias_target_invalid() {
-        // Must end with -dev
-        assert!(ComposerVersion::from_branch_alias_target("dev-master").is_none());
-        assert!(ComposerVersion::from_branch_alias_target("2.0.0").is_none());
-        assert!(ComposerVersion::from_branch_alias_target("").is_none());
+    fn test_parse_branch_alias_target_invalid() {
+        assert!(parse_branch_alias_target("dev-master").is_none());
+        assert!(parse_branch_alias_target("2.0.0").is_none());
+        assert!(parse_branch_alias_target("").is_none());
     }
 
-    /// Test that a branch alias entry created from "dev-master" aliased to "2.x-dev"
-    /// is contained in the ^2.0 constraint range.
     #[test]
     fn test_branch_alias_in_range() {
-        // "2.x-dev" alias target → ComposerVersion { major: 2, stability: STABILITY_DEV }
-        let aliased_cv = ComposerVersion::from_branch_alias_target("2.x-dev").unwrap();
-        // ^2.0 → >=2.0.0.0-dev <3.0.0.0-dev
+        let aliased_v = parse_branch_alias_target("2.x-dev").unwrap();
         let range = constraint_to_ranges("^2.0").unwrap();
         assert!(
-            range.contains(&aliased_cv),
+            range.contains(&aliased_v),
             "dev-master aliased to 2.x-dev should satisfy ^2.0"
         );
     }
 
-    /// Test that a branch alias entry for "1.0.x-dev" satisfies a ^1.0 constraint.
     #[test]
     fn test_branch_alias_1_x_in_range() {
-        let aliased_cv = ComposerVersion::from_branch_alias_target("1.0.x-dev").unwrap();
+        let aliased_v = parse_branch_alias_target("1.0.x-dev").unwrap();
         let range = constraint_to_ranges("^1.0").unwrap();
         assert!(
-            range.contains(&aliased_cv),
+            range.contains(&aliased_v),
             "dev branch aliased to 1.0.x-dev should satisfy ^1.0"
         );
-        // But should NOT satisfy ^2.0
         let range2 = constraint_to_ranges("^2.0").unwrap();
         assert!(
-            !range2.contains(&aliased_cv),
+            !range2.contains(&aliased_v),
             "1.0.x-dev alias should not satisfy ^2.0"
         );
     }
