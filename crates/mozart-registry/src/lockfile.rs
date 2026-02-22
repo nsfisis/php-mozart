@@ -1031,6 +1031,7 @@ mod tests {
             ignore_platform_reqs: false,
             ignore_platform_req_list: vec![],
             repo_cache: None,
+            temporary_constraints: HashMap::new(),
         };
 
         let resolved = resolve(&resolve_request)

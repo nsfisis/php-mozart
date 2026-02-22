@@ -138,12 +138,14 @@ pub async fn execute(
 
     // Fix 5: --format with invalid value
     if let Some(ref fmt) = args.format
-        && fmt != "text" && fmt != "json" {
-            anyhow::bail!(
-                "Unsupported format \"{}\". See help for supported formats.",
-                fmt
-            );
-        }
+        && fmt != "text"
+        && fmt != "json"
+    {
+        anyhow::bail!(
+            "Unsupported format \"{}\". See help for supported formats.",
+            fmt
+        );
+    }
 
     // Fix 6: --self with a package argument
     if args.self_info && args.package.is_some() {

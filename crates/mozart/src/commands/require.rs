@@ -655,6 +655,7 @@ pub async fn execute(
         ignore_platform_reqs: args.ignore_platform_reqs,
         ignore_platform_req_list: args.ignore_platform_req.clone(),
         repo_cache: None,
+        temporary_constraints: HashMap::new(),
     };
 
     // Print header messages
@@ -1026,6 +1027,7 @@ mod tests {
             ignore_platform_reqs: false,
             ignore_platform_req_list: vec![],
             repo_cache: None,
+            temporary_constraints: HashMap::new(),
         };
 
         let resolved = resolver::resolve(&request)
@@ -1078,6 +1080,7 @@ mod tests {
             ignore_platform_reqs: false,
             ignore_platform_req_list: vec![],
             repo_cache: None,
+            temporary_constraints: HashMap::new(),
         };
 
         let resolved = resolver::resolve(&request)

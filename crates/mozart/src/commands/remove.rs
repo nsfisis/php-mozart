@@ -250,6 +250,7 @@ pub async fn execute(
         ignore_platform_reqs: args.ignore_platform_reqs,
         ignore_platform_req_list: args.ignore_platform_req.clone(),
         repo_cache: None,
+        temporary_constraints: HashMap::new(),
     };
 
     // Print header messages
@@ -495,6 +496,7 @@ async fn remove_unused(
         ignore_platform_reqs: args.ignore_platform_reqs,
         ignore_platform_req_list: args.ignore_platform_req.clone(),
         repo_cache: None,
+        temporary_constraints: HashMap::new(),
     };
 
     console.info("Resolving dependencies to detect unused packages...");
@@ -823,6 +825,7 @@ mod tests {
             ignore_platform_reqs: false,
             ignore_platform_req_list: vec![],
             repo_cache: None,
+            temporary_constraints: HashMap::new(),
         };
         let resolved = resolve(&request)
             .await
@@ -858,6 +861,7 @@ mod tests {
             ignore_platform_reqs: false,
             ignore_platform_req_list: vec![],
             repo_cache: None,
+            temporary_constraints: HashMap::new(),
         };
         let resolved2 = resolve(&request2)
             .await

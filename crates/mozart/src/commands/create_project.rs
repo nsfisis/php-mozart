@@ -410,6 +410,7 @@ pub async fn execute(
         ignore_platform_reqs: args.ignore_platform_reqs,
         ignore_platform_req_list: args.ignore_platform_req.clone(),
         repo_cache: None,
+        temporary_constraints: HashMap::new(),
     };
 
     console.info("Resolving dependencies...");

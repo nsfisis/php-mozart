@@ -345,6 +345,9 @@ pub struct ResolveRequest {
     pub ignore_platform_req_list: Vec<String>,
     /// Optional on-disk repo cache for Packagist API responses.
     pub repo_cache: Option<Cache>,
+    /// Temporary version constraint overrides (from --with flag).
+    /// Maps package name (lowercase) to constraint string.
+    pub temporary_constraints: HashMap<String, String>,
 }
 
 /// A single package in the resolution output.
@@ -392,6 +395,12 @@ pub async fn resolve(request: &ResolveRequest) -> Result<Vec<ResolvedPackage>, R
             }
             root_requires.insert(name.to_lowercase(), Some(constraint.clone()));
         }
+    }
+
+    // Apply temporary constraints (from --with flag or inline shorthand).
+    // These override existing root constraints or add new ones for transitive deps.
+    for (name, constraint) in &request.temporary_constraints {
+        root_requires.insert(name.clone(), Some(constraint.clone()));
     }
 
     // Capture data needed by spawn_blocking
@@ -928,6 +937,7 @@ mod tests {
             ignore_platform_reqs: false,
             ignore_platform_req_list: vec![],
             repo_cache: None,
+            temporary_constraints: HashMap::new(),
         };
 
         let result = resolve(&request).await;

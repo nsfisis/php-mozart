@@ -737,11 +737,60 @@ pub async fn execute(
     let vendor_dir = working_dir.join("vendor");
 
     // Step 4: Handle --lock mode (early return)
+    // Fix 4: Reject combining --lock with specific package names
     if args.lock {
+        let non_magic: Vec<_> = args
+            .packages
+            .iter()
+            .filter(|p| !matches!(p.to_lowercase().as_str(), "lock" | "nothing" | "mirrors"))
+            .collect();
+        if !non_magic.is_empty() {
+            anyhow::bail!(
+                "You cannot simultaneously update only a selection of packages and regenerate the lock file metadata."
+            );
+        }
         return handle_lock_mode(&lock_path, &composer_json_content, args.dry_run, console);
     }
 
     let dev_mode = !args.no_dev;
+
+    // Fix 1C + Fix 2: Parse --with constraints and inline constraint shorthand.
+    let mut temporary_constraints: HashMap<String, String> = HashMap::new();
+
+    // Parse --with constraints (format: "vendor/package:constraint")
+    for with_entry in &args.with {
+        if let Some((name, constraint)) = with_entry.split_once(':') {
+            let name = name.trim().to_lowercase();
+            let constraint = constraint.trim().to_string();
+            if !name.is_empty() && !constraint.is_empty() {
+                temporary_constraints.insert(name, constraint);
+            }
+        }
+    }
+
+    // Fix 2: Parse inline constraint shorthand from package arguments
+    // (e.g. "vendor/package:1.0.*" -> name="vendor/package", constraint="1.0.*")
+    let mut raw_packages: Vec<String> = Vec::new();
+    for pkg in &args.packages {
+        if let Some((name, constraint)) = pkg.split_once(':') {
+            let name = name.trim().to_string();
+            let constraint = constraint.trim().to_string();
+            if !name.is_empty() && !constraint.is_empty() {
+                temporary_constraints.insert(name.to_lowercase(), constraint);
+                raw_packages.push(name);
+            } else {
+                raw_packages.push(pkg.clone());
+            }
+        } else {
+            raw_packages.push(pkg.clone());
+        }
+    }
+
+    // Fix 5: Filter magic keywords from package list
+    let raw_packages: Vec<String> = raw_packages
+        .into_iter()
+        .filter(|p| !matches!(p.to_lowercase().as_str(), "lock" | "nothing" | "mirrors"))
+        .collect();
 
     // Step 5: Build the resolve request from composer.json
     // Filter out platform packages from require list for the resolver (they're handled separately)
@@ -785,6 +834,7 @@ pub async fn execute(
         ignore_platform_reqs: args.ignore_platform_reqs,
         ignore_platform_req_list: args.ignore_platform_req.clone(),
         repo_cache: None,
+        temporary_constraints,
     };
 
     // Step 6: Print header and run resolver
@@ -828,7 +878,7 @@ pub async fn execute(
     // Note: wildcard expansion and dependency traversal both require a lock file.
     // If --minimal-changes is requested without specific packages, we pin all packages.
     // --root-reqs: treat root requirements as the package list
-    let effective_packages: Vec<String> = if args.root_reqs && args.packages.is_empty() {
+    let effective_packages: Vec<String> = if args.root_reqs && raw_packages.is_empty() {
         let mut root_pkgs: Vec<String> = composer_json
             .require
             .keys()
@@ -846,7 +896,7 @@ pub async fn execute(
         }
         root_pkgs
     } else {
-        args.packages.clone()
+        raw_packages
     };
 
     let update_packages: Vec<String> = if !effective_packages.is_empty() {
@@ -1140,8 +1190,8 @@ pub async fn execute(
                 ignore_platform_req: args.ignore_platform_req.clone(),
                 optimize_autoloader: args.optimize_autoloader,
                 classmap_authoritative: args.classmap_authoritative,
-                apcu_autoloader: false,
-                apcu_autoloader_prefix: None,
+                apcu_autoloader: args.apcu_autoloader || args.apcu_autoloader_prefix.is_some(),
+                apcu_autoloader_prefix: args.apcu_autoloader_prefix.clone(),
                 download_only: false,
             },
         )
@@ -1858,6 +1908,7 @@ mod tests {
             ignore_platform_reqs: false,
             ignore_platform_req_list: vec![],
             repo_cache: None,
+            temporary_constraints: HashMap::new(),
         };
 
         let resolved = resolve(&request).await.expect("Resolution should succeed");
