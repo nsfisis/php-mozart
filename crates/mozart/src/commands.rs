@@ -192,6 +192,9 @@ pub enum Commands {
     Status(status::StatusArgs),
 
     /// Shows package suggestions
+    #[command(
+        long_about = "Shows package suggestions.\n\nRead more at https://getcomposer.org/doc/03-cli.md#suggests"
+    )]
     Suggests(suggests::SuggestsArgs),
 
     /// Updates your dependencies to the latest version according to composer.json
