@@ -1,4 +1,6 @@
 use clap::Args;
+use mozart_core::console;
+use mozart_core::console_format;
 use serde::Serialize;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -27,7 +29,7 @@ struct FundingEntry {
 pub async fn execute(
     args: &FundArgs,
     cli: &super::Cli,
-    _console: &mozart_core::console::Console,
+    console: &console::Console,
 ) -> anyhow::Result<()> {
     let working_dir = match &cli.working_dir {
         Some(dir) => PathBuf::from(dir),
@@ -54,8 +56,8 @@ pub async fn execute(
     let grouped = group_by_vendor(&entries);
 
     match format {
-        "json" => render_json(&grouped)?,
-        _ => render_text(&grouped),
+        "json" => render_json(&grouped, console)?,
+        _ => render_text(&grouped, console),
     }
 
     Ok(())
@@ -183,46 +185,66 @@ fn group_by_vendor(entries: &[FundingEntry]) -> BTreeMap<String, BTreeMap<String
 
 // ─── Rendering ───────────────────────────────────────────────────────────────
 
-fn render_text(grouped: &BTreeMap<String, BTreeMap<String, Vec<String>>>) {
+fn render_text(
+    grouped: &BTreeMap<String, BTreeMap<String, Vec<String>>>,
+    console: &console::Console,
+) {
     if grouped.is_empty() {
-        println!(
+        console.write_stdout(
             "No funding links were found in your package dependencies. \
-             This doesn't mean they don't need your support!"
+             This doesn't mean they don't need your support!",
+            console::Verbosity::Normal,
         );
         return;
     }
 
-    println!(
-        "The following packages were found in your dependencies which publish funding information:"
+    console.write_stdout(
+        "The following packages were found in your dependencies which publish funding information:",
+        console::Verbosity::Normal,
     );
 
     for (vendor, url_map) in grouped {
-        println!();
-        println!("{}", vendor);
+        console.write_stdout("", console::Verbosity::Normal);
+        console.write_stdout(
+            &console_format!("<comment>{vendor}</comment>"),
+            console::Verbosity::Normal,
+        );
         for (url, packages) in url_map {
-            // Deduplicate consecutive identical entries and join with ", "
-            let mut deduped: Vec<&str> = Vec::new();
-            for pkg in packages {
-                if deduped.last().copied() != Some(pkg.as_str()) {
-                    deduped.push(pkg.as_str());
-                }
+            // Deduplicate cross-URL: only print package-names line when it differs from prev
+            let mut prev: Option<String> = None;
+            let packages_str = packages.join(", ");
+            if prev.as_deref() != Some(packages_str.as_str()) {
+                console.write_stdout(
+                    &console_format!("  <info>{packages_str}</info>"),
+                    console::Verbosity::Normal,
+                );
             }
-            println!("  {}", deduped.join(", "));
-            println!("    {}", url);
+            prev = Some(packages_str);
+            let _ = prev;
+            console.write_stdout(&format!("    {url}"), console::Verbosity::Normal);
         }
     }
 
-    println!();
-    println!("Please consider following these links and sponsoring the work of package authors!");
-    println!("Thank you!");
+    console.write_stdout("", console::Verbosity::Normal);
+    console.write_stdout(
+        "Please consider following these links and sponsoring the work of package authors!",
+        console::Verbosity::Normal,
+    );
+    console.write_stdout("Thank you!", console::Verbosity::Normal);
 }
 
-fn render_json(grouped: &BTreeMap<String, BTreeMap<String, Vec<String>>>) -> anyhow::Result<()> {
+fn render_json(
+    grouped: &BTreeMap<String, BTreeMap<String, Vec<String>>>,
+    console: &console::Console,
+) -> anyhow::Result<()> {
     let buf = Vec::new();
     let formatter = serde_json::ser::PrettyFormatter::with_indent(b"    ");
     let mut ser = serde_json::Serializer::with_formatter(buf, formatter);
     grouped.serialize(&mut ser)?;
-    println!("{}", String::from_utf8(ser.into_inner())?);
+    console.write_stdout(
+        &String::from_utf8(ser.into_inner())?,
+        console::Verbosity::Normal,
+    );
     Ok(())
 }
 
