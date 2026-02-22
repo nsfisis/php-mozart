@@ -7,21 +7,23 @@ pub struct AboutArgs {}
 pub async fn execute(
     _args: &AboutArgs,
     _cli: &super::Cli,
-    _console: &console::Console,
+    console: &console::Console,
 ) -> anyhow::Result<()> {
     let version = env!("CARGO_PKG_VERSION");
-    println!(
-        "{}",
-        console::info(&format!(
+    console.write_stdout(
+        &console::info(&format!(
             "Mozart - Dependency Manager for PHP - version {version}"
         ))
+        .to_string(),
+        console::Verbosity::Normal,
     );
-    println!(
-        "{}",
-        console::comment(
+    console.write_stdout(
+        &console::comment(
             "Mozart is a dependency manager tracking local dependencies of your projects and libraries.
-See https://getcomposer.org/ for more information."
+See https://getcomposer.org/ for more information.",
         )
+        .to_string(),
+        console::Verbosity::Normal,
     );
     Ok(())
 }
