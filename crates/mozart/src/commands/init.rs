@@ -101,7 +101,9 @@ pub async fn execute(
             "Do you confirm generation [<comment>yes</comment>]?"
         )) {
             console.error("Command aborted");
-            bail!("Command aborted");
+            return Err(mozart_core::exit_code::bail_silent(
+                mozart_core::exit_code::GENERAL_ERROR,
+            ));
         }
     } else {
         console.info(&format!("Writing {}", composer_file.display()));
@@ -623,9 +625,12 @@ fn get_default_package_name(working_dir: &Path) -> String {
         .unwrap_or("project");
     let name = validation::sanitize_package_name_component(dir_name);
 
-    let vendor = get_git_config_value("github.user")
-        .or_else(|| std::env::var("USER").ok())
-        .or_else(|| std::env::var("USERNAME").ok())
+    let vendor = std::env::var("COMPOSER_DEFAULT_VENDOR")
+        .ok()
+        .filter(|v| !v.is_empty())
+        .or_else(|| get_git_config_value("github.user"))
+        .or_else(|| std::env::var("USERNAME").ok().filter(|v| !v.is_empty()))
+        .or_else(|| std::env::var("USER").ok().filter(|v| !v.is_empty()))
         .map(|v| validation::sanitize_package_name_component(&v))
         .unwrap_or_else(|| name.clone());
 
@@ -633,12 +638,19 @@ fn get_default_package_name(working_dir: &Path) -> String {
 }
 
 fn get_default_author() -> Option<String> {
-    let name = get_git_config_value("user.name")?;
-    let email = get_git_config_value("user.email");
+    let name = std::env::var("COMPOSER_DEFAULT_AUTHOR")
+        .ok()
+        .filter(|v| !v.is_empty())
+        .or_else(|| get_git_config_value("user.name"));
 
-    match email {
-        Some(email) => Some(format!("{name} <{email}>")),
-        None => Some(name),
+    let email = std::env::var("COMPOSER_DEFAULT_EMAIL")
+        .ok()
+        .filter(|v| !v.is_empty())
+        .or_else(|| get_git_config_value("user.email"));
+
+    match (name, email) {
+        (Some(n), Some(e)) => Some(format!("{n} <{e}>")),
+        _ => None,
     }
 }
 
