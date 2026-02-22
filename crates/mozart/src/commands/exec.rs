@@ -1,4 +1,5 @@
 use clap::Args;
+use mozart_core::console_format;
 use std::path::{Path, PathBuf};
 
 #[derive(Args)]
@@ -37,12 +38,15 @@ pub async fn execute(
                 bin_dir.display()
             );
         }
-        println!("Available binaries:");
+        println!(
+            "{}",
+            console_format!("<comment>Available binaries:</comment>")
+        );
         for (name, is_local) in &binaries {
             if *is_local {
-                println!("- {} (local)", name);
+                println!("{}", console_format!("<info>- {} (local)</info>", name));
             } else {
-                println!("- {}", name);
+                println!("{}", console_format!("<info>- {}</info>", name));
             }
         }
         return Ok(());
@@ -100,7 +104,7 @@ pub async fn execute(
 
     let code = status.code().unwrap_or(1);
     if code != 0 {
-        std::process::exit(code);
+        return Err(mozart_core::exit_code::bail_silent(code));
     }
 
     Ok(())
