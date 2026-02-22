@@ -53,7 +53,37 @@ pub fn detect_platform() -> Vec<PlatformPackage> {
         "echo 'PHP_ZTS:' . (defined('PHP_ZTS') && PHP_ZTS ? '1' : '0') . PHP_EOL;",
         "echo 'IPV6:' . ((defined('AF_INET6') || @inet_pton('::') !== false) ? '1' : '0') . PHP_EOL;",
         "echo 'EXTENSIONS:' . PHP_EOL;",
-        "foreach(get_loaded_extensions() as $e) { echo $e . ':' . (phpversion($e) ?: '0') . PHP_EOL; }"
+        "foreach(get_loaded_extensions() as $e) { echo $e . ':' . (phpversion($e) ?: '0') . PHP_EOL; }",
+        // lib-* detection
+        "echo 'LIBS:' . PHP_EOL;",
+        // lib-pcre: strip trailing text (e.g. "10.42 2023-01-15" → "10.42")
+        "if (defined('PCRE_VERSION')) { $v = preg_replace('/^(\\S+).*/', '$1', PCRE_VERSION); echo 'LIB:pcre:' . $v . PHP_EOL; }",
+        // lib-pcre-unicode: same version if unicode classes are supported
+        "if (defined('PCRE_VERSION') && @preg_match('/\\pL/u', 'a') === 1) { $v = preg_replace('/^(\\S+).*/', '$1', PCRE_VERSION); echo 'LIB:pcre-unicode:' . $v . PHP_EOL; }",
+        // lib-openssl: parse version from OPENSSL_VERSION_TEXT (e.g. "OpenSSL 3.0.2 15 Mar 2022")
+        "if (defined('OPENSSL_VERSION_TEXT') && preg_match('/(\\d+\\.\\d+\\.\\d+[a-z]?)/', OPENSSL_VERSION_TEXT, $m)) { echo 'LIB:openssl:' . $m[1] . PHP_EOL; }",
+        // lib-curl, lib-curl-openssl, lib-curl-zlib
+        "if (function_exists('curl_version')) { $c = curl_version();",
+        "  echo 'LIB:curl:' . $c['version'] . PHP_EOL;",
+        "  if (!empty($c['ssl_version']) && preg_match('/(\\d+\\.\\d+\\.\\d+[a-z]?)/', $c['ssl_version'], $m)) { echo 'LIB:curl-openssl:' . $m[1] . PHP_EOL; }",
+        "  if (!empty($c['libz_version'])) { echo 'LIB:curl-zlib:' . $c['libz_version'] . PHP_EOL; }",
+        "}",
+        // lib-libxml
+        "if (defined('LIBXML_DOTTED_VERSION')) { echo 'LIB:libxml:' . LIBXML_DOTTED_VERSION . PHP_EOL; }",
+        // lib-icu
+        "if (defined('INTL_ICU_VERSION')) { echo 'LIB:icu:' . INTL_ICU_VERSION . PHP_EOL; }",
+        // lib-zlib
+        "if (defined('ZLIB_VERSION')) { echo 'LIB:zlib:' . ZLIB_VERSION . PHP_EOL; }",
+        // lib-iconv
+        "if (defined('ICONV_VERSION')) { echo 'LIB:iconv:' . ICONV_VERSION . PHP_EOL; }",
+        // lib-gd
+        "if (defined('GD_VERSION')) { echo 'LIB:gd:' . GD_VERSION . PHP_EOL; }",
+        // lib-gmp
+        "if (defined('GMP_VERSION')) { echo 'LIB:gmp:' . GMP_VERSION . PHP_EOL; }",
+        // lib-libsodium
+        "if (defined('SODIUM_LIBRARY_VERSION')) { echo 'LIB:libsodium:' . SODIUM_LIBRARY_VERSION . PHP_EOL; }",
+        // lib-sqlite3-sqlite
+        "if (class_exists('SQLite3')) { $sv = SQLite3::version(); echo 'LIB:sqlite3-sqlite:' . $sv['versionString'] . PHP_EOL; }",
     );
 
     let output = match std::process::Command::new("php")
@@ -85,6 +115,7 @@ pub fn parse_platform_info(output: &str) -> Vec<PlatformPackage> {
     let mut php_zts = false;
     let mut php_ipv6 = false;
     let mut in_extensions = false;
+    let mut lib_packages: Vec<PlatformPackage> = Vec::new();
 
     for line in output.lines() {
         let line = line.trim();
@@ -114,6 +145,25 @@ pub fn parse_platform_info(output: &str) -> Vec<PlatformPackage> {
         }
         if line == "EXTENSIONS:" {
             in_extensions = true;
+            continue;
+        }
+        if line == "LIBS:" {
+            in_extensions = false;
+            continue;
+        }
+
+        // Format: LIB:name:version
+        if let Some(rest) = line.strip_prefix("LIB:") {
+            if let Some(colon_pos) = rest.find(':') {
+                let lib_name = rest[..colon_pos].trim();
+                let lib_version = rest[colon_pos + 1..].trim();
+                if !lib_name.is_empty() && !lib_version.is_empty() {
+                    lib_packages.push(PlatformPackage {
+                        name: format!("lib-{lib_name}"),
+                        version: lib_version.to_string(),
+                    });
+                }
+            }
             continue;
         }
 
@@ -179,6 +229,7 @@ pub fn parse_platform_info(output: &str) -> Vec<PlatformPackage> {
         }
 
         result.extend(packages);
+        result.extend(lib_packages);
 
         // Add Composer pseudo packages
         result.push(PlatformPackage {
@@ -196,7 +247,8 @@ pub fn parse_platform_info(output: &str) -> Vec<PlatformPackage> {
 
         result
     } else {
-        // Even without PHP, provide Composer pseudo packages
+        // Even without PHP, provide lib and Composer pseudo packages
+        packages.extend(lib_packages);
         packages.push(PlatformPackage {
             name: "composer".to_string(),
             version: COMPOSER_VERSION.to_string(),
@@ -382,6 +434,87 @@ mod tests {
 
         assert!(!packages.iter().any(|p| p.name == "php"));
         assert!(packages.iter().any(|p| p.name == "ext-json"));
+    }
+
+    #[test]
+    fn test_parse_platform_info_lib_packages() {
+        let output = "\
+PHP_VERSION:8.2.1
+PHP_INT_SIZE:8
+PHP_DEBUG:0
+PHP_ZTS:0
+IPV6:1
+EXTENSIONS:
+json:8.2.1
+LIBS:
+LIB:pcre:10.42
+LIB:pcre-unicode:10.42
+LIB:openssl:3.0.2
+LIB:curl:7.81.0
+LIB:curl-openssl:3.0.2
+LIB:curl-zlib:1.2.11
+LIB:libxml:2.9.14
+LIB:icu:70.1
+LIB:zlib:1.2.11
+LIB:iconv:2.35
+LIB:gd:2.3.3
+LIB:gmp:6.2.1
+LIB:libsodium:1.0.18
+LIB:sqlite3-sqlite:3.37.2
+";
+        let packages = parse_platform_info(output);
+
+        let lib_pcre = packages.iter().find(|p| p.name == "lib-pcre");
+        assert!(lib_pcre.is_some(), "lib-pcre should be detected");
+        assert_eq!(lib_pcre.unwrap().version, "10.42");
+
+        let lib_openssl = packages.iter().find(|p| p.name == "lib-openssl");
+        assert!(lib_openssl.is_some(), "lib-openssl should be detected");
+        assert_eq!(lib_openssl.unwrap().version, "3.0.2");
+
+        let lib_curl = packages.iter().find(|p| p.name == "lib-curl");
+        assert!(lib_curl.is_some(), "lib-curl should be detected");
+        assert_eq!(lib_curl.unwrap().version, "7.81.0");
+
+        let lib_libxml = packages.iter().find(|p| p.name == "lib-libxml");
+        assert!(lib_libxml.is_some());
+        assert_eq!(lib_libxml.unwrap().version, "2.9.14");
+
+        let lib_icu = packages.iter().find(|p| p.name == "lib-icu");
+        assert!(lib_icu.is_some());
+        assert_eq!(lib_icu.unwrap().version, "70.1");
+
+        let lib_pcre_unicode = packages.iter().find(|p| p.name == "lib-pcre-unicode");
+        assert!(lib_pcre_unicode.is_some());
+
+        let lib_curl_openssl = packages.iter().find(|p| p.name == "lib-curl-openssl");
+        assert!(lib_curl_openssl.is_some());
+        assert_eq!(lib_curl_openssl.unwrap().version, "3.0.2");
+
+        let lib_sqlite = packages.iter().find(|p| p.name == "lib-sqlite3-sqlite");
+        assert!(lib_sqlite.is_some());
+        assert_eq!(lib_sqlite.unwrap().version, "3.37.2");
+    }
+
+    #[test]
+    fn test_parse_platform_info_lib_packages_no_php() {
+        // lib-* packages should still be detected even without PHP_VERSION
+        let output = "EXTENSIONS:\nLIBS:\nLIB:pcre:10.40\nLIB:libxml:2.9.12\n";
+        let packages = parse_platform_info(output);
+
+        assert!(!packages.iter().any(|p| p.name == "php"));
+        assert!(packages.iter().any(|p| p.name == "lib-pcre"));
+        assert!(packages.iter().any(|p| p.name == "lib-libxml"));
+    }
+
+    #[test]
+    fn test_parse_platform_info_lib_empty_version_skipped() {
+        let output = "PHP_VERSION:8.2.0\nPHP_INT_SIZE:8\nPHP_DEBUG:0\nPHP_ZTS:0\nIPV6:0\nEXTENSIONS:\nLIBS:\nLIB:pcre:\nLIB::1.0\n";
+        let packages = parse_platform_info(output);
+
+        // Empty version or empty name lines should be skipped
+        assert!(!packages.iter().any(|p| p.name == "lib-pcre"));
+        assert!(!packages.iter().any(|p| p.name == "lib-"));
     }
 
     #[test]
