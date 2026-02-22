@@ -112,6 +112,54 @@ pub async fn execute(
         anyhow::bail!("Only one of --major-only, --minor-only or --patch-only can be used at once");
     }
 
+    // Fix 1: --direct with --all, --platform, or --available
+    if args.direct && (args.all || args.platform || args.available) {
+        anyhow::bail!(
+            "The --direct (-D) option is not usable in combination with --all, --platform (-p) or --available (-a)"
+        );
+    }
+
+    // Fix 2: --tree with --all or --available
+    if args.tree && (args.all || args.available) {
+        anyhow::bail!(
+            "The --tree (-t) option is not usable in combination with --all or --available (-a)"
+        );
+    }
+
+    // Fix 3: --tree with --latest
+    if args.tree && args.latest {
+        anyhow::bail!("The --tree (-t) option is not usable in combination with --latest (-l)");
+    }
+
+    // Fix 4: --tree with --path
+    if args.tree && args.path {
+        anyhow::bail!("The --tree (-t) option is not usable in combination with --path (-P)");
+    }
+
+    // Fix 5: --format with invalid value
+    if let Some(ref fmt) = args.format
+        && fmt != "text" && fmt != "json" {
+            anyhow::bail!(
+                "Unsupported format \"{}\". See help for supported formats.",
+                fmt
+            );
+        }
+
+    // Fix 6: --self with a package argument
+    if args.self_info && args.package.is_some() {
+        anyhow::bail!("You cannot use --self together with a package name");
+    }
+
+    // Fix 8: --ignore without --outdated warning
+    if !args.ignore.is_empty() && !args.outdated {
+        eprintln!(
+            "{}",
+            console_format!(
+                "<warning>You are using the option \"ignore\" for action other than \"outdated\", it will be ignored.</warning>"
+            )
+        );
+    }
+
     let working_dir = match &cli.working_dir {
         Some(dir) => PathBuf::from(dir),
         None => std::env::current_dir()?,
@@ -280,13 +328,14 @@ async fn show_installed_package_list(
         return Ok(());
     }
 
-    // Build ignore set
-    let ignore_set: HashSet<String> = args.ignore.iter().map(|n| n.to_lowercase()).collect();
-
     // Gather entries (fetch latest if needed, apply outdated filter)
     let mut entries: Vec<InstalledListEntry> = Vec::new();
     for pkg in packages {
-        if ignore_set.contains(&pkg.name.to_lowercase()) {
+        if args
+            .ignore
+            .iter()
+            .any(|pattern| matches_wildcard(&pkg.name, pattern))
+        {
             continue;
         }
 
@@ -736,13 +785,14 @@ async fn show_locked_package_list(
         return Ok(());
     }
 
-    // Build ignore set
-    let ignore_set: HashSet<String> = args.ignore.iter().map(|n| n.to_lowercase()).collect();
-
     // Gather entries
     let mut entries: Vec<LockedListEntry> = Vec::new();
     for pkg in packages {
-        if ignore_set.contains(&pkg.name.to_lowercase()) {
+        if args
+            .ignore
+            .iter()
+            .any(|pattern| matches_wildcard(&pkg.name, pattern))
+        {
             continue;
         }
 

@@ -679,9 +679,10 @@ pub async fn execute(
                     eprintln!("Warning: Failed to revert composer.json: {revert_err}");
                 }
                 if let Some(ref lock_content) = original_composer_lock
-                    && let Err(revert_err) = std::fs::write(&lock_path_for_backup, lock_content) {
-                        eprintln!("Warning: Failed to revert composer.lock: {revert_err}");
-                    }
+                    && let Err(revert_err) = std::fs::write(&lock_path_for_backup, lock_content)
+                {
+                    eprintln!("Warning: Failed to revert composer.lock: {revert_err}");
+                }
             }
             return Err(mozart_core::exit_code::bail(
                 mozart_core::exit_code::DEPENDENCY_RESOLUTION_FAILED,
