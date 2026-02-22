@@ -1,4 +1,6 @@
 use clap::Args;
+use mozart_core::console_format;
+use mozart_core::package;
 use std::path::PathBuf;
 
 #[derive(Args)]
@@ -134,6 +136,21 @@ pub async fn execute(
         filter_by_names(&candidates, &args.packages)
     };
 
+    // Emit per-pattern warnings for patterns that matched no installed packages.
+    if has_packages {
+        for pattern in &args.packages {
+            let matched = candidates
+                .iter()
+                .any(|pkg| glob_matches(&pattern.to_lowercase(), &pkg.name.to_lowercase()));
+            if !matched {
+                console.info(&console_format!(
+                    "<warning>Pattern \"{}\" does not match any currently installed packages.</warning>",
+                    pattern
+                ));
+            }
+        }
+    }
+
     if selected.is_empty() {
         eprintln!("Found no packages to reinstall, aborting.");
         std::process::exit(1);
@@ -232,7 +249,34 @@ pub async fn execute(
         console.info("Generating autoload files");
 
         let dev_mode = !args.no_dev && installed.dev;
+
+        // SAFETY: single-threaded at this point; no concurrent env access
+        unsafe {
+            std::env::set_var("COMPOSER_DEV_MODE", if dev_mode { "1" } else { "0" });
+        }
+
         let suffix = lock.content_hash.clone();
+
+        // Read composer.json config section for autoloader defaults.
+        let composer_path = working_dir.join("composer.json");
+        let raw = package::read_from_file(&composer_path)?;
+        let project_config = raw.extra_fields.get("config");
+        let config_optimize = project_config
+            .and_then(|c| c.get("optimize-autoloader"))
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        let config_classmap_auth = project_config
+            .and_then(|c| c.get("classmap-authoritative"))
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        let config_apcu = project_config
+            .and_then(|c| c.get("apcu-autoloader"))
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+
+        let optimize = args.optimize_autoloader || config_optimize;
+        let classmap_auth = args.classmap_authoritative || config_classmap_auth;
+        let apcu = args.apcu_autoloader || args.apcu_autoloader_prefix.is_some() || config_apcu;
 
         let _result =
             mozart_autoload::autoload::generate(&mozart_autoload::autoload::AutoloadConfig {
@@ -240,9 +284,9 @@ pub async fn execute(
                 vendor_dir: vendor_dir.to_path_buf(),
                 dev_mode,
                 suffix,
-                classmap_authoritative: args.classmap_authoritative,
-                optimize: args.optimize_autoloader,
-                apcu: args.apcu_autoloader,
+                classmap_authoritative: classmap_auth,
+                optimize,
+                apcu,
                 apcu_prefix: args.apcu_autoloader_prefix.clone(),
                 strict_psr: false,
                 strict_ambiguous: false,
