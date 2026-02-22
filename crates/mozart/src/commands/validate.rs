@@ -140,7 +140,8 @@ pub async fn execute(
         if vendor_dir.exists() {
             validate_dependencies(&vendor_dir, args, console);
         } else {
-            console.info("No vendor directory found. Run `mozart install` to install dependencies.");
+            console
+                .info("No vendor directory found. Run `mozart install` to install dependencies.");
         }
     }
 
@@ -426,11 +427,8 @@ fn validate_dependencies(
 
             let Ok(json_value) = serde_json::from_str::<serde_json::Value>(&content) else {
                 dep_errors += 1;
-                let pkg_name = format!(
-                    "{}/{}",
-                    vendor_str,
-                    pkg_entry.file_name().to_string_lossy()
-                );
+                let pkg_name =
+                    format!("{}/{}", vendor_str, pkg_entry.file_name().to_string_lossy());
                 eprintln!(
                     "{}",
                     mozart_core::console::warning(&format!(
@@ -446,11 +444,8 @@ fn validate_dependencies(
             dep_count += 1;
 
             if result.has_errors() || result.has_warnings() {
-                let pkg_name = format!(
-                    "{}/{}",
-                    vendor_str,
-                    pkg_entry.file_name().to_string_lossy()
-                );
+                let pkg_name =
+                    format!("{}/{}", vendor_str, pkg_entry.file_name().to_string_lossy());
 
                 for e in &result.errors {
                     eprintln!(

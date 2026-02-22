@@ -552,8 +552,14 @@ fn render_plain(result: &AuditResult) {
 
     for pkg in &result.abandoned {
         match &pkg.replacement {
-            Some(repl) => println!("{} ({}) is abandoned. Use {} instead.", pkg.name, pkg.version, repl),
-            None => println!("{} ({}) is abandoned. No replacement was suggested.", pkg.name, pkg.version),
+            Some(repl) => println!(
+                "{} ({}) is abandoned. Use {} instead.",
+                pkg.name, pkg.version, repl
+            ),
+            None => println!(
+                "{} ({}) is abandoned. No replacement was suggested.",
+                pkg.name, pkg.version
+            ),
         }
     }
 }
@@ -610,8 +616,14 @@ fn render_summary(result: &AuditResult) {
 
     for pkg in &result.abandoned {
         match &pkg.replacement {
-            Some(repl) => println!("{} ({}) is abandoned. Use {} instead.", pkg.name, pkg.version, repl),
-            None => println!("{} ({}) is abandoned. No replacement was suggested.", pkg.name, pkg.version),
+            Some(repl) => println!(
+                "{} ({}) is abandoned. Use {} instead.",
+                pkg.name, pkg.version, repl
+            ),
+            None => println!(
+                "{} ({}) is abandoned. No replacement was suggested.",
+                pkg.name, pkg.version
+            ),
         }
     }
 }

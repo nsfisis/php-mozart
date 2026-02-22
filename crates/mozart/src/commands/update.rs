@@ -927,11 +927,11 @@ pub async fn execute(
     }
 
     // Apply --patch-only filter: restrict updates to patch-level changes only
-    if args.patch_only {
-        if let Some(ref lock) = old_lock {
-            console.info("Patch-only mode: restricting updates to patch-level changes.");
-            resolved = apply_patch_only(resolved, lock);
-        }
+    if args.patch_only
+        && let Some(ref lock) = old_lock
+    {
+        console.info("Patch-only mode: restricting updates to patch-level changes.");
+        resolved = apply_patch_only(resolved, lock);
     }
 
     // Step 9: Generate new lock file
@@ -1021,102 +1021,90 @@ pub async fn execute(
     }
 
     // Step 11b: Bump composer.json constraints if --bump-after-update
-    if let Some(ref bump_mode) = args.bump_after_update {
-        if !args.dry_run {
-            let mode = bump_mode.as_deref().unwrap_or("all");
-            let bump_require = mode == "all" || mode == "no-dev";
-            let bump_require_dev = mode == "all" || mode == "dev";
+    if let Some(ref bump_mode) = args.bump_after_update
+        && !args.dry_run
+    {
+        let mode = bump_mode.as_deref().unwrap_or("all");
+        let bump_require = mode == "all" || mode == "no-dev";
+        let bump_require_dev = mode == "all" || mode == "dev";
 
-            // Build locked versions map from the new lock
-            let mut locked_versions: HashMap<String, (String, Option<String>)> = HashMap::new();
-            for pkg in &new_lock.packages {
+        // Build locked versions map from the new lock
+        let mut locked_versions: HashMap<String, (String, Option<String>)> = HashMap::new();
+        for pkg in &new_lock.packages {
+            locked_versions.insert(
+                pkg.name.to_lowercase(),
+                (pkg.version.clone(), pkg.version_normalized.clone()),
+            );
+        }
+        if let Some(ref dev_pkgs) = new_lock.packages_dev {
+            for pkg in dev_pkgs {
                 locked_versions.insert(
                     pkg.name.to_lowercase(),
-                    (
-                        pkg.version.clone(),
-                        pkg.version_normalized.clone(),
-                    ),
+                    (pkg.version.clone(), pkg.version_normalized.clone()),
                 );
             }
-            if let Some(ref dev_pkgs) = new_lock.packages_dev {
-                for pkg in dev_pkgs {
-                    locked_versions.insert(
-                        pkg.name.to_lowercase(),
-                        (
-                            pkg.version.clone(),
-                            pkg.version_normalized.clone(),
-                        ),
-                    );
+        }
+
+        let mut bumped = 0u32;
+        let mut root = composer_json.clone();
+
+        if bump_require {
+            for (pkg_name, constraint) in &composer_json.require {
+                if is_platform_package(pkg_name) {
+                    continue;
+                }
+                if let Some((pretty_version, version_normalized)) =
+                    locked_versions.get(&pkg_name.to_lowercase())
+                    && let Some(new_constraint) = mozart_core::version_bumper::bump_requirement(
+                        constraint,
+                        pretty_version,
+                        version_normalized.as_deref(),
+                    )
+                {
+                    console.info(&format!(
+                        "  Bumping {}: {} => {}",
+                        pkg_name, constraint, new_constraint
+                    ));
+                    root.require.insert(pkg_name.clone(), new_constraint);
+                    bumped += 1;
                 }
             }
+        }
 
-            let mut bumped = 0u32;
-            let mut root = composer_json.clone();
-
-            if bump_require {
-                for (pkg_name, constraint) in &composer_json.require {
-                    if is_platform_package(pkg_name) {
-                        continue;
-                    }
-                    if let Some((pretty_version, version_normalized)) =
-                        locked_versions.get(&pkg_name.to_lowercase())
-                        && let Some(new_constraint) =
-                            mozart_core::version_bumper::bump_requirement(
-                                constraint,
-                                pretty_version,
-                                version_normalized.as_deref(),
-                            )
-                    {
-                        console.info(&format!(
-                            "  Bumping {}: {} => {}",
-                            pkg_name, constraint, new_constraint
-                        ));
-                        root.require.insert(pkg_name.clone(), new_constraint);
-                        bumped += 1;
-                    }
+        if bump_require_dev {
+            for (pkg_name, constraint) in &composer_json.require_dev {
+                if is_platform_package(pkg_name) {
+                    continue;
+                }
+                if let Some((pretty_version, version_normalized)) =
+                    locked_versions.get(&pkg_name.to_lowercase())
+                    && let Some(new_constraint) = mozart_core::version_bumper::bump_requirement(
+                        constraint,
+                        pretty_version,
+                        version_normalized.as_deref(),
+                    )
+                {
+                    console.info(&format!(
+                        "  Bumping {}: {} => {}",
+                        pkg_name, constraint, new_constraint
+                    ));
+                    root.require_dev.insert(pkg_name.clone(), new_constraint);
+                    bumped += 1;
                 }
             }
+        }
 
-            if bump_require_dev {
-                for (pkg_name, constraint) in &composer_json.require_dev {
-                    if is_platform_package(pkg_name) {
-                        continue;
-                    }
-                    if let Some((pretty_version, version_normalized)) =
-                        locked_versions.get(&pkg_name.to_lowercase())
-                        && let Some(new_constraint) =
-                            mozart_core::version_bumper::bump_requirement(
-                                constraint,
-                                pretty_version,
-                                version_normalized.as_deref(),
-                            )
-                    {
-                        console.info(&format!(
-                            "  Bumping {}: {} => {}",
-                            pkg_name, constraint, new_constraint
-                        ));
-                        root.require_dev.insert(pkg_name.clone(), new_constraint);
-                        bumped += 1;
-                    }
-                }
-            }
+        if bumped > 0 {
+            package::write_to_file(&root, &composer_json_path)?;
 
-            if bumped > 0 {
-                package::write_to_file(&root, &composer_json_path)?;
+            // Update lock file content-hash to match the new composer.json
+            let new_content = std::fs::read_to_string(&composer_json_path)?;
+            let new_hash = lockfile::LockFile::compute_content_hash(&new_content)?;
+            let mut updated_lock = new_lock.clone();
+            updated_lock.content_hash = new_hash;
+            updated_lock.write_to_file(&lock_path)?;
 
-                // Update lock file content-hash to match the new composer.json
-                let new_content = std::fs::read_to_string(&composer_json_path)?;
-                let new_hash =
-                    lockfile::LockFile::compute_content_hash(&new_content)?;
-                let mut updated_lock = new_lock.clone();
-                updated_lock.content_hash = new_hash;
-                updated_lock.write_to_file(&lock_path)?;
-
-                console.info(&format!(
-                    "{} constraint(s) bumped.",
-                    bumped
-                ));
-            }
+            console.info(&format!("{} constraint(s) bumped.", bumped));
         }
     }
 

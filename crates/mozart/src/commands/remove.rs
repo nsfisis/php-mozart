@@ -532,10 +532,8 @@ async fn remove_unused(
     })?;
 
     // Build set of resolved package names
-    let resolved_names: std::collections::HashSet<String> = resolved
-        .iter()
-        .map(|p| p.name.to_lowercase())
-        .collect();
+    let resolved_names: std::collections::HashSet<String> =
+        resolved.iter().map(|p| p.name.to_lowercase()).collect();
 
     // Find packages in the old lock that are not in the new resolution
     let mut unused: Vec<String> = Vec::new();
@@ -563,14 +561,12 @@ async fn remove_unused(
     console.info(&format!("Found {} unused package(s).", unused.len()));
 
     if args.dry_run {
-        console.info(&console::comment(
-            "Dry run: lock file not modified.",
-        ));
+        console.info(&console::comment("Dry run: lock file not modified."));
         return Ok(());
     }
 
     // Re-generate lock file without unused packages
-    let composer_json_content = std::fs::read_to_string(&working_dir.join("composer.json"))?;
+    let composer_json_content = std::fs::read_to_string(working_dir.join("composer.json"))?;
     let new_lock = lockfile::generate_lock_file(&lockfile::LockFileGenerationRequest {
         resolved_packages: resolved,
         composer_json_content,

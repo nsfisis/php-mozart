@@ -401,8 +401,12 @@ fn split_and_parts(constraint: &str) -> (Vec<&str>, &str) {
                 }
                 // If what follows starts with an operator, split here
                 if i < bytes.len()
-                    && (bytes[i] == b'>' || bytes[i] == b'<' || bytes[i] == b'!'
-                        || bytes[i] == b'=' || bytes[i] == b'^' || bytes[i] == b'~')
+                    && (bytes[i] == b'>'
+                        || bytes[i] == b'<'
+                        || bytes[i] == b'!'
+                        || bytes[i] == b'='
+                        || bytes[i] == b'^'
+                        || bytes[i] == b'~')
                 {
                     parts.push(&constraint[current_start..space_start]);
                     current_start = i;
@@ -418,9 +422,7 @@ fn split_and_parts(constraint: &str) -> (Vec<&str>, &str) {
 
 /// Check if a constraint part is a lower bound (can be bumped).
 fn is_lower_bound(part: &str) -> bool {
-    part.starts_with(">=")
-        || part.starts_with('^')
-        || part.starts_with('~')
+    part.starts_with(">=") || part.starts_with('^') || part.starts_with('~')
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
