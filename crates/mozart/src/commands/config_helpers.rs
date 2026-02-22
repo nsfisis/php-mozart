@@ -95,6 +95,63 @@ pub(crate) fn write_json_file(path: &Path, value: &serde_json::Value) -> anyhow:
     Ok(())
 }
 
+/// Normalize a `repositories` value into a `Vec<serde_json::Value>`.
+///
+/// Composer stores repositories as an associative object:
+///   `{"foo": {"type": "vcs", "url": "..."}}`
+/// Mozart stores them as an array of objects with a `"name"` field:
+///   `[{"name": "foo", "type": "vcs", "url": "..."}]`
+///
+/// This function accepts either format and always returns the array-of-objects
+/// representation so callers can treat them uniformly.
+pub(crate) fn normalize_repositories(value: &serde_json::Value) -> Vec<serde_json::Value> {
+    match value {
+        serde_json::Value::Array(arr) => arr.clone(),
+        serde_json::Value::Object(obj) => obj
+            .iter()
+            .map(|(key, val)| {
+                if let serde_json::Value::Object(inner) = val {
+                    // Regular repo entry: inject "name" from the key if absent.
+                    let mut entry = serde_json::Map::new();
+                    entry.insert("name".to_string(), serde_json::json!(key));
+                    for (k, v) in inner {
+                        if k != "name" {
+                            entry.insert(k.clone(), v.clone());
+                        }
+                    }
+                    serde_json::Value::Object(entry)
+                } else {
+                    // Boolean / scalar entry (e.g. `"packagist.org": false`).
+                    serde_json::json!({key: val})
+                }
+            })
+            .collect(),
+        _ => vec![],
+    }
+}
+
+/// Convert a Composer-style associative `repositories` object to Mozart's
+/// array-of-objects format in-place.  If `repositories` is already an array
+/// (or absent), this is a no-op.
+pub(crate) fn ensure_repositories_array(json: &mut serde_json::Value) {
+    if json["repositories"].is_object() {
+        let normalized = normalize_repositories(&json["repositories"].clone());
+        json["repositories"] = serde_json::Value::Array(normalized);
+    }
+}
+
+/// Find the index of a repository entry by name in a slice of normalized
+/// repository values.  Matches against the `"name"` field.
+pub(crate) fn find_repo_by_name(repos: &[serde_json::Value], name: &str) -> Option<usize> {
+    repos.iter().position(|entry| {
+        entry
+            .get("name")
+            .and_then(|n| n.as_str())
+            .map(|n| n == name)
+            .unwrap_or(false)
+    })
+}
+
 /// Add a repository entry to the `repositories` array in json.
 /// If `append` is true, push to end; otherwise insert at beginning.
 /// Removes any existing entry with the same name first.

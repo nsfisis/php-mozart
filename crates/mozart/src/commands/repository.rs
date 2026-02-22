@@ -3,8 +3,9 @@ use clap::Args;
 use std::path::PathBuf;
 
 use super::config_helpers::{
-    add_repository, composer_home, insert_repository, read_json_file, remove_repository,
-    render_value, working_dir, write_json_file,
+    add_repository, composer_home, ensure_repositories_array, find_repo_by_name, insert_repository,
+    normalize_repositories, read_json_file, remove_repository, render_value, working_dir,
+    write_json_file,
 };
 
 #[derive(Args)]
@@ -84,31 +85,30 @@ fn execute_list(args: &RepositoryArgs, cli: &super::Cli) -> anyhow::Result<()> {
 
     let mut has_packagist_disable = false;
 
-    if let Some(repos) = json["repositories"].as_array() {
-        for entry in repos {
-            if let Some(obj) = entry.as_object() {
-                // Check for disabled repo entry like {"packagist.org": false}
-                if let Some((key, _)) = obj.iter().find(|(_, v)| v == &&serde_json::json!(false)) {
-                    println!("[{key}] disabled");
-                    if key == "packagist.org" {
-                        has_packagist_disable = true;
-                    }
-                    continue;
+    let repos = normalize_repositories(&json["repositories"]);
+    for entry in &repos {
+        if let Some(obj) = entry.as_object() {
+            // Check for disabled repo entry like {"packagist.org": false}
+            if let Some((key, _)) = obj.iter().find(|(_, v)| v == &&serde_json::json!(false)) {
+                println!("[{key}] disabled");
+                if key == "packagist.org" {
+                    has_packagist_disable = true;
                 }
+                continue;
             }
-
-            let name = entry
-                .get("name")
-                .and_then(|n| n.as_str())
-                .unwrap_or("unnamed");
-            let repo_type = entry
-                .get("type")
-                .and_then(|t| t.as_str())
-                .unwrap_or("unknown");
-            let url = entry.get("url").and_then(|u| u.as_str()).unwrap_or("");
-
-            println!("[{name}] {repo_type} {url}");
         }
+
+        let name = entry
+            .get("name")
+            .and_then(|n| n.as_str())
+            .unwrap_or("unnamed");
+        let repo_type = entry
+            .get("type")
+            .and_then(|t| t.as_str())
+            .unwrap_or("unknown");
+        let url = entry.get("url").and_then(|u| u.as_str()).unwrap_or("");
+
+        println!("[{name}] {repo_type} {url}");
     }
 
     if !has_packagist_disable {
@@ -191,6 +191,8 @@ fn execute_remove(args: &RepositoryArgs, cli: &super::Cli) -> anyhow::Result<()>
     let file_path = resolve_file_path(args, cli)?;
     let mut json = read_json_file(&file_path, args.global)?;
 
+    ensure_repositories_array(&mut json);
+
     if name == "packagist.org" || name == "packagist" {
         // Removing packagist.org means disabling it
         remove_repository(&mut json, "packagist.org");
@@ -229,6 +231,8 @@ fn execute_set_url(args: &RepositoryArgs, cli: &super::Cli) -> anyhow::Result<()
     let file_path = resolve_file_path(args, cli)?;
     let mut json = read_json_file(&file_path, args.global)?;
 
+    ensure_repositories_array(&mut json);
+
     let found = json["repositories"].as_array_mut().and_then(|repos| {
         repos
             .iter_mut()
@@ -256,19 +260,20 @@ fn execute_get_url(args: &RepositoryArgs, cli: &super::Cli) -> anyhow::Result<()
     let file_path = resolve_file_path(args, cli)?;
     let json = read_json_file(&file_path, args.global)?;
 
-    let found = json["repositories"].as_array().and_then(|repos| {
-        repos
-            .iter()
-            .find(|entry| entry.get("name").and_then(|n| n.as_str()) == Some(name))
-    });
+    let repos = normalize_repositories(&json["repositories"]);
 
-    match found {
-        Some(entry) => {
-            let url = entry.get("url").map(render_value).unwrap_or_default();
-            println!("{url}");
-            Ok(())
+    match find_repo_by_name(&repos, name) {
+        Some(idx) => {
+            let entry = &repos[idx];
+            match entry.get("url") {
+                Some(url_val) => {
+                    println!("{}", render_value(url_val));
+                    Ok(())
+                }
+                None => Err(anyhow!("The \"{name}\" repository does not have a URL")),
+            }
         }
-        None => Err(anyhow!("Repository \"{name}\" not found")),
+        None => Err(anyhow!("There is no \"{name}\" repository defined")),
     }
 }
 
@@ -903,6 +908,186 @@ mod tests {
         let console = mozart_core::console::Console::new(0, false, false, false, false);
         let result = execute(&args, &cli, &console).await;
         assert!(result.is_err());
+    }
+
+    // ── Composer associative-key format ─────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_list_composer_format() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let file = dir.path().join("composer.json");
+        std::fs::write(
+            &file,
+            r#"{"repositories": {"my-repo": {"type": "vcs", "url": "https://example.com"}}}"#,
+        )
+        .unwrap();
+
+        let mut args = make_args(Some("list"), None, None, None);
+        args.file = Some(file.to_str().unwrap().to_string());
+
+        let cli = make_cli();
+        let console = mozart_core::console::Console::new(0, false, false, false, false);
+        let result = execute(&args, &cli, &console).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_get_url_composer_format() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let file = dir.path().join("composer.json");
+        std::fs::write(
+            &file,
+            r#"{"repositories": {"my-repo": {"type": "vcs", "url": "https://example.com"}}}"#,
+        )
+        .unwrap();
+
+        let mut args = make_args(Some("get-url"), Some("my-repo"), None, None);
+        args.file = Some(file.to_str().unwrap().to_string());
+
+        let cli = make_cli();
+        let console = mozart_core::console::Console::new(0, false, false, false, false);
+        let result = execute(&args, &cli, &console).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_get_url_no_url_error() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let file = dir.path().join("composer.json");
+        std::fs::write(
+            &file,
+            r#"{"repositories": [{"name": "my-repo", "type": "artifact"}]}"#,
+        )
+        .unwrap();
+
+        let mut args = make_args(Some("get-url"), Some("my-repo"), None, None);
+        args.file = Some(file.to_str().unwrap().to_string());
+
+        let cli = make_cli();
+        let console = mozart_core::console::Console::new(0, false, false, false, false);
+        let result = execute(&args, &cli, &console).await;
+        assert!(result.is_err());
+        let msg = result.unwrap_err().to_string();
+        assert!(
+            msg.contains("does not have a URL"),
+            "unexpected message: {msg}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_get_url_not_found_message() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let file = dir.path().join("composer.json");
+        std::fs::write(&file, r#"{"repositories": []}"#).unwrap();
+
+        let mut args = make_args(Some("get-url"), Some("missing"), None, None);
+        args.file = Some(file.to_str().unwrap().to_string());
+
+        let cli = make_cli();
+        let console = mozart_core::console::Console::new(0, false, false, false, false);
+        let result = execute(&args, &cli, &console).await;
+        assert!(result.is_err());
+        let msg = result.unwrap_err().to_string();
+        assert!(msg.contains("There is no"), "unexpected message: {msg}");
+    }
+
+    #[tokio::test]
+    async fn test_set_url_composer_format_converts_and_updates() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let file = dir.path().join("composer.json");
+        std::fs::write(
+            &file,
+            r#"{"repositories": {"my-repo": {"type": "vcs", "url": "https://old.com"}}}"#,
+        )
+        .unwrap();
+
+        let mut args = make_args(
+            Some("set-url"),
+            Some("my-repo"),
+            Some("https://new.com"),
+            None,
+        );
+        args.file = Some(file.to_str().unwrap().to_string());
+
+        let cli = make_cli();
+        let console = mozart_core::console::Console::new(0, false, false, false, false);
+        execute(&args, &cli, &console).await.unwrap();
+
+        let json: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
+        // After conversion it should be an array
+        let repos = json["repositories"].as_array().unwrap();
+        assert_eq!(repos[0]["url"], "https://new.com");
+        assert_eq!(repos[0]["name"], "my-repo");
+    }
+
+    #[tokio::test]
+    async fn test_remove_composer_format_converts_and_removes() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let file = dir.path().join("composer.json");
+        std::fs::write(
+            &file,
+            r#"{"repositories": {"my-repo": {"type": "vcs", "url": "https://example.com"}}}"#,
+        )
+        .unwrap();
+
+        let mut args = make_args(Some("remove"), Some("my-repo"), None, None);
+        args.file = Some(file.to_str().unwrap().to_string());
+
+        let cli = make_cli();
+        let console = mozart_core::console::Console::new(0, false, false, false, false);
+        execute(&args, &cli, &console).await.unwrap();
+
+        let json: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
+        assert!(json.get("repositories").is_none());
+    }
+
+    // ── normalize_repositories helper ────────────────────────────────────────
+
+    #[test]
+    fn test_normalize_repositories_array_passthrough() {
+        use super::super::config_helpers::normalize_repositories;
+        let val = serde_json::json!([
+            {"name": "foo", "type": "vcs", "url": "https://foo.com"}
+        ]);
+        let result = normalize_repositories(&val);
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0]["name"], "foo");
+    }
+
+    #[test]
+    fn test_normalize_repositories_object_injects_name() {
+        use super::super::config_helpers::normalize_repositories;
+        let val = serde_json::json!({
+            "foo": {"type": "vcs", "url": "https://foo.com"},
+            "bar": {"type": "composer", "url": "https://bar.com"}
+        });
+        let result = normalize_repositories(&val);
+        assert_eq!(result.len(), 2);
+        let names: std::collections::HashSet<&str> = result
+            .iter()
+            .filter_map(|v| v.get("name").and_then(|n| n.as_str()))
+            .collect();
+        assert!(names.contains("foo"));
+        assert!(names.contains("bar"));
+    }
+
+    #[test]
+    fn test_normalize_repositories_object_boolean_entry() {
+        use super::super::config_helpers::normalize_repositories;
+        let val = serde_json::json!({"packagist.org": false});
+        let result = normalize_repositories(&val);
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0]["packagist.org"], false);
+    }
+
+    #[test]
+    fn test_normalize_repositories_empty() {
+        use super::super::config_helpers::normalize_repositories;
+        let val = serde_json::json!(null);
+        let result = normalize_repositories(&val);
+        assert!(result.is_empty());
     }
 
     // ── unknown action ──────────────────────────────────────────────────────
