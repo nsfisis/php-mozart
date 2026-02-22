@@ -40,6 +40,41 @@ fn init_tracing(profile: bool, verbose: u8, quiet: bool) {
 #[tokio::main]
 async fn main() {
     let cli = commands::Cli::parse();
+
+    if cli.version {
+        let build_date = option_env!("MOZART_BUILD_DATE").unwrap_or("source");
+        // Line 1 (stdout): getLongVersion() equivalent
+        println!(
+            "{}",
+            mozart_core::console_format!(
+                "<info>Mozart</info> version <comment>{}</comment> {}",
+                env!("CARGO_PKG_VERSION"),
+                build_date
+            )
+        );
+        // Line 2 (stderr): PHP version + binary path (matches Composer's output)
+        let (php_version, php_binary) = mozart_core::platform::detect_php_version_and_binary()
+            .unwrap_or_else(|| ("not found".into(), "php".into()));
+        eprintln!(
+            "{}",
+            mozart_core::console_format!(
+                "<info>PHP</info> version <comment>{}</comment> ({})",
+                php_version,
+                php_binary
+            )
+        );
+        // Line 3 (stderr): diagnose hint
+        eprintln!("Run the \"diagnose\" command to get more detailed diagnostics output.");
+        return;
+    }
+
+    let Some(ref _cmd) = cli.command else {
+        use clap::CommandFactory;
+        commands::Cli::command().print_help().ok();
+        println!();
+        return;
+    };
+
     init_tracing(cli.profile, cli.verbose, cli.quiet);
     match commands::execute(&cli).await {
         Ok(()) => {}

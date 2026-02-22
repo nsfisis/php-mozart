@@ -265,6 +265,23 @@ pub fn parse_platform_info(output: &str) -> Vec<PlatformPackage> {
     }
 }
 
+/// Detect PHP version and binary path for `--version` display.
+///
+/// Returns `(PHP_VERSION, PHP_BINARY)` by running a single PHP invocation.
+/// Returns `None` if PHP is not available.
+pub fn detect_php_version_and_binary() -> Option<(String, String)> {
+    let output = std::process::Command::new("php")
+        .args(["-r", r#"echo PHP_VERSION, "\n", PHP_BINARY;"#])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let stdout = String::from_utf8(output.stdout).ok()?;
+    let mut lines = stdout.lines();
+    Some((lines.next()?.to_owned(), lines.next()?.to_owned()))
+}
+
 /// Try to detect the installed PHP version by running `php --version`.
 pub fn detect_php_version() -> Option<String> {
     let output = std::process::Command::new("php")

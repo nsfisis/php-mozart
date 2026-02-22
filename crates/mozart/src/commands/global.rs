@@ -221,7 +221,7 @@ mod tests {
     fn test_global_args_has_correct_command() {
         // Verify GlobalArgs parses correctly through the CLI
         let cli = Cli::try_parse_from(["mozart", "global", "require", "vendor/package"]).unwrap();
-        if let Commands::Global(args) = cli.command {
+        if let Some(Commands::Global(args)) = cli.command {
             assert_eq!(args.command_name, "require");
             assert_eq!(args.args, vec!["vendor/package"]);
         } else {
@@ -234,7 +234,7 @@ mod tests {
         // Verify hyphen values in trailing args are accepted
         let cli = Cli::try_parse_from(["mozart", "global", "require", "vendor/pkg", "--no-update"])
             .unwrap();
-        if let Commands::Global(args) = cli.command {
+        if let Some(Commands::Global(args)) = cli.command {
             assert_eq!(args.command_name, "require");
             assert!(args.args.contains(&"--no-update".to_string()));
         } else {

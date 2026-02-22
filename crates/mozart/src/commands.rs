@@ -35,10 +35,14 @@ pub mod update;
 pub mod validate;
 
 #[derive(clap::Parser)]
-#[command(name = "mozart", version, about = "A PHP dependency manager")]
+#[command(name = "mozart", about = "A PHP dependency manager")]
 pub struct Cli {
     #[command(subcommand)]
-    pub command: Commands,
+    pub command: Option<Commands>,
+
+    /// Display version information
+    #[arg(short = 'V', long = "version")]
+    pub version: bool,
 
     /// Increase the verbosity of messages: 1 for normal, 2 for more verbose, 3 for debug
     #[arg(short, long, action = clap::ArgAction::Count, global = true)]
@@ -238,7 +242,7 @@ impl Commands {
     }
 }
 
-#[tracing::instrument(skip(cli), fields(command = cli.command.name()))]
+#[tracing::instrument(skip(cli), fields(command = cli.command.as_ref().map(|c| c.name()).unwrap_or("none")))]
 pub async fn execute(cli: &Cli) -> anyhow::Result<()> {
     let console = mozart_core::console::Console::new(
         cli.verbose,
@@ -247,7 +251,8 @@ pub async fn execute(cli: &Cli) -> anyhow::Result<()> {
         cli.no_ansi,
         cli.no_interaction,
     );
-    match &cli.command {
+    let command = cli.command.as_ref().expect("command must be set");
+    match command {
         Commands::About(args) => about::execute(args, cli, &console).await,
         Commands::Archive(args) => archive::execute(args, cli, &console).await,
         Commands::Audit(args) => audit::execute(args, cli, &console).await,

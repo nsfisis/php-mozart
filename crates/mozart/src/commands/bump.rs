@@ -311,12 +311,13 @@ mod tests {
 
     fn make_cli(working_dir: &std::path::Path) -> super::super::Cli {
         super::super::Cli {
-            command: super::super::Commands::Bump(BumpArgs {
+            command: Some(super::super::Commands::Bump(BumpArgs {
                 packages: vec![],
                 dev_only: false,
                 no_dev_only: false,
                 dry_run: false,
-            }),
+            })),
+            version: false,
             verbose: 0,
             profile: false,
             no_plugins: false,
