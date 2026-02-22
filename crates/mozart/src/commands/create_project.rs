@@ -151,14 +151,17 @@ fn remove_vcs_metadata(target_dir: &Path) -> anyhow::Result<()> {
 
 /// Replace "self.version" constraints in a composer.json with a concrete version string.
 fn replace_self_version(raw: &mut package::RawPackageData, concrete_version: &str) {
-    for value in raw.require.values_mut() {
-        if value == "self.version" {
-            *value = concrete_version.to_string();
-        }
-    }
-    for value in raw.require_dev.values_mut() {
-        if value == "self.version" {
-            *value = concrete_version.to_string();
+    for map in [
+        &mut raw.require,
+        &mut raw.require_dev,
+        &mut raw.conflict,
+        &mut raw.provide,
+        &mut raw.replace,
+    ] {
+        for value in map.values_mut() {
+            if value == "self.version" {
+                *value = concrete_version.to_string();
+            }
         }
     }
 }
@@ -339,7 +342,8 @@ pub async fn execute(
     // Remove VCS metadata unless --keep-vcs is set.
     // If --remove-vcs is set, always remove. If --keep-vcs is set, always keep.
     // Default (neither flag): remove.
-    if args.remove_vcs || !args.keep_vcs {
+    let vcs_removed = args.remove_vcs || !args.keep_vcs;
+    if vcs_removed {
         remove_vcs_metadata(&target_dir)?;
     }
 
@@ -356,9 +360,11 @@ pub async fn execute(
 
     let mut raw = package::read_from_file(&composer_path)?;
 
-    // --- Step 8: Replace self.version constraints ---
-    replace_self_version(&mut raw, &concrete_version);
-    package::write_to_file(&raw, &composer_path)?;
+    // --- Step 8: Replace self.version constraints (only when VCS metadata is gone) ---
+    if vcs_removed {
+        replace_self_version(&mut raw, &concrete_version);
+        package::write_to_file(&raw, &composer_path)?;
+    }
 
     // --- Step 6 continued: dependency resolution and install ---
     if args.no_install {
@@ -465,6 +471,20 @@ pub async fn execute(
         ));
     }
 
+    let project_config = raw.extra_fields.get("config");
+    let optimize_autoloader = project_config
+        .and_then(|c| c.get("optimize-autoloader"))
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    let classmap_authoritative = project_config
+        .and_then(|c| c.get("classmap-authoritative"))
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    let apcu_autoloader = project_config
+        .and_then(|c| c.get("apcu-autoloader"))
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+
     super::install::install_from_lock(
         &new_lock,
         &target_dir,
@@ -476,9 +496,9 @@ pub async fn execute(
             no_progress: args.no_progress,
             ignore_platform_reqs: args.ignore_platform_reqs,
             ignore_platform_req: args.ignore_platform_req.clone(),
-            optimize_autoloader: false,
-            classmap_authoritative: false,
-            apcu_autoloader: false,
+            optimize_autoloader,
+            classmap_authoritative,
+            apcu_autoloader,
             apcu_autoloader_prefix: None,
             download_only: false,
         },
@@ -717,12 +737,21 @@ mod tests {
             .insert("vendor/dep-b".to_string(), "^1.0".to_string());
         raw.require_dev
             .insert("vendor/dep-c".to_string(), "self.version".to_string());
+        raw.conflict
+            .insert("some/conflict".to_string(), "self.version".to_string());
+        raw.provide
+            .insert("some/provide".to_string(), "self.version".to_string());
+        raw.replace
+            .insert("some/replace".to_string(), "self.version".to_string());
 
         replace_self_version(&mut raw, "2.3.4");
 
         assert_eq!(raw.require.get("vendor/dep-a").unwrap(), "2.3.4");
         assert_eq!(raw.require.get("vendor/dep-b").unwrap(), "^1.0");
         assert_eq!(raw.require_dev.get("vendor/dep-c").unwrap(), "2.3.4");
+        assert_eq!(raw.conflict.get("some/conflict").unwrap(), "2.3.4");
+        assert_eq!(raw.provide.get("some/provide").unwrap(), "2.3.4");
+        assert_eq!(raw.replace.get("some/replace").unwrap(), "2.3.4");
     }
 
     #[test]

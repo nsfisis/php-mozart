@@ -488,6 +488,15 @@ pub struct RawPackageData {
     )]
     pub require_dev: BTreeMap<String, String>,
 
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub conflict: BTreeMap<String, String>,
+
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub provide: BTreeMap<String, String>,
+
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub replace: BTreeMap<String, String>,
+
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub repositories: Vec<RawRepository>,
 
@@ -534,6 +543,9 @@ impl RawPackageData {
             minimum_stability: None,
             require: BTreeMap::new(),
             require_dev: BTreeMap::new(),
+            conflict: BTreeMap::new(),
+            provide: BTreeMap::new(),
+            replace: BTreeMap::new(),
             repositories: Vec::new(),
             autoload: None,
             bin: Vec::new(),
