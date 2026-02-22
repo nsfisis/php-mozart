@@ -1,5 +1,6 @@
 use clap::Args;
 use mozart_core::console_format;
+use mozart_core::matches_wildcard;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
@@ -334,7 +335,9 @@ async fn show_installed_package_list(
     if format == "json" {
         render_installed_json(&entries)?;
         if args.strict && has_outdated {
-            std::process::exit(1);
+            return Err(mozart_core::exit_code::bail_silent(
+                mozart_core::exit_code::GENERAL_ERROR,
+            ));
         }
         return Ok(());
     }
@@ -430,7 +433,9 @@ async fn show_installed_package_list(
     }
 
     if args.strict && has_outdated {
-        std::process::exit(1);
+        return Err(mozart_core::exit_code::bail_silent(
+            mozart_core::exit_code::GENERAL_ERROR,
+        ));
     }
 
     Ok(())
@@ -784,7 +789,9 @@ async fn show_locked_package_list(
     if format == "json" {
         render_locked_json(&entries)?;
         if args.strict && has_outdated {
-            std::process::exit(1);
+            return Err(mozart_core::exit_code::bail_silent(
+                mozart_core::exit_code::GENERAL_ERROR,
+            ));
         }
         return Ok(());
     }
@@ -880,7 +887,9 @@ async fn show_locked_package_list(
     }
 
     if args.strict && has_outdated {
-        std::process::exit(1);
+        return Err(mozart_core::exit_code::bail_silent(
+            mozart_core::exit_code::GENERAL_ERROR,
+        ));
     }
 
     Ok(())
@@ -1646,41 +1655,6 @@ fn resolve_path(path: &Path) -> String {
     } else {
         path.display().to_string()
     }
-}
-
-/// Match a package name against a wildcard pattern (case-insensitive).
-/// `*` matches any sequence of characters.
-fn matches_wildcard(name: &str, pattern: &str) -> bool {
-    let name_lower = name.to_lowercase();
-    let pattern_lower = pattern.to_lowercase();
-    let parts: Vec<&str> = pattern_lower.split('*').collect();
-
-    if parts.len() == 1 {
-        return name_lower == pattern_lower;
-    }
-
-    let mut pos = 0usize;
-    for (i, part) in parts.iter().enumerate() {
-        if part.is_empty() {
-            continue;
-        }
-        match name_lower[pos..].find(*part) {
-            Some(found) => {
-                if i == 0 && found != 0 {
-                    return false; // First segment must match at start
-                }
-                pos += found + part.len();
-            }
-            None => return false,
-        }
-    }
-
-    // If pattern doesn't end with *, name must be fully consumed
-    if !pattern_lower.ends_with('*') {
-        return pos == name_lower.len();
-    }
-
-    true
 }
 
 /// Simple version normalizer fallback when `version_normalized` is absent.

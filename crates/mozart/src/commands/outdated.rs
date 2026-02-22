@@ -1,6 +1,7 @@
 use clap::Args;
+use mozart_core::matches_wildcard;
 use std::cmp::Ordering;
-use std::collections::{BTreeMap, HashSet};
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 #[derive(Args)]
@@ -142,33 +143,15 @@ pub async fn execute(
         HashSet::new()
     };
 
-    // Build constraint map from root composer.json
-    let root_constraints: BTreeMap<String, String> = if let Some(ref root) = root_package {
-        let mut map: BTreeMap<String, String> = root
-            .require
-            .iter()
-            .map(|(k, v)| (k.to_lowercase(), v.clone()))
-            .collect();
-        if !args.no_dev {
-            map.extend(
-                root.require_dev
-                    .iter()
-                    .map(|(k, v)| (k.to_lowercase(), v.clone())),
-            );
-        }
-        map
-    } else {
-        BTreeMap::new()
-    };
-
-    // Build ignore set
-    let ignore_set: HashSet<String> = args.ignore.iter().map(|n| n.to_lowercase()).collect();
-
     // Process each package
     let mut entries: Vec<OutdatedEntry> = Vec::new();
     for pkg in &packages {
         // Skip ignored packages
-        if ignore_set.contains(&pkg.name.to_lowercase()) {
+        if args
+            .ignore
+            .iter()
+            .any(|pattern| matches_wildcard(&pkg.name, pattern))
+        {
             continue;
         }
 
@@ -178,10 +161,14 @@ pub async fn execute(
         }
 
         // --package filter
-        if let Some(ref filter) = args.package
-            && !pkg.name.eq_ignore_ascii_case(filter)
-        {
-            continue;
+        if let Some(ref filter) = args.package {
+            if filter.contains('*') {
+                if !matches_wildcard(&pkg.name, filter) {
+                    continue;
+                }
+            } else if !pkg.name.eq_ignore_ascii_case(filter) {
+                continue;
+            }
         }
 
         // Fetch latest version from Packagist
@@ -194,12 +181,7 @@ pub async fn execute(
         };
 
         // Classify the update
-        let root_constraint = root_constraints.get(&pkg.name.to_lowercase()).cloned();
-        let category = classify_update(
-            &pkg.version_normalized,
-            &latest.version_normalized,
-            root_constraint.as_deref(),
-        );
+        let category = classify_update(&pkg.version_normalized, &latest.version_normalized);
 
         // If showing all, include up-to-date; otherwise only show outdated
         if !args.all && category == UpdateCategory::UpToDate {
@@ -242,7 +224,9 @@ pub async fn execute(
             .iter()
             .any(|e| e.category != UpdateCategory::UpToDate);
         if has_outdated {
-            std::process::exit(1);
+            return Err(mozart_core::exit_code::bail_silent(
+                mozart_core::exit_code::GENERAL_ERROR,
+            ));
         }
     }
 
@@ -359,15 +343,13 @@ async fn fetch_latest_version(name: &str) -> anyhow::Result<PackageInfo> {
 
 /// Determine the update category for a package.
 ///
+/// Mirrors Composer's logic: constructs `^<installed_version>` and checks if the
+/// latest version satisfies it.
+///
 /// - If latest <= current → UpToDate
-/// - If root constraint exists and latest matches it → SemverCompatible (red)
-/// - If root constraint exists but latest doesn't match → SemverIncompatible (yellow)
-/// - Fallback (no constraint): same major = compatible, different major = incompatible
-fn classify_update(
-    current_normalized: &str,
-    latest_normalized: &str,
-    root_constraint: Option<&str>,
-) -> UpdateCategory {
+/// - If latest satisfies `^<current>` → SemverCompatible (semver-safe update)
+/// - Otherwise → SemverIncompatible (update-possible, may require constraint change)
+fn classify_update(current_normalized: &str, latest_normalized: &str) -> UpdateCategory {
     use mozart_registry::version::compare_normalized_versions;
 
     // If latest is not newer than current, it's up-to-date
@@ -375,9 +357,10 @@ fn classify_update(
         return UpdateCategory::UpToDate;
     }
 
-    // We have an update available — classify it
-    if let Some(constraint_str) = root_constraint
-        && let Ok(constraint) = mozart_semver::VersionConstraint::parse(constraint_str)
+    // Build ^<current_normalized> constraint and check if latest satisfies it.
+    // This mirrors Composer's approach of checking semver safety.
+    let caret_constraint = format!("^{current_normalized}");
+    if let Ok(constraint) = mozart_semver::VersionConstraint::parse(&caret_constraint)
         && let Ok(latest_ver) = mozart_semver::Version::parse(latest_normalized)
     {
         if constraint.matches(&latest_ver) {
@@ -387,7 +370,7 @@ fn classify_update(
         }
     }
 
-    // Fallback: no constraint or parse failed — compare major versions
+    // Fallback: parse failed — compare major versions
     let current_major = extract_major(current_normalized);
     let latest_major = extract_major(latest_normalized);
     if current_major == latest_major {
@@ -590,48 +573,48 @@ mod tests {
 
     #[test]
     fn test_classify_up_to_date_equal() {
-        let cat = classify_update("1.2.3.0", "1.2.3.0", None);
+        let cat = classify_update("1.2.3.0", "1.2.3.0");
         assert_eq!(cat, UpdateCategory::UpToDate);
     }
 
     #[test]
     fn test_classify_up_to_date_latest_older() {
-        let cat = classify_update("2.0.0.0", "1.5.0.0", None);
+        let cat = classify_update("2.0.0.0", "1.5.0.0");
         assert_eq!(cat, UpdateCategory::UpToDate);
     }
 
     #[test]
-    fn test_classify_semver_compatible_with_constraint() {
-        // Current 1.2.0, latest 1.3.0, constraint ^1.0 — latest matches constraint
-        let cat = classify_update("1.2.0.0", "1.3.0.0", Some("^1.0"));
+    fn test_classify_semver_compatible_minor_update() {
+        // Current 1.2.0, latest 1.3.0 — ^1.2.0 allows 1.3.0
+        let cat = classify_update("1.2.0.0", "1.3.0.0");
         assert_eq!(cat, UpdateCategory::SemverCompatible);
     }
 
     #[test]
-    fn test_classify_semver_incompatible_with_constraint() {
-        // Current 1.2.0, latest 2.0.0, constraint ^1.0 — latest doesn't match
-        let cat = classify_update("1.2.0.0", "2.0.0.0", Some("^1.0"));
+    fn test_classify_semver_incompatible_major_bump() {
+        // Current 1.2.0, latest 2.0.0 — ^1.2.0 does not allow 2.0.0
+        let cat = classify_update("1.2.0.0", "2.0.0.0");
         assert_eq!(cat, UpdateCategory::SemverIncompatible);
     }
 
     #[test]
-    fn test_classify_no_constraint_same_major() {
-        // No constraint, same major → SemverCompatible
-        let cat = classify_update("1.2.0.0", "1.5.0.0", None);
+    fn test_classify_semver_compatible_same_major() {
+        // Same major, minor bump → semver-safe under ^
+        let cat = classify_update("1.2.0.0", "1.5.0.0");
         assert_eq!(cat, UpdateCategory::SemverCompatible);
     }
 
     #[test]
-    fn test_classify_no_constraint_different_major() {
-        // No constraint, different major → SemverIncompatible
-        let cat = classify_update("1.9.0.0", "2.0.0.0", None);
+    fn test_classify_semver_incompatible_different_major() {
+        // Different major → not semver-safe under ^
+        let cat = classify_update("1.9.0.0", "2.0.0.0");
         assert_eq!(cat, UpdateCategory::SemverIncompatible);
     }
 
     #[test]
-    fn test_classify_no_constraint_patch_update() {
-        // No constraint, same major.minor, patch bump → SemverCompatible
-        let cat = classify_update("1.2.3.0", "1.2.4.0", None);
+    fn test_classify_semver_compatible_patch_update() {
+        // Patch bump → SemverCompatible
+        let cat = classify_update("1.2.3.0", "1.2.4.0");
         assert_eq!(cat, UpdateCategory::SemverCompatible);
     }
 
