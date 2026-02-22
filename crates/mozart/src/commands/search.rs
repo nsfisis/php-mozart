@@ -50,6 +50,7 @@ pub struct SearchArgs {
 }
 
 /// Format a large count as a human-readable string (e.g. 1500 -> "1.5K", 2500000 -> "2.5M").
+#[allow(dead_code)]
 fn format_count(n: u64) -> String {
     if n >= 1_000_000 {
         let m = n as f64 / 1_000_000.0;
@@ -123,7 +124,7 @@ pub async fn execute(
         std::process::exit(1);
     }
 
-    let (all_results, total) =
+    let (all_results, _total) =
         mozart_registry::packagist::search_packages(&query, args.r#type.as_deref()).await?;
 
     // Apply client-side filters
@@ -187,38 +188,28 @@ pub async fn execute(
                 return Ok(());
             }
 
-            eprintln!(
-                "Found {} packages matching \"{}\" (showing {} result{})",
-                total,
-                query,
-                results.len(),
-                if results.len() == 1 { "" } else { "s" }
-            );
-            eprintln!();
-
-            // Calculate alignment widths
-            let name_width = results.iter().map(|r| r.name.len()).max().unwrap_or(0);
+            let width = terminal_size::terminal_size()
+                .map(|(w, _)| w.0 as usize)
+                .unwrap_or(80);
+            let name_width = results.iter().map(|r| r.name.len()).max().unwrap_or(0) + 1;
 
             for result in &results {
-                let dl_str = format!("Downloads: {}", format_count(result.downloads));
-                let fav_str = format!("Favers: {}", format_count(result.favers));
-
-                let abandoned_warning = if is_abandoned(result) {
-                    console_format!(" <warning>! Abandoned !</warning>")
+                let warning = if is_abandoned(result) {
+                    "! Abandoned ! "
                 } else {
-                    String::new()
+                    ""
                 };
 
-                println!(
-                    "{} {}  {}{}",
-                    console_format!("<info>{:<width$}</info>", result.name, width = name_width),
-                    console_format!("<comment>{}</comment>", dl_str),
-                    console_format!("<comment>{}</comment>", fav_str),
-                    abandoned_warning,
-                );
-                if !result.description.is_empty() {
-                    println!("  {}", result.description);
-                }
+                let remaining = width.saturating_sub(name_width + warning.len());
+                let description = result.description.as_str();
+                let desc_display = if description.len() > remaining && remaining > 3 {
+                    format!("{}...", &description[..remaining.saturating_sub(3)])
+                } else {
+                    description.to_string()
+                };
+
+                let padding = " ".repeat(name_width.saturating_sub(result.name.len()));
+                println!("{}{}{}{}", result.name, padding, warning, desc_display);
             }
         }
     }

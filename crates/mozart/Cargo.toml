@@ -20,6 +20,7 @@ serde.workspace = true
 serde_json.workspace = true
 sha1.workspace = true
 tempfile.workspace = true
+terminal_size.workspace = true
 tokio.workspace = true
 url.workspace = true
 tracing-subscriber.workspace = true
