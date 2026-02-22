@@ -162,11 +162,13 @@ fn build_non_interactive(args: &InitArgs, working_dir: &Path) -> anyhow::Result<
         .clone()
         .or_else(|| std::env::var("COMPOSER_DEFAULT_LICENSE").ok());
     if let Some(ref license) = resolved_license
-        && !validation::validate_license(license) && !license.eq_ignore_ascii_case("proprietary") {
-            bail!(
-                "Invalid license provided: {license}. Only SPDX license identifiers (https://spdx.org/licenses/) or \"proprietary\" are accepted."
-            );
-        }
+        && !validation::validate_license(license)
+        && !license.eq_ignore_ascii_case("proprietary")
+    {
+        bail!(
+            "Invalid license provided: {license}. Only SPDX license identifiers (https://spdx.org/licenses/) or \"proprietary\" are accepted."
+        );
+    }
     composer.license = resolved_license;
 
     if let Some(ref stability) = args.stability {

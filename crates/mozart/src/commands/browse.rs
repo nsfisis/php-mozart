@@ -248,7 +248,10 @@ fn extract_url_from_packagist(
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 fn is_valid_url(url: &str) -> bool {
-    url.starts_with("http://") || url.starts_with("https://")
+    match url::Url::parse(url) {
+        Ok(parsed) => matches!(parsed.scheme(), "http" | "https"),
+        Err(_) => false,
+    }
 }
 
 fn open_browser(url: &str) -> anyhow::Result<()> {
@@ -261,7 +264,7 @@ fn open_browser(url: &str) -> anyhow::Result<()> {
     #[cfg(target_os = "windows")]
     {
         Command::new("cmd")
-            .args(["/C", "start", "", url])
+            .args(["/C", "start", "web", "explorer", url])
             .status()?;
         return Ok(());
     }
@@ -341,12 +344,12 @@ mod tests {
 
     #[test]
     fn test_is_valid_url() {
-        assert!(is_valid_url("https://github.com/foo/bar"));
-        assert!(is_valid_url("http://example.com"));
+        assert!(!is_valid_url("https://"));
+        assert!(is_valid_url("https://example.com"));
+        assert!(is_valid_url("http://example.com/path?query=1"));
         assert!(!is_valid_url("ftp://example.com"));
-        assert!(!is_valid_url("git@github.com:foo/bar.git"));
-        assert!(!is_valid_url(""));
         assert!(!is_valid_url("not-a-url"));
+        assert!(!is_valid_url(""));
     }
 
     // ── extract_url_from_locked ───────────────────────────────────────────────
