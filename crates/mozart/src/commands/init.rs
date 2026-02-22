@@ -2,9 +2,11 @@ use anyhow::{Context, bail};
 use clap::Args;
 use colored::Colorize;
 use mozart_core::console;
-use mozart_core::package::{self, RawAuthor, RawAutoload, RawPackageData, RawRepository};
+use mozart_core::package::{self, RawAuthor, RawAutoload, RawPackageData, RawRepository, Stability};
 use mozart_core::validation;
+use mozart_registry::{packagist, version};
 use std::collections::BTreeMap;
+use std::io::{BufRead, Write};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -80,7 +82,7 @@ pub async fn execute(
     }
 
     let composer = if console.interactive {
-        build_interactive(args, console, &working_dir)?
+        build_interactive(args, console, &working_dir).await?
     } else {
         build_non_interactive(args, &working_dir)?
     };
@@ -189,7 +191,7 @@ fn build_non_interactive(args: &InitArgs, working_dir: &Path) -> anyhow::Result<
     Ok(composer)
 }
 
-fn build_interactive(
+async fn build_interactive(
     args: &InitArgs,
     console: &console::Console,
     working_dir: &Path,
@@ -321,18 +323,41 @@ fn build_interactive(
     };
 
     // Dependencies
-    // TODO: support selecting dependencies interactively
+    let preferred_stability = minimum_stability
+        .as_deref()
+        .map(Stability::parse)
+        .unwrap_or(Stability::Stable);
+
     console.info("");
     console.info(&format!(
         "{}",
         mozart_core::console::info("Define your dependencies.")
     ));
     console.info("");
-    let require = parse_requirements(&args.require)?;
+
+    let mut require = parse_requirements(&args.require)?;
+    let interactive_require =
+        interactive_search_packages("require", &require, preferred_stability).await?;
+    for (name, constraint) in interactive_require {
+        require.insert(name, constraint);
+    }
 
     // Dev Dependencies
-    // TODO: support selecting dependencies interactively
-    let require_dev = parse_requirements(&args.require_dev)?;
+    console.info("");
+    console.info(&format!(
+        "{}",
+        mozart_core::console::info("Define your dev dependencies.")
+    ));
+    console.info("");
+
+    let mut require_dev = parse_requirements(&args.require_dev)?;
+    let all_required: BTreeMap<String, String> =
+        require.iter().chain(require_dev.iter()).map(|(k, v)| (k.clone(), v.clone())).collect();
+    let interactive_dev =
+        interactive_search_packages("require-dev", &all_required, preferred_stability).await?;
+    for (name, constraint) in interactive_dev {
+        require_dev.insert(name, constraint);
+    }
 
     // PSR-4 Autoload
     let default_autoload = args.autoload.clone().unwrap_or_else(|| "src/".to_string());
@@ -371,6 +396,209 @@ fn build_interactive(
     composer.autoload = autoload;
 
     Ok(composer)
+}
+
+/// Interactive search-and-pick loop for dependencies.
+///
+/// Returns a map of package name → version constraint selected by the user.
+async fn interactive_search_packages(
+    label: &str,
+    already_required: &BTreeMap<String, String>,
+    preferred_stability: Stability,
+) -> anyhow::Result<BTreeMap<String, String>> {
+    let stdin = std::io::stdin();
+    let mut selected: BTreeMap<String, String> = BTreeMap::new();
+
+    loop {
+        eprint!("Search for a package to {label} (or leave blank to skip): ");
+        let _ = std::io::stderr().flush();
+
+        let query = {
+            let stdin_locked = stdin.lock();
+            let mut lines = stdin_locked.lines();
+            match lines.next() {
+                Some(Ok(line)) => line.trim().to_string(),
+                _ => break,
+            }
+        };
+
+        if query.is_empty() {
+            break;
+        }
+
+        // Search Packagist
+        let (results, total) = match packagist::search_packages(&query, None).await {
+            Ok(r) => r,
+            Err(e) => {
+                eprintln!(
+                    "{}",
+                    console::warning(&format!("Search failed: {e}. Try again."))
+                );
+                continue;
+            }
+        };
+
+        // Filter out packages already required
+        let filtered: Vec<&packagist::SearchResult> = results
+            .iter()
+            .filter(|r| {
+                let name = r.name.to_lowercase();
+                !already_required.contains_key(&name) && !selected.contains_key(&name)
+            })
+            .take(15)
+            .collect();
+
+        if filtered.is_empty() {
+            eprintln!(
+                "{}",
+                console::warning(&format!(
+                    "No new packages found for \"{query}\" (total: {total})."
+                ))
+            );
+            continue;
+        }
+
+        eprintln!(
+            "\nFound {} package{} for \"{}\":",
+            filtered.len(),
+            if filtered.len() == 1 { "" } else { "s" },
+            query,
+        );
+
+        let name_width = filtered.iter().map(|r| r.name.len()).max().unwrap_or(0);
+        for (idx, result) in filtered.iter().enumerate() {
+            let desc = if result.description.is_empty() {
+                String::new()
+            } else {
+                format!(" — {}", result.description)
+            };
+            eprintln!(
+                "  [{idx}] {:<width$}{desc}",
+                result.name,
+                idx = idx + 1,
+                width = name_width,
+            );
+        }
+        eprintln!("  [0] Search again / enter full package name");
+        eprintln!();
+
+        // Ask user to pick
+        eprint!("Enter package # or name (leave empty to finish): ");
+        let _ = std::io::stderr().flush();
+
+        let choice = {
+            let stdin_locked = stdin.lock();
+            let mut lines = stdin_locked.lines();
+            match lines.next() {
+                Some(Ok(line)) => line.trim().to_string(),
+                _ => break,
+            }
+        };
+
+        if choice.is_empty() {
+            break;
+        }
+
+        // Resolve chosen package name
+        let package_name: String = if let Ok(num) = choice.parse::<usize>() {
+            if num == 0 {
+                continue;
+            } else if num <= filtered.len() {
+                filtered[num - 1].name.to_lowercase()
+            } else {
+                eprintln!("{}", console::warning(&format!("Invalid selection: {num}")));
+                continue;
+            }
+        } else {
+            choice.to_lowercase()
+        };
+
+        // Determine constraint
+        let (pkg_name, constraint) = if package_name.contains(':') {
+            match validation::parse_require_string(&package_name) {
+                Ok((n, v)) => (n.to_lowercase(), v),
+                Err(e) => {
+                    eprintln!("{}", console::warning(&format!("Invalid: {e}")));
+                    continue;
+                }
+            }
+        } else {
+            if !validation::validate_package_name(&package_name) {
+                eprintln!(
+                    "{}",
+                    console::warning(&format!("Invalid package name: \"{package_name}\""))
+                );
+                continue;
+            }
+
+            eprintln!(
+                "{}",
+                console::info(&format!(
+                    "Using version constraint for {package_name} from Packagist..."
+                ))
+            );
+
+            match packagist::fetch_package_versions(&package_name, None).await {
+                Ok(versions) => {
+                    match version::find_best_candidate(&versions, preferred_stability) {
+                        Some(best) => {
+                            let stability = version::stability_of(&best.version_normalized);
+                            let c = version::find_recommended_require_version(
+                                &best.version,
+                                &best.version_normalized,
+                                stability,
+                            );
+                            eprintln!(
+                                "{}",
+                                console::info(&format!("Using version {c} for {package_name}"))
+                            );
+                            (package_name, c)
+                        }
+                        None => {
+                            eprintln!(
+                                "{}",
+                                console::warning(&format!(
+                                    "Could not find a version of \"{package_name}\" matching \
+                                     your minimum-stability. Try specifying it explicitly."
+                                ))
+                            );
+                            continue;
+                        }
+                    }
+                }
+                Err(e) => {
+                    eprintln!(
+                        "{}",
+                        console::warning(&format!(
+                            "Could not fetch versions for \"{package_name}\": {e}"
+                        ))
+                    );
+                    continue;
+                }
+            }
+        };
+
+        selected.insert(pkg_name, constraint);
+
+        // Ask whether to add more
+        eprint!("Search for another package? [y/N] ");
+        let _ = std::io::stderr().flush();
+
+        let again = {
+            let stdin_locked = stdin.lock();
+            let mut lines = stdin_locked.lines();
+            match lines.next() {
+                Some(Ok(line)) => line.trim().to_lowercase(),
+                _ => break,
+            }
+        };
+
+        if again != "y" && again != "yes" {
+            break;
+        }
+    }
+
+    Ok(selected)
 }
 
 fn get_default_package_name(working_dir: &Path) -> String {
