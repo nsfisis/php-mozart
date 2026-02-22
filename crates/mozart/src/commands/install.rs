@@ -1,5 +1,6 @@
 use clap::Args;
 use mozart_core::console;
+use mozart_core::console_format;
 use mozart_registry::downloader;
 use mozart_registry::installed;
 use mozart_registry::lockfile;
@@ -361,15 +362,15 @@ pub async fn install_from_lock(
     } else {
         eprintln!(
             "{}",
-            console::info(&format!(
-                "Package operations: {} install{}, {} update{}, {} removal{}",
+            console_format!(
+                "<info>Package operations: {} install{}, {} update{}, {} removal{}</info>",
                 installs.len(),
                 if installs.len() == 1 { "" } else { "s" },
                 updates.len(),
                 if updates.len() == 1 { "" } else { "s" },
                 removals.len(),
                 if removals.len() == 1 { "" } else { "s" },
-            ))
+            )
         );
     }
 
@@ -460,16 +461,15 @@ pub async fn install_from_lock(
             if config.classmap_authoritative {
                 eprintln!(
                     "{}",
-                    console::info(
-                        "Classmap-authoritative mode: autoloader will only look up classes in the classmap."
+                    console_format!(
+                        "<info>Classmap-authoritative mode: autoloader will only look up classes in the classmap.</info>"
                     )
                 );
             } else if config.optimize_autoloader {
                 eprintln!(
                     "{}",
-                    console::info(
-                        "Optimize autoloader: classmap scanning is not yet fully supported. \
-                         PSR-4/PSR-0 autoloading will still be used."
+                    console_format!(
+                        "<info>Optimize autoloader: classmap scanning is not yet fully supported. PSR-4/PSR-0 autoloading will still be used.</info>"
                     )
                 );
             }
@@ -524,14 +524,14 @@ pub async fn execute(
     }
 
     if args.dev {
-        console.info(&console::warning(
-            "The --dev option is deprecated. Dev packages are installed by default.",
+        console.info(&console_format!(
+            "<warning>The --dev option is deprecated. Dev packages are installed by default.</warning>"
         ));
     }
 
     if args.no_suggest {
-        console.info(&console::warning(
-            "The --no-suggest option is deprecated and has no effect.",
+        console.info(&console_format!(
+            "<warning>The --no-suggest option is deprecated and has no effect.</warning>"
         ));
     }
 
@@ -539,8 +539,8 @@ pub async fn execute(
     // If no lock file present, fall back to update (matching Composer behavior).
     let lock_path = working_dir.join("composer.lock");
     if !lock_path.exists() {
-        console.info(&console::warning(
-            "No composer.lock file present. Updating dependencies to latest instead of installing from lock file.",
+        console.info(&console_format!(
+            "<warning>No composer.lock file present. Updating dependencies to latest instead of installing from lock file.</warning>"
         ));
         let update_args = super::update::UpdateArgs {
             packages: vec![],
@@ -584,8 +584,8 @@ pub async fn execute(
     if composer_json_path.exists() {
         let content = std::fs::read_to_string(&composer_json_path)?;
         if !lock.is_fresh(&content) {
-            console.info(&console::warning(
-                "Warning: The lock file is not up to date with the latest changes in composer.json. You may be getting outdated dependencies. It is recommended that you run `mozart update`."
+            console.info(&console_format!(
+                "<warning>Warning: The lock file is not up to date with the latest changes in composer.json. You may be getting outdated dependencies. It is recommended that you run `mozart update`.</warning>"
             ));
         }
     }
@@ -598,8 +598,8 @@ pub async fn execute(
             .map(|s| s.eq_ignore_ascii_case("source"))
             .unwrap_or(false);
     if prefer_source {
-        console.info(&console::warning(
-            "Warning: Source installs are not yet supported. Falling back to dist.",
+        console.info(&console_format!(
+            "<warning>Warning: Source installs are not yet supported. Falling back to dist.</warning>"
         ));
     }
 

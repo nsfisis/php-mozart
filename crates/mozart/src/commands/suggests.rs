@@ -1,5 +1,6 @@
 use clap::Args;
 use mozart_core::console;
+use mozart_core::console_format;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
@@ -135,8 +136,8 @@ pub async fn execute(
         if diff > 0 {
             println!(
                 "{} by transitive dependencies can be shown with {}",
-                console::info(&format!("{diff} additional suggestions")),
-                console::info("--all"),
+                console_format!("<info>{diff} additional suggestions</info>"),
+                console_format!("<info>--all</info>"),
             );
         }
     }
@@ -435,7 +436,7 @@ fn render_list(suggestions: &[&Suggestion]) {
     targets.sort_unstable();
     targets.dedup();
     for t in targets {
-        println!("{}", console::info(t));
+        println!("{}", console_format!("<info>{}</info>", t));
     }
 }
 
@@ -446,13 +447,19 @@ fn render_by_package(suggestions: &[&Suggestion]) {
         grouped.entry(s.source.as_str()).or_default().push(s);
     }
     for (source, items) in &grouped {
-        println!("{} suggests:", console::comment(source));
+        println!(
+            "{}",
+            console_format!("<comment>{}</comment> suggests:", source)
+        );
         for s in items {
             let reason = sanitize_reason(&s.reason);
             if reason.is_empty() {
-                println!(" - {}", console::info(&s.target));
+                println!("{}", console_format!(" - <info>{}</info>", &s.target));
             } else {
-                println!(" - {}: {}", console::info(&s.target), reason);
+                println!(
+                    "{}",
+                    console_format!(" - <info>{}</info>: {}", &s.target, reason)
+                );
             }
         }
         println!();
@@ -466,13 +473,19 @@ fn render_by_suggestion(suggestions: &[&Suggestion]) {
         grouped.entry(s.target.as_str()).or_default().push(s);
     }
     for (target, items) in &grouped {
-        println!("{} is suggested by:", console::info(target));
+        println!(
+            "{}",
+            console_format!("<info>{}</info> is suggested by:", target)
+        );
         for s in items {
             let reason = sanitize_reason(&s.reason);
             if reason.is_empty() {
-                println!(" - {}", console::comment(&s.source));
+                println!("{}", console_format!(" - <comment>{}</comment>", &s.source));
             } else {
-                println!(" - {}: {}", console::comment(&s.source), reason);
+                println!(
+                    "{}",
+                    console_format!(" - <comment>{}</comment>: {}", &s.source, reason)
+                );
             }
         }
         println!();

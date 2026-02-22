@@ -1,5 +1,5 @@
 use clap::Args;
-use mozart_core::console;
+use mozart_core::console_format;
 use mozart_core::package::{self, Stability};
 use mozart_core::validation;
 use mozart_registry::downloader;
@@ -142,7 +142,7 @@ fn remove_vcs_metadata(target_dir: &Path) -> anyhow::Result<()> {
             std::fs::remove_dir_all(&path)?;
             eprintln!(
                 "{}",
-                console::comment(&format!("Removed VCS metadata directory: {vcs_dir}"))
+                console_format!("<comment>Removed VCS metadata directory: {vcs_dir}</comment>")
             );
         }
     }
@@ -177,37 +177,27 @@ pub async fn execute(
 ) -> anyhow::Result<()> {
     // --- Handle deprecated / no-op flags ---
     if args.prefer_source {
-        console.info(&format!(
-            "{}",
-            console::warning("Source installs not yet supported, falling back to dist.")
+        console.info(&console_format!(
+            "<warning>Source installs not yet supported, falling back to dist.</warning>"
         ));
     }
 
     if args.dev {
-        console.info(&format!(
-            "{}",
-            console::warning(
-                "The --dev flag is deprecated. Dev packages are installed by default."
-            )
+        console.info(&console_format!(
+            "<warning>The --dev flag is deprecated. Dev packages are installed by default.</warning>"
         ));
     }
 
     if args.no_custom_installers {
-        console.info(&format!(
-            "{}",
-            console::warning(
-                "The --no-custom-installers flag is deprecated. Use --no-plugins instead."
-            )
+        console.info(&console_format!(
+            "<warning>The --no-custom-installers flag is deprecated. Use --no-plugins instead.</warning>"
         ));
     }
 
     if !args.repository.is_empty() || args.repository_url.is_some() || args.add_repository {
-        console.info(&format!(
-            "{}",
-            console::warning(
-                "Custom repository options (--repository, --repository-url, --add-repository) \
-                 are not yet supported and will be ignored."
-            )
+        console.info(&console_format!(
+            "<warning>Custom repository options (--repository, --repository-url, --add-repository) \
+             are not yet supported and will be ignored.</warning>"
         ));
     }
 
@@ -272,9 +262,8 @@ pub async fn execute(
     };
 
     // --- Step 4: Fetch package versions and find best match ---
-    console.info(&format!(
-        "{}",
-        console::info(&format!("Creating project from package {package_name}"))
+    console.info(&console_format!(
+        "<info>Creating project from package {package_name}</info>"
     ));
     console.info("Loading composer repositories with package information");
 
@@ -310,9 +299,8 @@ pub async fn execute(
 
     let concrete_version = best.version.clone();
 
-    console.info(&format!(
-        "{}",
-        console::info(&format!("Installing {package_name} ({concrete_version})"))
+    console.info(&console_format!(
+        "<info>Installing {package_name} ({concrete_version})</info>"
     ));
 
     // --- Step 5: Create target directory and download+extract ---
@@ -342,9 +330,9 @@ pub async fn execute(
         other => anyhow::bail!("Unsupported dist type: {other}"),
     }
 
-    console.info(&format!(
-        "{}",
-        console::info(&format!("Created project in {}", target_dir.display()))
+    console.info(&console_format!(
+        "<info>Created project in {}</info>",
+        target_dir.display()
     ));
 
     // --- Step 7: VCS removal ---
@@ -359,12 +347,9 @@ pub async fn execute(
     let composer_path = target_dir.join("composer.json");
 
     if !composer_path.exists() {
-        console.info(&format!(
-            "{}",
-            console::warning(&format!(
-                "No composer.json found in {}. Skipping dependency installation.",
-                target_dir.display()
-            ))
+        console.info(&console_format!(
+            "<warning>No composer.json found in {}. Skipping dependency installation.</warning>",
+            target_dir.display()
         ));
         return Ok(());
     }
@@ -377,9 +362,8 @@ pub async fn execute(
 
     // --- Step 6 continued: dependency resolution and install ---
     if args.no_install {
-        console.info(&format!(
-            "{}",
-            console::comment("Skipping dependency installation (--no-install).")
+        console.info(&console_format!(
+            "<comment>Skipping dependency installation (--no-install).</comment>"
         ));
         return Ok(());
     }
@@ -450,13 +434,10 @@ pub async fn execute(
         .filter(|c| matches!(c.kind, super::update::ChangeKind::Install { .. }))
         .collect();
 
-    console.info(&format!(
-        "{}",
-        console::info(&format!(
-            "Package operations: {} install{}, 0 updates, 0 removals",
-            installs.len(),
-            if installs.len() == 1 { "" } else { "s" },
-        ))
+    console.info(&console_format!(
+        "<info>Package operations: {} install{}, 0 updates, 0 removals</info>",
+        installs.len(),
+        if installs.len() == 1 { "" } else { "s" }
     ));
 
     for change in &changes {
@@ -479,9 +460,8 @@ pub async fn execute(
             .map(|s| s.eq_ignore_ascii_case("source"))
             .unwrap_or(false);
     if prefer_source {
-        console.info(&format!(
-            "{}",
-            console::warning("Source installs are not yet supported. Falling back to dist.")
+        console.info(&console_format!(
+            "<warning>Source installs are not yet supported. Falling back to dist.</warning>"
         ));
     }
 

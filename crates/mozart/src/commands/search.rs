@@ -1,4 +1,5 @@
 use clap::Args;
+use mozart_core::console_format;
 use mozart_registry::packagist::SearchResult;
 
 #[derive(Args)]
@@ -75,9 +76,9 @@ pub async fn execute(
     if !matches!(format, "text" | "json") {
         eprintln!(
             "{}",
-            mozart_core::console::error(&format!(
-                "Unsupported format \"{format}\". See help for supported formats."
-            ))
+            console_format!(
+                "<error>Unsupported format \"{format}\". See help for supported formats.</error>"
+            )
         );
         std::process::exit(1);
     }
@@ -107,7 +108,7 @@ pub async fn execute(
             if results.is_empty() {
                 eprintln!(
                     "{}",
-                    mozart_core::console::warning(&format!("No packages found for \"{query}\""))
+                    console_format!("<warning>No packages found for \"{query}\"</warning>")
                 );
                 return Ok(());
             }
@@ -130,13 +131,9 @@ pub async fn execute(
 
                 println!(
                     "{} {}  {}",
-                    mozart_core::console::info(&format!(
-                        "{:<width$}",
-                        result.name,
-                        width = name_width
-                    )),
-                    mozart_core::console::comment(&dl_str),
-                    mozart_core::console::comment(&fav_str),
+                    console_format!("<info>{:<width$}</info>", result.name, width = name_width),
+                    console_format!("<comment>{}</comment>", dl_str),
+                    console_format!("<comment>{}</comment>", fav_str),
                 );
                 if !result.description.is_empty() {
                     println!("  {}", result.description);

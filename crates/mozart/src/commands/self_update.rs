@@ -1,4 +1,5 @@
 use clap::Args;
+use mozart_core::console_format;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
@@ -283,9 +284,9 @@ async fn update(args: &SelfUpdateArgs, current_exe: &Path, data_dir: &Path) -> a
     if args.version.is_none() && target_version == current_version {
         println!(
             "{}",
-            mozart_core::console::info(&format!(
-                "Mozart is already at the latest version ({current_version})"
-            ))
+            console_format!(
+                "<info>Mozart is already at the latest version ({current_version})</info>"
+            )
         );
         return Ok(());
     }
@@ -334,14 +335,17 @@ async fn update(args: &SelfUpdateArgs, current_exe: &Path, data_dir: &Path) -> a
 
     println!(
         "{}",
-        mozart_core::console::info(&format!(
-            "Mozart updated successfully from {current_version} to {target_version}"
-        ))
+        console_format!(
+            "<info>Mozart updated successfully from {current_version} to {target_version}</info>"
+        )
     );
 
     if args.clean_backups {
         clean_backups(data_dir)?;
-        println!("{}", mozart_core::console::comment("Old backups removed."));
+        println!(
+            "{}",
+            console_format!("<comment>Old backups removed.</comment>")
+        );
     }
 
     Ok(())
@@ -372,10 +376,10 @@ fn rollback(current_exe: &Path, data_dir: &Path) -> anyhow::Result<()> {
 
     println!(
         "{}",
-        mozart_core::console::info(&format!(
-            "Rollback successful. Restored from {}",
+        console_format!(
+            "<info>Rollback successful. Restored from {}</info>",
             backup.file_name().unwrap_or_default().to_string_lossy()
-        ))
+        )
     );
 
     let _ = current_exe; // suppress unused warning

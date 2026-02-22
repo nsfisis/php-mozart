@@ -1,4 +1,5 @@
 use clap::Args;
+use mozart_core::console_format;
 use std::collections::HashMap;
 use std::path::PathBuf;
 
@@ -51,24 +52,10 @@ pub async fn execute(
     match root.package_type.as_deref() {
         Some("project") => {}
         Some(pkg_type) => {
-            console.info(&format!(
-                "{}",
-                mozart_core::console::warning(&format!(
-                    "Warning: Bumping constraints for a non-project package (type=\"{pkg_type}\"). \
-                     Libraries should not pin their dependencies."
-                ))
-            ));
+            console.info(&console_format!("<warning>Warning: Bumping constraints for a non-project package (type=\"{pkg_type}\"). Libraries should not pin their dependencies.</warning>"));
         }
         None if !args.dev_only => {
-            console.info(&format!(
-                "{}",
-                mozart_core::console::warning(
-                    "Warning: Bumping constraints for a non-project package. \
-                     No type was set so it defaults to \"library\". \
-                     Libraries should not pin their dependencies. \
-                     Consider using --dev-only or setting the type to \"project\"."
-                )
-            ));
+            console.info(&console_format!("<warning>Warning: Bumping constraints for a non-project package. No type was set so it defaults to \"library\". Libraries should not pin their dependencies. Consider using --dev-only or setting the type to \"project\".</warning>"));
         }
         None => {}
     }
@@ -161,10 +148,10 @@ pub async fn execute(
     if total_changes == 0 {
         println!(
             "{}",
-            mozart_core::console::info(&format!(
-                "No requirements to update in {}.",
+            console_format!(
+                "<info>No requirements to update in {}.</info>",
                 composer_json_path.display()
-            ))
+            )
         );
         return Ok(());
     }
@@ -172,21 +159,21 @@ pub async fn execute(
     if args.dry_run {
         println!(
             "{}",
-            mozart_core::console::info(&format!(
-                "{} would be updated with:",
+            console_format!(
+                "<info>{} would be updated with:</info>",
                 composer_json_path.display()
-            ))
+            )
         );
         for (name, _old, new) in &require_changes {
             println!(
                 "{}",
-                mozart_core::console::info(&format!(" - require.{name}: {new}"))
+                console_format!("<info> - require.{name}: {new}</info>")
             );
         }
         for (name, _old, new) in &require_dev_changes {
             println!(
                 "{}",
-                mozart_core::console::info(&format!(" - require-dev.{name}: {new}"))
+                console_format!("<info> - require-dev.{name}: {new}</info>")
             );
         }
         // Return exit code 1 when dry-run detects changes (useful for CI to detect un-bumped constraints)
@@ -216,10 +203,10 @@ pub async fn execute(
 
     println!(
         "{}",
-        mozart_core::console::info(&format!(
-            "{} has been updated ({total_changes} changes).",
+        console_format!(
+            "<info>{} has been updated ({total_changes} changes).</info>",
             composer_json_path.display()
-        ))
+        )
     );
 
     Ok(())

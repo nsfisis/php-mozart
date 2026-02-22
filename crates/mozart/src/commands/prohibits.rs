@@ -1,4 +1,5 @@
 use clap::Args;
+use mozart_core::console_format;
 use std::path::PathBuf;
 
 #[derive(Args)]
@@ -62,10 +63,11 @@ pub async fn execute(
     if results.is_empty() {
         println!(
             "{}",
-            mozart_core::console::info(&format!(
-                "{} {} can be installed.",
-                args.package, args.version
-            ))
+            console_format!(
+                "<info>{} {} can be installed.</info>",
+                args.package,
+                args.version
+            )
         );
         return Ok(());
     }

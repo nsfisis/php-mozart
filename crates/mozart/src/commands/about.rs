@@ -1,5 +1,6 @@
 use clap::Args;
 use mozart_core::console;
+use mozart_core::console_format;
 
 #[derive(Args)]
 pub struct AboutArgs {}
@@ -11,18 +12,12 @@ pub async fn execute(
 ) -> anyhow::Result<()> {
     let version = env!("CARGO_PKG_VERSION");
     console.write_stdout(
-        &console::info(&format!(
-            "Mozart - Dependency Manager for PHP - version {version}"
-        ))
-        .to_string(),
+        &console_format!("<info>Mozart - Dependency Manager for PHP - version {version}</info>"),
         console::Verbosity::Normal,
     );
     console.write_stdout(
-        &console::comment(
-            "Mozart is a dependency manager tracking local dependencies of your projects and libraries.
-See https://getcomposer.org/ for more information.",
-        )
-        .to_string(),
+        &console_format!("<comment>Mozart is a dependency manager tracking local dependencies of your projects and libraries.
+See https://getcomposer.org/ for more information.</comment>"),
         console::Verbosity::Normal,
     );
     Ok(())

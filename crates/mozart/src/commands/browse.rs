@@ -1,4 +1,5 @@
 use clap::Args;
+use mozart_core::console_format;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -55,12 +56,9 @@ pub async fn execute(
                 }
             }
             None => {
-                console.info(&format!(
-                    "{}",
-                    mozart_core::console::warning(&format!(
-                        "No URL found for package \"{}\".",
-                        package_name
-                    ))
+                console.info(&console_format!(
+                    "<warning>No URL found for package \"{}\".</warning>",
+                    package_name
                 ));
                 exit_code = 1;
             }

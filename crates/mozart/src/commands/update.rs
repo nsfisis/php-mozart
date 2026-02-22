@@ -1,5 +1,6 @@
 use clap::Args;
 use mozart_core::console;
+use mozart_core::console_format;
 use mozart_core::package::{self, Stability};
 use mozart_registry::lockfile;
 use mozart_registry::resolver::{self, PlatformConfig, ResolveRequest, ResolvedPackage};
@@ -703,13 +704,13 @@ pub async fn execute(
 
     // Step 2: Handle deprecated flags
     if args.dev {
-        console.info(&console::warning(
-            "The --dev option is deprecated. Dev packages are updated by default.",
+        console.info(&console_format!(
+            "<warning>The --dev option is deprecated. Dev packages are updated by default.</warning>"
         ));
     }
     if args.no_suggest {
-        console.info(&console::warning(
-            "The --no-suggest option is deprecated and has no effect.",
+        console.info(&console_format!(
+            "<warning>The --no-suggest option is deprecated and has no effect.</warning>"
         ));
     }
 
@@ -810,10 +811,10 @@ pub async fn execute(
         match lockfile::LockFile::read_from_file(&lock_path) {
             Ok(l) => Some(l),
             Err(e) => {
-                console.info(&console::warning(&format!(
-                    "Could not read existing composer.lock: {}. Treating as a fresh install.",
+                console.info(&console_format!(
+                    "<warning>Could not read existing composer.lock: {}. Treating as a fresh install.</warning>",
                     e
-                )));
+                ));
                 None
             }
         }
@@ -879,8 +880,8 @@ pub async fn execute(
         if args.interactive {
             match &old_lock {
                 None => {
-                    console.info(&console::warning(
-                        "No lock file found. --interactive mode skipped.",
+                    console.info(&console_format!(
+                        "<warning>No lock file found. --interactive mode skipped.</warning>"
                     ));
                     vec![]
                 }
@@ -1121,8 +1122,8 @@ pub async fn execute(
                 .map(|s| s.eq_ignore_ascii_case("source"))
                 .unwrap_or(false);
         if prefer_source {
-            console.info(&mozart_core::console::warning(
-                "Warning: Source installs are not yet supported. Falling back to dist.",
+            console.info(&console_format!(
+                "<warning>Warning: Source installs are not yet supported. Falling back to dist.</warning>"
             ));
         }
 

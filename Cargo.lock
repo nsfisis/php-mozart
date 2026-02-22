@@ -1130,12 +1130,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "mozart-console-macros"
+version = "0.1.0"
+dependencies = [
+ "mozart-core",
+ "proc-macro2",
+ "quote",
+ "syn",
+]
+
+[[package]]
 name = "mozart-core"
 version = "0.1.0"
 dependencies = [
  "anyhow",
  "colored",
  "dialoguer",
+ "mozart-console-macros",
  "mozart-spdx-licenses",
  "regex",
  "serde",

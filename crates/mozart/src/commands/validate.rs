@@ -1,4 +1,5 @@
 use clap::Args;
+use mozart_core::console_format;
 use std::path::{Path, PathBuf};
 
 #[derive(Args)]
@@ -446,9 +447,9 @@ fn validate_dependencies(
                     format!("{}/{}", vendor_str, pkg_entry.file_name().to_string_lossy());
                 eprintln!(
                     "{}",
-                    mozart_core::console::warning(&format!(
-                        "{pkg_name}: composer.json contains invalid JSON"
-                    ))
+                    console_format!(
+                        "<warning>{pkg_name}: composer.json contains invalid JSON</warning>"
+                    )
                 );
                 continue;
             };
@@ -463,17 +464,11 @@ fn validate_dependencies(
                     format!("{}/{}", vendor_str, pkg_entry.file_name().to_string_lossy());
 
                 for e in &result.errors {
-                    eprintln!(
-                        "{}",
-                        mozart_core::console::error(&format!("{pkg_name}: {e}"))
-                    );
+                    eprintln!("{}", console_format!("<error>{pkg_name}: {e}</error>"));
                     dep_errors += 1;
                 }
                 for w in &result.warnings {
-                    eprintln!(
-                        "{}",
-                        mozart_core::console::warning(&format!("{pkg_name}: {w}"))
-                    );
+                    eprintln!("{}", console_format!("<warning>{pkg_name}: {w}</warning>"));
                     dep_warnings += 1;
                 }
             }
@@ -541,16 +536,14 @@ fn output_result(
     if result.has_errors() {
         eprintln!(
             "{}",
-            mozart_core::console::error(&format!(
-                "{name} is invalid, the following errors/warnings were found:"
-            ))
+            console_format!(
+                "<error>{name} is invalid, the following errors/warnings were found:</error>"
+            )
         );
     } else if result.has_publish_errors() && check_publish {
         eprintln!(
             "{}",
-            mozart_core::console::info(&format!(
-                "{name} is valid for simple usage with Composer but has"
-            ))
+            console_format!("<info>{name} is valid for simple usage with Composer but has</info>")
         );
         eprintln!(
             "{}",
@@ -567,7 +560,7 @@ fn output_result(
     } else if result.has_warnings() {
         eprintln!(
             "{}",
-            mozart_core::console::info(&format!("{name} is valid, but with a few warnings"))
+            console_format!("<info>{name} is valid, but with a few warnings</info>")
         );
         eprintln!(
             "{}",
@@ -579,15 +572,10 @@ fn output_result(
         let kind = if check_lock { "errors" } else { "warnings" };
         println!(
             "{}",
-            mozart_core::console::info(&format!(
-                "{name} is valid but your composer.lock has some {kind}"
-            ))
+            console_format!("<info>{name} is valid but your composer.lock has some {kind}</info>")
         );
     } else {
-        println!(
-            "{}",
-            mozart_core::console::info(&format!("{name} is valid"))
-        );
+        println!("{}", console_format!("<info>{name} is valid</info>"));
     }
 
     // Collect error and warning message lines

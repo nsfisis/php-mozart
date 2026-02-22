@@ -1,5 +1,5 @@
 use clap::Args;
-use mozart_core::console;
+use mozart_core::console_format;
 use mozart_core::package::{self, Stability};
 use mozart_core::validation;
 use mozart_registry::lockfile;
@@ -170,7 +170,7 @@ async fn interactive_search_packages(
             Err(e) => {
                 eprintln!(
                     "{}",
-                    console::warning(&format!("Search failed: {e}. Try again."))
+                    console_format!("<warning>Search failed: {e}. Try again.</warning>")
                 );
                 continue;
             }
@@ -186,9 +186,9 @@ async fn interactive_search_packages(
         if filtered.is_empty() {
             eprintln!(
                 "{}",
-                console::warning(&format!(
-                    "No new packages found for \"{query}\" (total: {total})."
-                ))
+                console_format!(
+                    "<warning>No new packages found for \"{query}\" (total: {total}).</warning>"
+                )
             );
             continue;
         }
@@ -243,7 +243,10 @@ async fn interactive_search_packages(
             } else if num <= filtered.len() {
                 filtered[num - 1].name.to_lowercase()
             } else {
-                eprintln!("{}", console::warning(&format!("Invalid selection: {num}")));
+                eprintln!(
+                    "{}",
+                    console_format!("<warning>Invalid selection: {num}</warning>")
+                );
                 continue;
             }
         } else {
@@ -256,7 +259,7 @@ async fn interactive_search_packages(
             match validation::parse_require_string(&package_name) {
                 Ok((n, v)) => (n.to_lowercase(), v),
                 Err(e) => {
-                    eprintln!("{}", console::warning(&format!("Invalid: {e}")));
+                    eprintln!("{}", console_format!("<warning>Invalid: {e}</warning>"));
                     continue;
                 }
             }
@@ -264,16 +267,16 @@ async fn interactive_search_packages(
             if !validation::validate_package_name(&package_name) {
                 eprintln!(
                     "{}",
-                    console::warning(&format!("Invalid package name: \"{package_name}\""))
+                    console_format!("<warning>Invalid package name: \"{package_name}\"</warning>")
                 );
                 continue;
             }
 
             eprintln!(
                 "{}",
-                console::info(&format!(
-                    "Using version constraint for {package_name} from Packagist..."
-                ))
+                console_format!(
+                    "<info>Using version constraint for {package_name} from Packagist...</info>"
+                )
             );
 
             match packagist::fetch_package_versions(&package_name, None).await {
@@ -292,17 +295,18 @@ async fn interactive_search_packages(
                             };
                             eprintln!(
                                 "{}",
-                                console::info(&format!("Using version {c} for {package_name}"))
+                                console_format!(
+                                    "<info>Using version {c} for {package_name}</info>"
+                                )
                             );
                             (package_name, c)
                         }
                         None => {
                             eprintln!(
                                 "{}",
-                                console::warning(&format!(
-                                    "Could not find a version of \"{package_name}\" matching \
-                                     your minimum-stability. Try specifying it explicitly."
-                                ))
+                                console_format!(
+                                    "<warning>Could not find a version of \"{package_name}\" matching your minimum-stability. Try specifying it explicitly.</warning>"
+                                )
                             );
                             continue;
                         }
@@ -311,9 +315,9 @@ async fn interactive_search_packages(
                 Err(e) => {
                     eprintln!(
                         "{}",
-                        console::warning(&format!(
-                            "Could not fetch versions for \"{package_name}\": {e}"
-                        ))
+                        console_format!(
+                            "<warning>Could not fetch versions for \"{package_name}\": {e}</warning>"
+                        )
                     );
                     continue;
                 }
@@ -403,19 +407,15 @@ pub async fn execute(
 
     // Handle deprecated flags
     if args.no_suggest {
-        console.info(&console::warning(
-            "The --no-suggest option is deprecated and has no effect.",
+        console.info(&console_format!(
+            "<warning>The --no-suggest option is deprecated and has no effect.</warning>"
         ));
     }
     if args.update_with_dependencies {
-        console.info(&console::warning(
-            "The -w / --update-with-dependencies flag is deprecated. Use --with-dependencies instead."
-        ));
+        console.info(&console_format!("<warning>The -w / --update-with-dependencies flag is deprecated. Use --with-dependencies instead.</warning>"));
     }
     if args.update_with_all_dependencies {
-        console.info(&console::warning(
-            "The -W / --update-with-all-dependencies flag is deprecated. Use --with-all-dependencies instead."
-        ));
+        console.info(&console_format!("<warning>The -W / --update-with-all-dependencies flag is deprecated. Use --with-all-dependencies instead.</warning>"));
     }
 
     // Resolve working directory
@@ -461,9 +461,9 @@ pub async fn execute(
 
                 println!(
                     "{}",
-                    console::info(&format!(
-                        "Using version constraint for {name} from Packagist..."
-                    ))
+                    console_format!(
+                        "<info>Using version constraint for {name} from Packagist...</info>"
+                    )
                 );
 
                 let versions = packagist::fetch_package_versions(&name, None).await?;
@@ -488,7 +488,7 @@ pub async fn execute(
 
                 println!(
                     "{}",
-                    console::info(&format!("Using version {constraint} for {name}"))
+                    console_format!("<info>Using version {constraint} for {name}</info>")
                 );
 
                 (name, constraint)
@@ -510,14 +510,14 @@ pub async fn execute(
         if let Some(existing) = target.get(name) {
             println!(
                 "{}",
-                console::comment(&format!(
-                    "Updating {name} from {existing} to {constraint} in {section_name}"
-                ))
+                console_format!(
+                    "<comment>Updating {name} from {existing} to {constraint} in {section_name}</comment>"
+                )
             );
         } else {
             println!(
                 "{}",
-                console::info(&format!("Adding {name} ({constraint}) to {section_name}"))
+                console_format!("<info>Adding {name} ({constraint}) to {section_name}</info>")
             );
         }
 
@@ -536,7 +536,7 @@ pub async fn execute(
     if args.dry_run {
         println!(
             "{}",
-            console::comment("Dry run: composer.json not modified.")
+            console_format!("<comment>Dry run: composer.json not modified.</comment>")
         );
     } else {
         package::write_to_file(&raw, &composer_path)?;
@@ -546,7 +546,9 @@ pub async fn execute(
     if args.no_update {
         println!(
             "{}",
-            console::comment("Not updating dependencies, only modifying composer.json.")
+            console_format!(
+                "<comment>Not updating dependencies, only modifying composer.json.</comment>"
+            )
         );
         return Ok(());
     }
@@ -622,10 +624,7 @@ pub async fn execute(
         match lockfile::LockFile::read_from_file(&lock_path) {
             Ok(l) => Some(l),
             Err(e) => {
-                console.info(&console::warning(&format!(
-                    "Could not read existing composer.lock: {}. Treating as a fresh install.",
-                    e
-                )));
+                console.info(&console_format!("<warning>Could not read existing composer.lock: {}. Treating as a fresh install.</warning>", e));
                 None
             }
         }
@@ -760,9 +759,7 @@ pub async fn execute(
                 .map(|s| s.eq_ignore_ascii_case("source"))
                 .unwrap_or(false);
         if prefer_source {
-            console.info(&mozart_core::console::warning(
-                "Warning: Source installs are not yet supported. Falling back to dist.",
-            ));
+            console.info(&console_format!("<warning>Warning: Source installs are not yet supported. Falling back to dist.</warning>"));
         }
 
         super::install::install_from_lock(

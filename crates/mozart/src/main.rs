@@ -48,13 +48,16 @@ async fn main() {
             if let Some(mozart_err) = e.downcast_ref::<exit_code::MozartError>() {
                 // Only print a message when there is one (bail_silent produces empty message).
                 if !mozart_err.message.is_empty() {
-                    eprintln!("{}", mozart_core::console::error(&mozart_err.message));
+                    eprintln!(
+                        "{}",
+                        mozart_core::console_format!("<error>{}</error>", mozart_err.message)
+                    );
                 }
                 std::process::exit(mozart_err.exit_code);
             }
 
             // Generic anyhow error — print and exit with GENERAL_ERROR.
-            eprintln!("{}", mozart_core::console::error(&format!("{e:#}")));
+            eprintln!("{}", mozart_core::console_format!("<error>{e:#}</error>"));
             std::process::exit(exit_code::GENERAL_ERROR);
         }
     }

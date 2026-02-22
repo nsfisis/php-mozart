@@ -2,6 +2,7 @@ use anyhow::{Context, bail};
 use clap::Args;
 use colored::Colorize;
 use mozart_core::console;
+use mozart_core::console_format;
 use mozart_core::package::{
     self, RawAuthor, RawAutoload, RawPackageData, RawRepository, Stability,
 };
@@ -96,9 +97,8 @@ pub async fn execute(
         console.info(&json);
         console.info("");
 
-        if !console.confirm(&format!(
-            "Do you confirm generation [{}]?",
-            console::comment("yes")
+        if !console.confirm(&console_format!(
+            "Do you confirm generation [<comment>yes</comment>]?"
         )) {
             console.error("Command aborted");
             bail!("Command aborted");
@@ -124,11 +124,8 @@ pub async fn execute(
     if console.interactive && working_dir.join(".git").is_dir() {
         let gitignore_path = working_dir.join(".gitignore");
         if !has_vendor_ignore(&gitignore_path)
-            && console.confirm(&format!(
-                "Would you like the {} directory added to your {} [{}]?",
-                console::info("vendor"),
-                console::info(".gitignore"),
-                console::comment("yes"),
+            && console.confirm(&console_format!(
+                "Would you like the <info>vendor</info> directory added to your <info>.gitignore</info> [<comment>yes</comment>]?"
             ))
         {
             add_vendor_ignore(&gitignore_path)?;
@@ -139,13 +136,11 @@ pub async fn execute(
     if let Some(ref autoload) = composer.autoload
         && let Some((ns, path)) = autoload.psr4.iter().next()
     {
-        console.info(&format!(
-            "PSR-4 autoloading configured. Use \"{}\" in {path}",
-            console::comment(&format!("namespace {ns};")),
+        console.info(&console_format!(
+            "PSR-4 autoloading configured. Use \"<comment>namespace {ns};</comment>\" in {path}"
         ));
-        console.info(&format!(
-            "Include the Composer autoloader with: {}",
-            console::comment("require 'vendor/autoload.php';"),
+        console.info(&console_format!(
+            "Include the Composer autoloader with: <comment>require 'vendor/autoload.php';</comment>"
         ));
     }
 
@@ -213,9 +208,9 @@ async fn build_interactive(
         .clone()
         .unwrap_or_else(|| get_default_package_name(working_dir));
     let name = console.ask_validated(
-        &format!(
-            "Package name (<vendor>/<name>) [{}]",
-            mozart_core::console::comment(&default_name),
+        &console_format!(
+            "Package name (<vendor>/<name>) [<comment>{}</comment>]",
+            &default_name,
         ),
         &default_name,
         |val| {
@@ -233,10 +228,7 @@ async fn build_interactive(
     // Description
     let default_desc = args.description.clone().unwrap_or_default();
     let description = console.ask(
-        &format!(
-            "Description [{}]",
-            mozart_core::console::comment(&default_desc)
-        ),
+        &console_format!("Description [<comment>{}</comment>]", &default_desc),
         &default_desc,
     );
     let description = if description.is_empty() {
@@ -252,14 +244,11 @@ async fn build_interactive(
         .or_else(get_default_author)
         .unwrap_or_default();
     let author_input = console.ask(
-        &format!(
-            "Author [{}n to skip]",
-            if !default_author.is_empty() {
-                format!("{}, ", mozart_core::console::comment(&default_author))
-            } else {
-                String::new()
-            }
-        ),
+        &if !default_author.is_empty() {
+            console_format!("Author [<comment>{}</comment>, n to skip]", &default_author)
+        } else {
+            "Author [n to skip]".to_string()
+        },
         &default_author,
     );
     let authors = if author_input == "n" || author_input == "no" || author_input.is_empty() {
@@ -277,9 +266,9 @@ async fn build_interactive(
     // Minimum Stability
     let default_stability = args.stability.clone().unwrap_or_default();
     let stability_input = console.ask(
-        &format!(
-            "Minimum Stability [{}]",
-            mozart_core::console::comment(&default_stability),
+        &console_format!(
+            "Minimum Stability [<comment>{}</comment>]",
+            &default_stability
         ),
         &default_stability,
     );
@@ -297,9 +286,9 @@ async fn build_interactive(
     // Package Type
     let default_type = args.r#type.clone().unwrap_or_default();
     let type_input = console.ask(
-        &format!(
-            "Package Type (e.g. library, project, metapackage, composer-plugin) [{}]",
-            mozart_core::console::comment(&default_type),
+        &console_format!(
+            "Package Type (e.g. library, project, metapackage, composer-plugin) [<comment>{}</comment>]",
+            &default_type,
         ),
         &default_type,
     );
@@ -312,10 +301,7 @@ async fn build_interactive(
     // License
     let default_license = args.license.clone().unwrap_or_default();
     let license_input = console.ask(
-        &format!(
-            "License [{}]",
-            mozart_core::console::comment(&default_license),
-        ),
+        &console_format!("License [<comment>{}</comment>]", &default_license),
         &default_license,
     );
     let license = if license_input.is_empty() {
@@ -331,10 +317,7 @@ async fn build_interactive(
         .unwrap_or(Stability::Stable);
 
     console.info("");
-    console.info(&format!(
-        "{}",
-        mozart_core::console::info("Define your dependencies.")
-    ));
+    console.info(&console_format!("<info>Define your dependencies.</info>"));
     console.info("");
 
     let mut require = parse_requirements(&args.require)?;
@@ -346,9 +329,8 @@ async fn build_interactive(
 
     // Dev Dependencies
     console.info("");
-    console.info(&format!(
-        "{}",
-        mozart_core::console::info("Define your dev dependencies.")
+    console.info(&console_format!(
+        "<info>Define your dev dependencies.</info>"
     ));
     console.info("");
 
@@ -368,10 +350,9 @@ async fn build_interactive(
     let default_autoload = args.autoload.clone().unwrap_or_else(|| "src/".to_string());
     let namespace = validation::namespace_from_package_name(&name).unwrap_or_default();
     let autoload_input = console.ask(
-        &format!(
-            "Add PSR-4 autoload mapping? Maps namespace \"{}\" to the entered relative path. [{}, n to skip]",
-            namespace,
-            mozart_core::console::comment(&default_autoload),
+        &console_format!(
+            "Add PSR-4 autoload mapping? Maps namespace \"{namespace}\" to the entered relative path. [<comment>{}</comment>, n to skip]",
+            &default_autoload,
         ),
         &default_autoload,
     );
@@ -437,7 +418,7 @@ async fn interactive_search_packages(
             Err(e) => {
                 eprintln!(
                     "{}",
-                    console::warning(&format!("Search failed: {e}. Try again."))
+                    console_format!("<warning>Search failed: {e}. Try again.</warning>")
                 );
                 continue;
             }
@@ -456,9 +437,9 @@ async fn interactive_search_packages(
         if filtered.is_empty() {
             eprintln!(
                 "{}",
-                console::warning(&format!(
-                    "No new packages found for \"{query}\" (total: {total})."
-                ))
+                console_format!(
+                    "<warning>No new packages found for \"{query}\" (total: {total}).</warning>"
+                )
             );
             continue;
         }
@@ -511,7 +492,10 @@ async fn interactive_search_packages(
             } else if num <= filtered.len() {
                 filtered[num - 1].name.to_lowercase()
             } else {
-                eprintln!("{}", console::warning(&format!("Invalid selection: {num}")));
+                eprintln!(
+                    "{}",
+                    console_format!("<warning>Invalid selection: {num}</warning>")
+                );
                 continue;
             }
         } else {
@@ -523,7 +507,7 @@ async fn interactive_search_packages(
             match validation::parse_require_string(&package_name) {
                 Ok((n, v)) => (n.to_lowercase(), v),
                 Err(e) => {
-                    eprintln!("{}", console::warning(&format!("Invalid: {e}")));
+                    eprintln!("{}", console_format!("<warning>Invalid: {e}</warning>"));
                     continue;
                 }
             }
@@ -531,16 +515,16 @@ async fn interactive_search_packages(
             if !validation::validate_package_name(&package_name) {
                 eprintln!(
                     "{}",
-                    console::warning(&format!("Invalid package name: \"{package_name}\""))
+                    console_format!("<warning>Invalid package name: \"{package_name}\"</warning>")
                 );
                 continue;
             }
 
             eprintln!(
                 "{}",
-                console::info(&format!(
-                    "Using version constraint for {package_name} from Packagist..."
-                ))
+                console_format!(
+                    "<info>Using version constraint for {package_name} from Packagist...</info>"
+                )
             );
 
             match packagist::fetch_package_versions(&package_name, None).await {
@@ -555,17 +539,19 @@ async fn interactive_search_packages(
                             );
                             eprintln!(
                                 "{}",
-                                console::info(&format!("Using version {c} for {package_name}"))
+                                console_format!(
+                                    "<info>Using version {c} for {package_name}</info>"
+                                )
                             );
                             (package_name, c)
                         }
                         None => {
                             eprintln!(
                                 "{}",
-                                console::warning(&format!(
-                                    "Could not find a version of \"{package_name}\" matching \
-                                     your minimum-stability. Try specifying it explicitly."
-                                ))
+                                console_format!(
+                                    "<warning>Could not find a version of \"{package_name}\" matching \
+                                     your minimum-stability. Try specifying it explicitly.</warning>"
+                                )
                             );
                             continue;
                         }
@@ -574,9 +560,9 @@ async fn interactive_search_packages(
                 Err(e) => {
                     eprintln!(
                         "{}",
-                        console::warning(&format!(
-                            "Could not fetch versions for \"{package_name}\": {e}"
-                        ))
+                        console_format!(
+                            "<warning>Could not fetch versions for \"{package_name}\": {e}</warning>"
+                        )
                     );
                     continue;
                 }

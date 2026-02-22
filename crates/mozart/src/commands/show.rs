@@ -1,4 +1,5 @@
 use clap::Args;
+use mozart_core::console_format;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
@@ -152,8 +153,8 @@ async fn execute_installed(args: &ShowArgs, working_dir: &Path) -> anyhow::Resul
             if !root.require.is_empty() || !root.require_dev.is_empty() {
                 eprintln!(
                     "{}",
-                    mozart_core::console::warning(
-                        "No dependencies installed. Try running mozart install or update."
+                    console_format!(
+                        "<warning>No dependencies installed. Try running mozart install or update.</warning>"
                     )
                 );
             }
@@ -362,45 +363,53 @@ async fn show_installed_package_list(
             .map(|li| classify_update_category(&entry.version_normalized, &li.version_normalized));
 
         let name_str = match category {
-            Some(ListUpdateKind::Compatible) => mozart_core::console::highlight(&format!(
-                "{:<width$}",
-                entry.name,
-                width = name_width
-            ))
-            .to_string(),
-            Some(ListUpdateKind::Incompatible) => mozart_core::console::comment(&format!(
-                "{:<width$}",
-                entry.name,
-                width = name_width
-            ))
-            .to_string(),
-            _ => mozart_core::console::info(&format!("{:<width$}", entry.name, width = name_width))
-                .to_string(),
+            Some(ListUpdateKind::Compatible) => {
+                console_format!(
+                    "<highlight>{:<width$}</highlight>",
+                    entry.name,
+                    width = name_width
+                )
+            }
+            Some(ListUpdateKind::Incompatible) => {
+                console_format!(
+                    "<comment>{:<width$}</comment>",
+                    entry.name,
+                    width = name_width
+                )
+            }
+            _ => {
+                console_format!("<info>{:<width$}</info>", entry.name, width = name_width)
+            }
         };
 
-        let version_str =
-            mozart_core::console::comment(&format!("{:<width$}", version, width = version_width))
-                .to_string();
+        let version_str = console_format!(
+            "<comment>{:<width$}</comment>",
+            version,
+            width = version_width
+        );
 
         if show_latest {
             let latest_str = match entry.latest_info.as_ref() {
                 Some(li) => {
                     let lv = format_version(&li.version);
                     match category {
-                        Some(ListUpdateKind::Compatible) => mozart_core::console::highlight(
-                            &format!("{:<width$}", lv, width = latest_width),
-                        )
-                        .to_string(),
-                        Some(ListUpdateKind::Incompatible) => mozart_core::console::comment(
-                            &format!("{:<width$}", lv, width = latest_width),
-                        )
-                        .to_string(),
-                        _ => mozart_core::console::info(&format!(
-                            "{:<width$}",
-                            lv,
-                            width = latest_width
-                        ))
-                        .to_string(),
+                        Some(ListUpdateKind::Compatible) => {
+                            console_format!(
+                                "<highlight>{:<width$}</highlight>",
+                                lv,
+                                width = latest_width
+                            )
+                        }
+                        Some(ListUpdateKind::Incompatible) => {
+                            console_format!(
+                                "<comment>{:<width$}</comment>",
+                                lv,
+                                width = latest_width
+                            )
+                        }
+                        _ => {
+                            console_format!("<info>{:<width$}</info>", lv, width = latest_width)
+                        }
                     }
                 }
                 None => format!("{:<width$}", "", width = latest_width),
@@ -539,36 +548,40 @@ fn show_installed_package_detail(
 
     let vendor_dir = working_dir.join("vendor");
 
-    println!("{} : {}", mozart_core::console::info("name"), pkg.name);
+    println!("{} : {}", console_format!("<info>name</info>"), pkg.name);
     println!(
         "{} : {}",
-        mozart_core::console::info("descrip."),
+        console_format!("<info>descrip.</info>"),
         get_installed_description(pkg)
     );
     println!(
         "{} : {}",
-        mozart_core::console::info("keywords"),
+        console_format!("<info>keywords</info>"),
         get_installed_keywords(pkg)
     );
     println!(
         "{} : {}",
-        mozart_core::console::info("versions"),
+        console_format!("<info>versions</info>"),
         format_version_highlight(&pkg.version)
     );
     println!(
         "{} : {}",
-        mozart_core::console::info("type"),
+        console_format!("<info>type</info>"),
         pkg.package_type.as_deref().unwrap_or("library")
     );
 
     // License
     if let Some(licenses) = get_installed_license(pkg) {
-        println!("{} : {}", mozart_core::console::info("license"), licenses);
+        println!("{} : {}", console_format!("<info>license</info>"), licenses);
     }
 
     // Homepage
     if let Some(homepage) = get_installed_homepage(pkg) {
-        println!("{} : {}", mozart_core::console::info("homepage"), homepage);
+        println!(
+            "{} : {}",
+            console_format!("<info>homepage</info>"),
+            homepage
+        );
     }
 
     // Source
@@ -581,9 +594,9 @@ fn show_installed_package_detail(
             .unwrap_or("");
         println!(
             "{} : [{}] {} {}",
-            mozart_core::console::info("source"),
+            console_format!("<info>source</info>"),
             source_type,
-            mozart_core::console::comment(source_url),
+            console_format!("<comment>{}</comment>", source_url),
             source_ref
         );
     }
@@ -595,9 +608,9 @@ fn show_installed_package_detail(
         let dist_ref = dist.get("reference").and_then(|v| v.as_str()).unwrap_or("");
         println!(
             "{} : [{}] {} {}",
-            mozart_core::console::info("dist"),
+            console_format!("<info>dist</info>"),
             dist_type,
-            mozart_core::console::comment(dist_url),
+            console_format!("<comment>{}</comment>", dist_url),
             dist_ref
         );
     }
@@ -607,7 +620,7 @@ fn show_installed_package_detail(
     if install_path.exists() {
         println!(
             "{} : {}",
-            mozart_core::console::info("path"),
+            console_format!("<info>path</info>"),
             install_path.display()
         );
     }
@@ -617,10 +630,10 @@ fn show_installed_package_detail(
         && !requires.is_empty()
     {
         println!();
-        println!("{}", mozart_core::console::info("requires"));
+        println!("{}", console_format!("<info>requires</info>"));
         for (name, constraint) in requires {
             let c = constraint.as_str().unwrap_or("");
-            println!("{} {}", name, mozart_core::console::comment(c));
+            println!("{} {}", name, console_format!("<comment>{}</comment>", c));
         }
     }
 
@@ -632,10 +645,10 @@ fn show_installed_package_detail(
         && !requires_dev.is_empty()
     {
         println!();
-        println!("{}", mozart_core::console::info("requires (dev)"));
+        println!("{}", console_format!("<info>requires (dev)</info>"));
         for (name, constraint) in requires_dev {
             let c = constraint.as_str().unwrap_or("");
-            println!("{} {}", name, mozart_core::console::comment(c));
+            println!("{} {}", name, console_format!("<comment>{}</comment>", c));
         }
     }
 
@@ -800,45 +813,53 @@ async fn show_locked_package_list(
             .map(|li| classify_update_category(&entry.version_normalized, &li.version_normalized));
 
         let name_str = match category {
-            Some(ListUpdateKind::Compatible) => mozart_core::console::highlight(&format!(
-                "{:<width$}",
-                entry.name,
-                width = name_width
-            ))
-            .to_string(),
-            Some(ListUpdateKind::Incompatible) => mozart_core::console::comment(&format!(
-                "{:<width$}",
-                entry.name,
-                width = name_width
-            ))
-            .to_string(),
-            _ => mozart_core::console::info(&format!("{:<width$}", entry.name, width = name_width))
-                .to_string(),
+            Some(ListUpdateKind::Compatible) => {
+                console_format!(
+                    "<highlight>{:<width$}</highlight>",
+                    entry.name,
+                    width = name_width
+                )
+            }
+            Some(ListUpdateKind::Incompatible) => {
+                console_format!(
+                    "<comment>{:<width$}</comment>",
+                    entry.name,
+                    width = name_width
+                )
+            }
+            _ => {
+                console_format!("<info>{:<width$}</info>", entry.name, width = name_width)
+            }
         };
 
-        let version_str =
-            mozart_core::console::comment(&format!("{:<width$}", version, width = version_width))
-                .to_string();
+        let version_str = console_format!(
+            "<comment>{:<width$}</comment>",
+            version,
+            width = version_width
+        );
 
         if show_latest {
             let latest_str = match entry.latest_info.as_ref() {
                 Some(li) => {
                     let lv = format_version(&li.version);
                     match category {
-                        Some(ListUpdateKind::Compatible) => mozart_core::console::highlight(
-                            &format!("{:<width$}", lv, width = latest_width),
-                        )
-                        .to_string(),
-                        Some(ListUpdateKind::Incompatible) => mozart_core::console::comment(
-                            &format!("{:<width$}", lv, width = latest_width),
-                        )
-                        .to_string(),
-                        _ => mozart_core::console::info(&format!(
-                            "{:<width$}",
-                            lv,
-                            width = latest_width
-                        ))
-                        .to_string(),
+                        Some(ListUpdateKind::Compatible) => {
+                            console_format!(
+                                "<highlight>{:<width$}</highlight>",
+                                lv,
+                                width = latest_width
+                            )
+                        }
+                        Some(ListUpdateKind::Incompatible) => {
+                            console_format!(
+                                "<comment>{:<width$}</comment>",
+                                lv,
+                                width = latest_width
+                            )
+                        }
+                        _ => {
+                            console_format!("<info>{:<width$}</info>", lv, width = latest_width)
+                        }
                     }
                 }
                 None => format!("{:<width$}", "", width = latest_width),
@@ -915,10 +936,10 @@ fn show_locked_package_detail(
         }
     };
 
-    println!("{} : {}", mozart_core::console::info("name"), pkg.name);
+    println!("{} : {}", console_format!("<info>name</info>"), pkg.name);
     println!(
         "{} : {}",
-        mozart_core::console::info("descrip."),
+        console_format!("<info>descrip.</info>"),
         pkg.description.as_deref().unwrap_or("")
     );
 
@@ -928,16 +949,20 @@ fn show_locked_package_detail(
         .as_ref()
         .map(|kw| kw.join(", "))
         .unwrap_or_default();
-    println!("{} : {}", mozart_core::console::info("keywords"), keywords);
+    println!(
+        "{} : {}",
+        console_format!("<info>keywords</info>"),
+        keywords
+    );
 
     println!(
         "{} : * {}",
-        mozart_core::console::info("versions"),
+        console_format!("<info>versions</info>"),
         format_version(&pkg.version)
     );
     println!(
         "{} : {}",
-        mozart_core::console::info("type"),
+        console_format!("<info>type</info>"),
         pkg.package_type.as_deref().unwrap_or("library")
     );
 
@@ -945,23 +970,27 @@ fn show_locked_package_detail(
     if let Some(ref licenses) = pkg.license {
         println!(
             "{} : {}",
-            mozart_core::console::info("license"),
+            console_format!("<info>license</info>"),
             licenses.join(", ")
         );
     }
 
     // Homepage
     if let Some(ref homepage) = pkg.homepage {
-        println!("{} : {}", mozart_core::console::info("homepage"), homepage);
+        println!(
+            "{} : {}",
+            console_format!("<info>homepage</info>"),
+            homepage
+        );
     }
 
     // Source
     if let Some(ref source) = pkg.source {
         println!(
             "{} : [{}] {} {}",
-            mozart_core::console::info("source"),
+            console_format!("<info>source</info>"),
             source.source_type,
-            mozart_core::console::comment(&source.url),
+            console_format!("<comment>{}</comment>", &source.url),
             source.reference.as_deref().unwrap_or("")
         );
     }
@@ -970,9 +999,9 @@ fn show_locked_package_detail(
     if let Some(ref dist) = pkg.dist {
         println!(
             "{} : [{}] {} {}",
-            mozart_core::console::info("dist"),
+            console_format!("<info>dist</info>"),
             dist.dist_type,
-            mozart_core::console::comment(&dist.url),
+            console_format!("<comment>{}</comment>", &dist.url),
             dist.reference.as_deref().unwrap_or("")
         );
     }
@@ -980,18 +1009,26 @@ fn show_locked_package_detail(
     // Requires
     if !pkg.require.is_empty() {
         println!();
-        println!("{}", mozart_core::console::info("requires"));
+        println!("{}", console_format!("<info>requires</info>"));
         for (name, constraint) in &pkg.require {
-            println!("{} {}", name, mozart_core::console::comment(constraint));
+            println!(
+                "{} {}",
+                name,
+                console_format!("<comment>{}</comment>", constraint)
+            );
         }
     }
 
     // Requires (dev)
     if !pkg.require_dev.is_empty() {
         println!();
-        println!("{}", mozart_core::console::info("requires (dev)"));
+        println!("{}", console_format!("<info>requires (dev)</info>"));
         for (name, constraint) in &pkg.require_dev {
-            println!("{} {}", name, mozart_core::console::comment(constraint));
+            println!(
+                "{} {}",
+                name,
+                console_format!("<comment>{}</comment>", constraint)
+            );
         }
     }
 
@@ -1000,9 +1037,13 @@ fn show_locked_package_detail(
         && !suggests.is_empty()
     {
         println!();
-        println!("{}", mozart_core::console::info("suggests"));
+        println!("{}", console_format!("<info>suggests</info>"));
         for (name, reason) in suggests {
-            println!("{} {}", name, mozart_core::console::comment(reason));
+            println!(
+                "{} {}",
+                name,
+                console_format!("<comment>{}</comment>", reason)
+            );
         }
     }
 
@@ -1023,39 +1064,51 @@ fn show_self(args: &ShowArgs, working_dir: &Path) -> anyhow::Result<()> {
         return Ok(());
     }
 
-    println!("{} : {}", mozart_core::console::info("name"), root.name);
+    println!("{} : {}", console_format!("<info>name</info>"), root.name);
     println!(
         "{} : {}",
-        mozart_core::console::info("descrip."),
+        console_format!("<info>descrip.</info>"),
         root.description.as_deref().unwrap_or("")
     );
     println!(
         "{} : {}",
-        mozart_core::console::info("type"),
+        console_format!("<info>type</info>"),
         root.package_type.as_deref().unwrap_or("project")
     );
     if let Some(ref license) = root.license {
-        println!("{} : {}", mozart_core::console::info("license"), license);
+        println!("{} : {}", console_format!("<info>license</info>"), license);
     }
     if let Some(ref homepage) = root.homepage {
-        println!("{} : {}", mozart_core::console::info("homepage"), homepage);
+        println!(
+            "{} : {}",
+            console_format!("<info>homepage</info>"),
+            homepage
+        );
     }
 
     // Requires
     if !root.require.is_empty() {
         println!();
-        println!("{}", mozart_core::console::info("requires"));
+        println!("{}", console_format!("<info>requires</info>"));
         for (name, constraint) in &root.require {
-            println!("{} {}", name, mozart_core::console::comment(constraint));
+            println!(
+                "{} {}",
+                name,
+                console_format!("<comment>{}</comment>", constraint)
+            );
         }
     }
 
     // Requires (dev)
     if !root.require_dev.is_empty() {
         println!();
-        println!("{}", mozart_core::console::info("requires (dev)"));
+        println!("{}", console_format!("<info>requires (dev)</info>"));
         for (name, constraint) in &root.require_dev {
-            println!("{} {}", name, mozart_core::console::comment(constraint));
+            println!(
+                "{} {}",
+                name,
+                console_format!("<comment>{}</comment>", constraint)
+            );
         }
     }
 
@@ -1109,9 +1162,12 @@ fn show_tree(args: &ShowArgs, working_dir: &Path) -> anyhow::Result<()> {
 
     // Print root
     println!(
-        "{} {}",
-        mozart_core::console::info(&root.name),
-        mozart_core::console::comment(root.description.as_deref().unwrap_or(""))
+        "{}",
+        console_format!(
+            "<info>{}</info> <comment>{}</comment>",
+            &root.name,
+            root.description.as_deref().unwrap_or("")
+        )
     );
 
     // Render each root dependency as a tree
@@ -1155,10 +1211,9 @@ fn print_tree_node(
         let version = format_version(&pkg.version);
 
         println!(
-            "{} {} {} {}",
+            "{} {} {}",
             prefix,
-            mozart_core::console::info(pkg_name),
-            mozart_core::console::comment(&version),
+            console_format!("<info>{}</info> <comment>{}</comment>", pkg_name, &version),
             description
         );
 
@@ -1215,7 +1270,7 @@ fn print_tree_node(
             println!(
                 "{} {} {} (not installed)",
                 prefix,
-                mozart_core::console::comment(pkg_name),
+                console_format!("<comment>{}</comment>", pkg_name),
                 constraint
             );
         }
@@ -1336,8 +1391,12 @@ fn show_platform(args: &ShowArgs, working_dir: &Path) -> anyhow::Result<()> {
     for (name, version, _source) in &platform_packages {
         println!(
             "{} {}",
-            mozart_core::console::info(&format!("{:<width$}", name, width = name_width)),
-            mozart_core::console::comment(&format!("{:<width$}", version, width = version_width)),
+            console_format!("<info>{:<width$}</info>", name, width = name_width),
+            console_format!(
+                "<comment>{:<width$}</comment>",
+                version,
+                width = version_width
+            ),
         );
     }
 
@@ -1366,8 +1425,8 @@ async fn show_available(args: &ShowArgs, working_dir: &Path) -> anyhow::Result<(
                 let lock = mozart_registry::lockfile::LockFile::read_from_file(&lock_path)?;
                 println!(
                     "{}",
-                    mozart_core::console::info(
-                        "Available versions for locked packages (from Packagist):"
+                    console_format!(
+                        "<info>Available versions for locked packages (from Packagist):</info>"
                     )
                 );
                 println!();
@@ -1391,8 +1450,8 @@ async fn show_available(args: &ShowArgs, working_dir: &Path) -> anyhow::Result<(
 
             eprintln!(
                 "{}",
-                mozart_core::console::warning(
-                    "No dependencies installed. Try running mozart install or update."
+                console_format!(
+                    "<warning>No dependencies installed. Try running mozart install or update.</warning>"
                 )
             );
             return Ok(());
@@ -1401,7 +1460,7 @@ async fn show_available(args: &ShowArgs, working_dir: &Path) -> anyhow::Result<(
 
     println!(
         "{}",
-        mozart_core::console::info("Available versions for installed packages (from Packagist):")
+        console_format!("<info>Available versions for installed packages (from Packagist):</info>")
     );
     println!();
 
@@ -1467,10 +1526,10 @@ async fn show_available_versions(pkg_name: &str, args: &ShowArgs) -> anyhow::Res
 
     println!(
         "{}",
-        mozart_core::console::info(&format!("Available versions for {pkg_name}:"))
+        console_format!("<info>Available versions for {pkg_name}:</info>")
     );
     for v in &versions {
-        println!("  {}", mozart_core::console::comment(&v.version));
+        println!("  {}", console_format!("<comment>{}</comment>", &v.version));
     }
     Ok(())
 }
@@ -1481,7 +1540,7 @@ async fn show_available_versions_inline(pkg_name: &str) {
             if versions.is_empty() {
                 println!(
                     "{}: no versions found",
-                    mozart_core::console::info(pkg_name)
+                    console_format!("<info>{}</info>", pkg_name)
                 );
                 return;
             }
@@ -1498,15 +1557,15 @@ async fn show_available_versions_inline(pkg_name: &str) {
             };
             println!(
                 "{}: {}{}",
-                mozart_core::console::info(pkg_name),
-                mozart_core::console::comment(&shown.join(", ")),
+                console_format!("<info>{}</info>", pkg_name),
+                console_format!("<comment>{}</comment>", &shown.join(", ")),
                 rest
             );
         }
         Err(_) => {
             println!(
                 "{}: (could not fetch from Packagist)",
-                mozart_core::console::comment(pkg_name)
+                console_format!("<comment>{}</comment>", pkg_name)
             );
         }
     }

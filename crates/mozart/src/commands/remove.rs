@@ -1,5 +1,5 @@
 use clap::Args;
-use mozart_core::console;
+use mozart_core::console_format;
 use mozart_core::package;
 use mozart_core::validation;
 use mozart_registry::lockfile;
@@ -108,20 +108,10 @@ pub async fn execute(
 
     // Step 2: Handle deprecated flags
     if args.update_with_dependencies {
-        console.info(&format!(
-            "{}",
-            console::warning(
-                "The -w / --update-with-dependencies flag is deprecated. Use --with-all-dependencies instead."
-            )
-        ));
+        console.info(&console_format!("<warning>The -w / --update-with-dependencies flag is deprecated. Use --with-all-dependencies instead.</warning>"));
     }
     if args.update_with_all_dependencies {
-        console.info(&format!(
-            "{}",
-            console::warning(
-                "The -W / --update-with-all-dependencies flag is deprecated. Use --with-all-dependencies instead."
-            )
-        ));
+        console.info(&console_format!("<warning>The -W / --update-with-all-dependencies flag is deprecated. Use --with-all-dependencies instead.</warning>"));
     }
 
     // Step 3: Resolve working directory and read composer.json
@@ -160,41 +150,31 @@ pub async fn execute(
             if raw.require_dev.contains_key(&name) {
                 println!(
                     "{}",
-                    console::info(&format!("Removing {name} from require-dev"))
+                    console_format!("<info>Removing {name} from require-dev</info>")
                 );
                 raw.require_dev.remove(&name);
                 any_removed = true;
             } else {
-                console.info(&format!(
-                    "{}",
-                    console::warning(&format!(
-                        "{name} is not required in require-dev and has not been removed."
-                    ))
-                ));
+                console.info(&console_format!("<warning>{name} is not required in require-dev and has not been removed.</warning>"));
             }
         } else {
             // Auto-detect: look in require first, then require-dev
             if raw.require.contains_key(&name) {
                 println!(
                     "{}",
-                    console::info(&format!("Removing {name} from require"))
+                    console_format!("<info>Removing {name} from require</info>")
                 );
                 raw.require.remove(&name);
                 any_removed = true;
             } else if raw.require_dev.contains_key(&name) {
                 println!(
                     "{}",
-                    console::info(&format!("Removing {name} from require-dev"))
+                    console_format!("<info>Removing {name} from require-dev</info>")
                 );
                 raw.require_dev.remove(&name);
                 any_removed = true;
             } else {
-                console.info(&format!(
-                    "{}",
-                    console::warning(&format!(
-                        "{name} is not required in your composer.json and has not been removed."
-                    ))
-                ));
+                console.info(&console_format!("<warning>{name} is not required in your composer.json and has not been removed.</warning>"));
             }
         }
     }
@@ -203,7 +183,7 @@ pub async fn execute(
     if args.dry_run {
         println!(
             "{}",
-            console::comment("Dry run: composer.json not modified.")
+            console_format!("<comment>Dry run: composer.json not modified.</comment>")
         );
     } else if any_removed {
         package::write_to_file(&raw, &composer_path)?;
@@ -213,7 +193,9 @@ pub async fn execute(
     if args.no_update {
         println!(
             "{}",
-            console::comment("Not updating dependencies, only modifying composer.json.")
+            console_format!(
+                "<comment>Not updating dependencies, only modifying composer.json.</comment>"
+            )
         );
         return Ok(());
     }
@@ -291,13 +273,7 @@ pub async fn execute(
         match lockfile::LockFile::read_from_file(&lock_path) {
             Ok(l) => Some(l),
             Err(e) => {
-                console.info(&format!(
-                    "{}",
-                    console::warning(&format!(
-                        "Could not read existing composer.lock: {}. Treating as a fresh install.",
-                        e
-                    ))
-                ));
+                console.info(&console_format!("<warning>Could not read existing composer.lock: {}. Treating as a fresh install.</warning>", e));
                 None
             }
         }
@@ -338,12 +314,7 @@ pub async fn execute(
 
         // For --minimal-changes, additionally pin packages beyond the allow list
         if args.minimal_changes {
-            console.info(&format!(
-                "{}",
-                console::info(
-                    "Minimal changes mode: preserving locked versions for non-removed packages."
-                )
-            ));
+            console.info(&console_format!("<info>Minimal changes mode: preserving locked versions for non-removed packages.</info>"));
         }
 
         resolved = super::update::apply_partial_update(resolved, lock, &allow_list);
@@ -383,17 +354,14 @@ pub async fn execute(
         .filter(|c| matches!(c.kind, super::update::ChangeKind::Remove { .. }))
         .collect();
 
-    console.info(&format!(
-        "{}",
-        console::info(&format!(
-            "Package operations: {} install{}, {} update{}, {} removal{}",
-            installs.len(),
-            if installs.len() == 1 { "" } else { "s" },
-            updates.len(),
-            if updates.len() == 1 { "" } else { "s" },
-            removals.len(),
-            if removals.len() == 1 { "" } else { "s" },
-        ))
+    console.info(&console_format!(
+        "<info>Package operations: {} install{}, {} update{}, {} removal{}</info>",
+        installs.len(),
+        if installs.len() == 1 { "" } else { "s" },
+        updates.len(),
+        if updates.len() == 1 { "" } else { "s" },
+        removals.len(),
+        if removals.len() == 1 { "" } else { "s" },
     ));
 
     // Print individual change lines
@@ -561,7 +529,9 @@ async fn remove_unused(
     console.info(&format!("Found {} unused package(s).", unused.len()));
 
     if args.dry_run {
-        console.info(&console::comment("Dry run: lock file not modified."));
+        console.info(&console_format!(
+            "<comment>Dry run: lock file not modified.</comment>"
+        ));
         return Ok(());
     }
 
