@@ -1,6 +1,37 @@
 use crate::cache::Cache;
+use serde::de::Deserializer;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
+
+/// Deserialize a field that may contain the Packagist minifier sentinel `"__unset"`.
+///
+/// Packagist's metadata minifier (see `composer/metadata-minifier`) encodes
+/// deleted fields as the literal string `"__unset"` in version diffs.  When we
+/// encounter this sentinel we treat the field as absent (`None` / default).
+fn deserialize_unset_as_none<'de, D, T>(deserializer: D) -> Result<Option<T>, D::Error>
+where
+    D: Deserializer<'de>,
+    T: serde::de::DeserializeOwned,
+{
+    let value = serde_json::Value::deserialize(deserializer)?;
+    if value.as_str() == Some("__unset") {
+        return Ok(None);
+    }
+    serde_json::from_value(value).map_err(serde::de::Error::custom)
+}
+
+/// Like [`deserialize_unset_as_none`] but returns a default `T` instead of `Option`.
+fn deserialize_unset_as_default<'de, D, T>(deserializer: D) -> Result<T, D::Error>
+where
+    D: Deserializer<'de>,
+    T: serde::de::DeserializeOwned + Default,
+{
+    let value = serde_json::Value::deserialize(deserializer)?;
+    if value.as_str() == Some("__unset") {
+        return Ok(T::default());
+    }
+    serde_json::from_value(value).map_err(serde::de::Error::custom)
+}
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct PackagistDist {
@@ -23,50 +54,62 @@ pub struct PackagistSource {
 pub struct PackagistVersion {
     pub version: String,
     pub version_normalized: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_unset_as_default")]
     pub require: BTreeMap<String, String>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_unset_as_default")]
     pub replace: BTreeMap<String, String>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_unset_as_default")]
     pub provide: BTreeMap<String, String>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_unset_as_default")]
     pub conflict: BTreeMap<String, String>,
+    #[serde(default, deserialize_with = "deserialize_unset_as_none")]
     pub dist: Option<PackagistDist>,
+    #[serde(default, deserialize_with = "deserialize_unset_as_none")]
     pub source: Option<PackagistSource>,
 
-    #[serde(rename = "require-dev", default)]
+    #[serde(rename = "require-dev", default, deserialize_with = "deserialize_unset_as_default")]
     pub require_dev: BTreeMap<String, String>,
 
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_unset_as_none")]
     pub suggest: Option<BTreeMap<String, String>>,
 
-    #[serde(rename = "type")]
+    #[serde(rename = "type", default, deserialize_with = "deserialize_unset_as_none")]
     pub package_type: Option<String>,
 
+    #[serde(default, deserialize_with = "deserialize_unset_as_none")]
     pub autoload: Option<serde_json::Value>,
 
-    #[serde(rename = "autoload-dev")]
+    #[serde(rename = "autoload-dev", default, deserialize_with = "deserialize_unset_as_none")]
     pub autoload_dev: Option<serde_json::Value>,
 
+    #[serde(default, deserialize_with = "deserialize_unset_as_none")]
     pub license: Option<Vec<String>>,
 
+    #[serde(default, deserialize_with = "deserialize_unset_as_none")]
     pub description: Option<String>,
 
+    #[serde(default, deserialize_with = "deserialize_unset_as_none")]
     pub homepage: Option<String>,
 
+    #[serde(default, deserialize_with = "deserialize_unset_as_none")]
     pub keywords: Option<Vec<String>>,
 
+    #[serde(default, deserialize_with = "deserialize_unset_as_none")]
     pub authors: Option<Vec<serde_json::Value>>,
 
+    #[serde(default, deserialize_with = "deserialize_unset_as_none")]
     pub support: Option<serde_json::Value>,
 
+    #[serde(default, deserialize_with = "deserialize_unset_as_none")]
     pub funding: Option<Vec<serde_json::Value>>,
 
+    #[serde(default, deserialize_with = "deserialize_unset_as_none")]
     pub time: Option<String>,
 
+    #[serde(default, deserialize_with = "deserialize_unset_as_none")]
     pub extra: Option<serde_json::Value>,
 
-    #[serde(rename = "notification-url")]
+    #[serde(rename = "notification-url", default, deserialize_with = "deserialize_unset_as_none")]
     pub notification_url: Option<String>,
 }
 
@@ -107,20 +150,48 @@ impl PackagistVersion {
 
 /// Parse a Packagist p2 API JSON response.
 ///
-/// The response format is: `{"packages": {"vendor/package": [...]}}`.
+/// The response format is:
+/// ```json
+/// {
+///   "packages": {"vendor/package": [...]},
+///   "minified": "composer/2.0"   // optional
+/// }
+/// ```
+///
+/// When the `"minified"` key is present the version list is delta-encoded by
+/// Composer's `MetadataMinifier`.  This function transparently expands the
+/// minified data before deserializing into [`PackagistVersion`] structs.
 pub fn parse_p2_response(json: &str, package_name: &str) -> anyhow::Result<Vec<PackagistVersion>> {
-    #[derive(Deserialize)]
-    struct P2Response {
-        packages: BTreeMap<String, Vec<PackagistVersion>>,
-    }
+    let raw: serde_json::Value = serde_json::from_str(json)?;
 
-    let response: P2Response = serde_json::from_str(json)?;
-    response
-        .packages
+    // Check whether the response is minified.
+    let is_minified = raw
+        .get("minified")
+        .and_then(|v| v.as_str())
+        .is_some_and(|s| s == "composer/2.0");
+
+    // Extract the version array for the requested package.
+    let versions_value = raw
+        .get("packages")
+        .and_then(|p| p.get(package_name))
+        .ok_or_else(|| anyhow::anyhow!("Package \"{package_name}\" not found in response"))?;
+
+    let versions_array = versions_value
+        .as_array()
+        .ok_or_else(|| anyhow::anyhow!("Expected array for package \"{package_name}\""))?;
+
+    // Expand minified diffs into full version objects if necessary.
+    let versions: Vec<serde_json::Value> = if is_minified {
+        mozart_metadata_minifier::expand(versions_array)
+    } else {
+        versions_array.clone()
+    };
+
+    // Deserialize the (possibly expanded) version objects.
+    versions
         .into_iter()
-        .find(|(key, _)| key == package_name)
-        .map(|(_, versions)| versions)
-        .ok_or_else(|| anyhow::anyhow!("Package \"{package_name}\" not found in response"))
+        .map(|v| serde_json::from_value(v).map_err(Into::into))
+        .collect()
 }
 
 /// Fetch package version metadata from the Packagist p2 API.
@@ -538,6 +609,219 @@ mod tests {
         let versions = parse_p2_response(json, "test/pkg").unwrap();
         let aliases = versions[0].branch_aliases();
         assert!(aliases.is_empty());
+    }
+
+    // ──────────── __unset sentinel handling ────────────────────────────────
+
+    #[test]
+    fn parse_p2_response_unset_fields() {
+        // Packagist metadata minifier uses "__unset" to mark deleted fields.
+        let json = r#"{
+            "packages": {
+                "test/pkg": [
+                    {
+                        "version": "2.0.0",
+                        "version_normalized": "2.0.0.0",
+                        "require": {"php": ">=8.1"},
+                        "license": ["MIT"],
+                        "keywords": ["framework"],
+                        "authors": [{"name": "Alice"}],
+                        "funding": [{"type": "github", "url": "https://github.com/sponsors/alice"}]
+                    },
+                    {
+                        "version": "1.0.0",
+                        "version_normalized": "1.0.0.0",
+                        "license": "__unset",
+                        "keywords": "__unset",
+                        "authors": "__unset",
+                        "funding": "__unset",
+                        "require": "__unset",
+                        "homepage": "__unset",
+                        "description": "__unset",
+                        "extra": "__unset",
+                        "suggest": "__unset"
+                    }
+                ]
+            }
+        }"#;
+
+        let versions = parse_p2_response(json, "test/pkg").unwrap();
+        assert_eq!(versions.len(), 2);
+
+        // First version has normal values
+        assert_eq!(versions[0].license.as_ref().unwrap(), &["MIT"]);
+        assert_eq!(versions[0].keywords.as_ref().unwrap(), &["framework"]);
+
+        // Second version has __unset → treated as absent
+        assert!(versions[1].license.is_none());
+        assert!(versions[1].keywords.is_none());
+        assert!(versions[1].authors.is_none());
+        assert!(versions[1].funding.is_none());
+        assert!(versions[1].require.is_empty());
+        assert!(versions[1].homepage.is_none());
+        assert!(versions[1].description.is_none());
+        assert!(versions[1].extra.is_none());
+        assert!(versions[1].suggest.is_none());
+    }
+
+    // ──────────── minified metadata expansion ──────────────────────────────
+
+    #[test]
+    fn parse_p2_response_minified_expand() {
+        // Mirrors the Composer MetadataMinifierTest: 3 versions where only
+        // the first carries all fields and subsequent entries are diffs.
+        let json = r#"{
+            "packages": {
+                "foo/bar": [
+                    {
+                        "name": "foo/bar",
+                        "version": "2.0.0",
+                        "version_normalized": "2.0.0.0",
+                        "type": "library",
+                        "license": ["MIT"],
+                        "require": {"php": ">=8.1"},
+                        "description": "A great package"
+                    },
+                    {
+                        "version": "1.2.0",
+                        "version_normalized": "1.2.0.0",
+                        "license": ["GPL"],
+                        "homepage": "https://example.org"
+                    },
+                    {
+                        "version": "1.0.0",
+                        "version_normalized": "1.0.0.0",
+                        "homepage": "__unset"
+                    }
+                ]
+            },
+            "minified": "composer/2.0"
+        }"#;
+
+        let versions = parse_p2_response(json, "foo/bar").unwrap();
+        assert_eq!(versions.len(), 3);
+
+        // Version 2.0.0 — full data (first entry).
+        assert_eq!(versions[0].version, "2.0.0");
+        assert_eq!(versions[0].package_type.as_deref(), Some("library"));
+        assert_eq!(versions[0].license.as_ref().unwrap(), &["MIT"]);
+        assert_eq!(versions[0].require.get("php").unwrap(), ">=8.1");
+        assert_eq!(versions[0].description.as_deref(), Some("A great package"));
+        assert!(versions[0].homepage.is_none());
+
+        // Version 1.2.0 — inherits name, type, require, description from 2.0.0;
+        // license changed to GPL; homepage added.
+        assert_eq!(versions[1].version, "1.2.0");
+        assert_eq!(versions[1].package_type.as_deref(), Some("library"));
+        assert_eq!(versions[1].license.as_ref().unwrap(), &["GPL"]);
+        assert_eq!(versions[1].require.get("php").unwrap(), ">=8.1");
+        assert_eq!(versions[1].description.as_deref(), Some("A great package"));
+        assert_eq!(versions[1].homepage.as_deref(), Some("https://example.org"));
+
+        // Version 1.0.0 — inherits everything from 1.2.0 except homepage
+        // which is __unset (deleted).
+        assert_eq!(versions[2].version, "1.0.0");
+        assert_eq!(versions[2].package_type.as_deref(), Some("library"));
+        assert_eq!(versions[2].license.as_ref().unwrap(), &["GPL"]);
+        assert_eq!(versions[2].require.get("php").unwrap(), ">=8.1");
+        assert_eq!(versions[2].description.as_deref(), Some("A great package"));
+        assert!(versions[2].homepage.is_none());
+    }
+
+    #[test]
+    fn parse_p2_response_not_minified_no_inheritance() {
+        // Without "minified" key, each version stands alone — no inheritance.
+        let json = r#"{
+            "packages": {
+                "foo/bar": [
+                    {
+                        "version": "2.0.0",
+                        "version_normalized": "2.0.0.0",
+                        "license": ["MIT"],
+                        "description": "A great package"
+                    },
+                    {
+                        "version": "1.0.0",
+                        "version_normalized": "1.0.0.0"
+                    }
+                ]
+            }
+        }"#;
+
+        let versions = parse_p2_response(json, "foo/bar").unwrap();
+        assert_eq!(versions.len(), 2);
+
+        assert_eq!(versions[0].license.as_ref().unwrap(), &["MIT"]);
+        assert_eq!(versions[0].description.as_deref(), Some("A great package"));
+
+        // Without minified flag, version 1.0.0 does NOT inherit from 2.0.0.
+        assert!(versions[1].license.is_none());
+        assert!(versions[1].description.is_none());
+    }
+
+    #[test]
+    fn parse_p2_response_minified_single_version() {
+        // Edge case: minified response with only one version.
+        let json = r#"{
+            "packages": {
+                "foo/bar": [
+                    {
+                        "version": "1.0.0",
+                        "version_normalized": "1.0.0.0",
+                        "license": ["MIT"]
+                    }
+                ]
+            },
+            "minified": "composer/2.0"
+        }"#;
+
+        let versions = parse_p2_response(json, "foo/bar").unwrap();
+        assert_eq!(versions.len(), 1);
+        assert_eq!(versions[0].license.as_ref().unwrap(), &["MIT"]);
+    }
+
+    #[test]
+    fn parse_p2_response_minified_empty_versions() {
+        let json = r#"{
+            "packages": {
+                "foo/bar": []
+            },
+            "minified": "composer/2.0"
+        }"#;
+
+        let versions = parse_p2_response(json, "foo/bar").unwrap();
+        assert!(versions.is_empty());
+    }
+
+    #[test]
+    fn parse_p2_response_minified_map_fields_inherited() {
+        // Verify BTreeMap fields (require, replace, etc.) are inherited.
+        let json = r#"{
+            "packages": {
+                "foo/bar": [
+                    {
+                        "version": "2.0.0",
+                        "version_normalized": "2.0.0.0",
+                        "require": {"php": ">=8.1", "ext-json": "*"},
+                        "replace": {"foo/old": "self.version"}
+                    },
+                    {
+                        "version": "1.0.0",
+                        "version_normalized": "1.0.0.0",
+                        "replace": "__unset"
+                    }
+                ]
+            },
+            "minified": "composer/2.0"
+        }"#;
+
+        let versions = parse_p2_response(json, "foo/bar").unwrap();
+        assert_eq!(versions.len(), 2);
+
+        // Version 1.0.0 inherits require from 2.0.0, replace is unset.
+        assert_eq!(versions[1].require.get("php").unwrap(), ">=8.1");
+        assert_eq!(versions[1].require.get("ext-json").unwrap(), "*");
+        assert!(versions[1].replace.is_empty());
     }
 
     // ──────────── SecurityAdvisory parsing tests ─────────────────────────────

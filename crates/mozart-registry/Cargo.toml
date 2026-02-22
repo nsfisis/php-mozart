@@ -6,6 +6,7 @@ edition.workspace = true
 [dependencies]
 mozart-constraint.workspace = true
 mozart-core.workspace = true
+mozart-metadata-minifier.workspace = true
 anyhow.workspace = true
 filetime.workspace = true
 flate2.workspace = true

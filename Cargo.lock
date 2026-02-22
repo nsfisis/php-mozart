@@ -1138,6 +1138,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "mozart-metadata-minifier"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+]
+
+[[package]]
 name = "mozart-registry"
 version = "0.1.0"
 dependencies = [
@@ -1147,6 +1154,7 @@ dependencies = [
  "md5",
  "mozart-constraint",
  "mozart-core",
+ "mozart-metadata-minifier",
  "pubgrub",
  "reqwest",
  "serde",
