@@ -432,6 +432,17 @@ pub async fn execute(
     // Read existing composer.json
     let mut raw = package::read_from_file(&composer_path)?;
 
+    // Backup original composer.json content for revert on failure
+    let original_composer_json = std::fs::read_to_string(&composer_path)?;
+
+    // Backup composer.lock content if it exists
+    let lock_path_for_backup = working_dir.join("composer.lock");
+    let original_composer_lock = if lock_path_for_backup.exists() {
+        Some(std::fs::read_to_string(&lock_path_for_backup)?)
+    } else {
+        None
+    };
+
     // Determine preferred stability from composer.json's minimum-stability
     let preferred_stability = raw
         .minimum_stability
@@ -498,6 +509,44 @@ pub async fn execute(
         additions.push((name, constraint, args.dev));
     }
 
+    // Fix 3: Self-require detection — block requiring the root package itself
+    let root_name = raw.name.to_lowercase();
+    for (name, _, _) in &additions {
+        if name.to_lowercase() == root_name {
+            anyhow::bail!(
+                "Root package '{}' cannot require itself in its composer.json",
+                raw.name
+            );
+        }
+    }
+
+    // Fix 2: Cross-section move detection — remove from opposite section if present
+    for (name, _, is_dev) in &additions {
+        if *is_dev {
+            // Adding to require-dev: check require (prod)
+            if raw.require.contains_key(name.as_str()) {
+                eprintln!(
+                    "{}",
+                    console_format!(
+                        "<warning>{name} is currently present in the require key and will be moved to the require-dev key.</warning>"
+                    )
+                );
+                raw.require.remove(name.as_str());
+            }
+        } else {
+            // Adding to require (prod): check require-dev
+            if raw.require_dev.contains_key(name.as_str()) {
+                eprintln!(
+                    "{}",
+                    console_format!(
+                        "<warning>{name} is currently present in the require-dev key and will be moved to the require key.</warning>"
+                    )
+                );
+                raw.require_dev.remove(name.as_str());
+            }
+        }
+    }
+
     // Apply changes
     for (name, constraint, is_dev) in &additions {
         let section_name = if *is_dev { "require-dev" } else { "require" };
@@ -524,8 +573,17 @@ pub async fn execute(
         target.insert(name.clone(), constraint.clone());
     }
 
-    // Sort packages if requested
-    if args.sort_packages {
+    // Fix 5: sort-packages config integration — also check config.sort-packages from composer.json
+    let config_sort_packages = raw
+        .extra_fields
+        .get("config")
+        .and_then(|c| c.get("sort-packages"))
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    let sort_packages = args.sort_packages || config_sort_packages;
+
+    // Sort packages if requested (via CLI flag or composer.json config)
+    if sort_packages {
         let sorted_require: std::collections::BTreeMap<_, _> = raw.require.clone();
         raw.require = sorted_require;
         let sorted_dev: std::collections::BTreeMap<_, _> = raw.require_dev.clone();
@@ -612,6 +670,19 @@ pub async fn execute(
     let mut resolved = match resolver::resolve(&request).await {
         Ok(packages) => packages,
         Err(e) => {
+            // Fix 1: Revert composer.json (and composer.lock) on failure
+            if !args.dry_run {
+                eprintln!(
+                    "Installation failed, reverting ./composer.json to its original content."
+                );
+                if let Err(revert_err) = std::fs::write(&composer_path, &original_composer_json) {
+                    eprintln!("Warning: Failed to revert composer.json: {revert_err}");
+                }
+                if let Some(ref lock_content) = original_composer_lock
+                    && let Err(revert_err) = std::fs::write(&lock_path_for_backup, lock_content) {
+                        eprintln!("Warning: Failed to revert composer.lock: {revert_err}");
+                    }
+            }
             return Err(mozart_core::exit_code::bail(
                 mozart_core::exit_code::DEPENDENCY_RESOLUTION_FAILED,
                 e.to_string(),
@@ -762,6 +833,21 @@ pub async fn execute(
             console.info(&console_format!("<warning>Warning: Source installs are not yet supported. Falling back to dist.</warning>"));
         }
 
+        // Fix 6: Read autoloader config settings from composer.json as defaults
+        let composer_config = raw.extra_fields.get("config");
+        let config_optimize = composer_config
+            .and_then(|c| c.get("optimize-autoloader"))
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        let config_classmap = composer_config
+            .and_then(|c| c.get("classmap-authoritative"))
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        let config_apcu = composer_config
+            .and_then(|c| c.get("apcu-autoloader"))
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+
         super::install::install_from_lock(
             &new_lock,
             &working_dir,
@@ -773,10 +859,14 @@ pub async fn execute(
                 no_progress: args.no_progress,
                 ignore_platform_reqs: args.ignore_platform_reqs,
                 ignore_platform_req: args.ignore_platform_req.clone(),
-                optimize_autoloader: args.optimize_autoloader,
-                classmap_authoritative: args.classmap_authoritative,
-                apcu_autoloader: false,
-                apcu_autoloader_prefix: None,
+                // Fix 6: merge CLI flags with composer.json config defaults
+                optimize_autoloader: args.optimize_autoloader || config_optimize,
+                classmap_authoritative: args.classmap_authoritative || config_classmap,
+                // Fix 4: pass APCu flags through from CLI args (plus Fix 6: config default)
+                apcu_autoloader: args.apcu_autoloader
+                    || args.apcu_autoloader_prefix.is_some()
+                    || config_apcu,
+                apcu_autoloader_prefix: args.apcu_autoloader_prefix.clone(),
                 download_only: false,
             },
         )
