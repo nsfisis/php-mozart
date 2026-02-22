@@ -25,7 +25,7 @@ pub struct ProhibitsArgs {
 pub async fn execute(
     args: &ProhibitsArgs,
     cli: &super::Cli,
-    _console: &mozart_core::console::Console,
+    console: &mozart_core::console::Console,
 ) -> anyhow::Result<()> {
     let working_dir = match &cli.working_dir {
         Some(dir) => PathBuf::from(dir),
@@ -35,11 +35,12 @@ pub async fn execute(
     let packages = super::dependency::load_packages(&working_dir, args.locked)?;
 
     if packages.is_empty() {
-        println!(
-            "{}",
-            mozart_core::console::info("No packages found. Run `mozart install` first.")
+        console.write_error(
+            "No dependencies installed. Try running mozart install or update, or use --locked.",
         );
-        return Ok(());
+        return Err(mozart_core::exit_code::bail_silent(
+            mozart_core::exit_code::GENERAL_ERROR,
+        ));
     }
 
     // Parse the version constraint the user is asking about

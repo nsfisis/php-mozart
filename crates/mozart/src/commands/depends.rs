@@ -22,7 +22,7 @@ pub struct DependsArgs {
 pub async fn execute(
     args: &DependsArgs,
     cli: &super::Cli,
-    _console: &mozart_core::console::Console,
+    console: &mozart_core::console::Console,
 ) -> anyhow::Result<()> {
     let working_dir = match &cli.working_dir {
         Some(dir) => PathBuf::from(dir),
@@ -32,11 +32,12 @@ pub async fn execute(
     let packages = super::dependency::load_packages(&working_dir, args.locked)?;
 
     if packages.is_empty() {
-        println!(
-            "{}",
-            mozart_core::console::info("No packages found. Run `mozart install` first.")
+        console.write_error(
+            "No dependencies installed. Try running mozart install or update, or use --locked.",
         );
-        return Ok(());
+        return Err(mozart_core::exit_code::bail_silent(
+            mozart_core::exit_code::GENERAL_ERROR,
+        ));
     }
 
     let target = args.package.to_lowercase();
@@ -45,7 +46,7 @@ pub async fn execute(
     let target_known = packages.iter().any(|p| p.name.to_lowercase() == target);
     if !target_known {
         anyhow::bail!(
-            "Package '{}' not found in the dependency graph.",
+            "Could not find package \"{}\" in your project",
             args.package
         );
     }
@@ -53,6 +54,16 @@ pub async fn execute(
     let recursive = args.tree || args.recursive;
     let needles = vec![target];
     let results = super::dependency::get_dependents(&packages, &needles, None, false, recursive)?;
+
+    if results.is_empty() {
+        eprintln!(
+            "There is no installed package depending on \"{}\"",
+            args.package
+        );
+        return Err(mozart_core::exit_code::bail_silent(
+            mozart_core::exit_code::GENERAL_ERROR,
+        ));
+    }
 
     if args.tree {
         super::dependency::print_tree(&results, 0);
