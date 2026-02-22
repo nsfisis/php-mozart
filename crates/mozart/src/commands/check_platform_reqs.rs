@@ -245,24 +245,6 @@ fn check_requirements(
     let mut results: Vec<CheckResult> = Vec::new();
 
     for (name, reqs) in requirements {
-        // lib-* and composer-plugin-api / composer-runtime-api → always missing
-        if name.starts_with("lib-")
-            || name == "composer-plugin-api"
-            || name == "composer-runtime-api"
-        {
-            // Find first constraining requirement for reporting
-            let failed_req = reqs
-                .first()
-                .map(|r| (r.constraint.clone(), r.provider.clone()));
-            results.push(CheckResult {
-                name: name.clone(),
-                version: "n/a".to_string(),
-                status: CheckStatus::Missing,
-                failed_requirement: failed_req,
-            });
-            continue;
-        }
-
         // Look up in detected platform
         match platform.iter().find(|p| p.name == *name) {
             None => {
@@ -823,15 +805,16 @@ mod tests {
 
     #[test]
     fn test_lib_packages_always_missing() {
-        let requirements = make_requirements(&[("lib-pcre", "*", "vendor/pkg")]);
-        let platform = make_platform(&[("php", "8.2.1"), ("ext-pcre", "8.2.1")]);
+        // lib-pcre present in platform with satisfying version → Success
+        let requirements = make_requirements(&[("lib-pcre", ">=10.0", "vendor/pkg")]);
+        let platform = make_platform(&[("php", "8.2.1"), ("lib-pcre", "10.42")]);
 
         let results = check_requirements(&requirements, &platform);
         assert_eq!(results.len(), 1);
         assert_eq!(
             results[0].status,
-            CheckStatus::Missing,
-            "lib-* should always be missing"
+            CheckStatus::Success,
+            "lib-pcre should succeed when platform has it at a satisfying version"
         );
     }
 
@@ -839,22 +822,63 @@ mod tests {
 
     #[test]
     fn test_composer_api_packages_missing() {
+        // composer-plugin-api and composer-runtime-api present in platform → Success
         let requirements = make_requirements(&[
             ("composer-plugin-api", "^2.0", "vendor/plugin"),
             ("composer-runtime-api", "^2.0", "vendor/plugin"),
         ]);
-        let platform = make_platform(&[("php", "8.2.1")]);
+        let platform = make_platform(&[
+            ("php", "8.2.1"),
+            ("composer-plugin-api", "2.6.0"),
+            ("composer-runtime-api", "2.2.2"),
+        ]);
 
         let results = check_requirements(&requirements, &platform);
         assert_eq!(results.len(), 2);
         for r in &results {
             assert_eq!(
                 r.status,
-                CheckStatus::Missing,
-                "{} should always be missing",
+                CheckStatus::Success,
+                "{} should succeed when platform has it at a satisfying version",
                 r.name
             );
         }
+    }
+
+    // ── test_lib_package_constraint_not_satisfied ─────────────────────────────
+
+    #[test]
+    fn test_lib_package_constraint_not_satisfied() {
+        // lib-pcre is in platform but constraint does NOT match → Failed
+        let requirements = make_requirements(&[("lib-pcre", ">=11.0", "vendor/pkg")]);
+        let platform = make_platform(&[("lib-pcre", "10.42")]);
+
+        let results = check_requirements(&requirements, &platform);
+        assert_eq!(results.len(), 1);
+        assert_eq!(
+            results[0].status,
+            CheckStatus::Failed,
+            "lib-pcre should fail when detected version does not satisfy constraint"
+        );
+        assert_eq!(results[0].version, "10.42");
+    }
+
+    // ── test_lib_package_not_in_platform ─────────────────────────────────────
+
+    #[test]
+    fn test_lib_package_not_in_platform() {
+        // lib-pcre is NOT in platform data at all → Missing
+        let requirements = make_requirements(&[("lib-pcre", "*", "vendor/pkg")]);
+        let platform = make_platform(&[("php", "8.2.1")]); // lib-pcre absent
+
+        let results = check_requirements(&requirements, &platform);
+        assert_eq!(results.len(), 1);
+        assert_eq!(
+            results[0].status,
+            CheckStatus::Missing,
+            "lib-pcre should be missing when not in platform data"
+        );
+        assert_eq!(results[0].version, "n/a");
     }
 
     // ── test_determine_exit_code ──────────────────────────────────────────────
