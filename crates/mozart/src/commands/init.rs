@@ -157,7 +157,17 @@ fn build_non_interactive(args: &InitArgs, working_dir: &Path) -> anyhow::Result<
     composer.description = args.description.clone();
     composer.package_type = args.r#type.clone();
     composer.homepage = args.homepage.clone();
-    composer.license = args.license.clone();
+    let resolved_license = args
+        .license
+        .clone()
+        .or_else(|| std::env::var("COMPOSER_DEFAULT_LICENSE").ok());
+    if let Some(ref license) = resolved_license
+        && !validation::validate_license(license) && !license.eq_ignore_ascii_case("proprietary") {
+            bail!(
+                "Invalid license provided: {license}. Only SPDX license identifiers (https://spdx.org/licenses/) or \"proprietary\" are accepted."
+            );
+        }
+    composer.license = resolved_license;
 
     if let Some(ref stability) = args.stability {
         if !validation::validate_stability(stability) {
@@ -299,15 +309,27 @@ async fn build_interactive(
     };
 
     // License
-    let default_license = args.license.clone().unwrap_or_default();
-    let license_input = console.ask(
-        &console_format!("License [<comment>{}</comment>]", &default_license),
-        &default_license,
-    );
-    let license = if license_input.is_empty() {
-        None
-    } else {
-        Some(license_input)
+    let default_license = args
+        .license
+        .clone()
+        .or_else(|| std::env::var("COMPOSER_DEFAULT_LICENSE").ok())
+        .unwrap_or_default();
+    let license = loop {
+        let license_input = console.ask(
+            &console_format!("License [<comment>{}</comment>]", &default_license),
+            &default_license,
+        );
+        if license_input.is_empty() {
+            break None;
+        } else if validation::validate_license(&license_input)
+            || license_input.eq_ignore_ascii_case("proprietary")
+        {
+            break Some(license_input);
+        } else {
+            console.error(&format!(
+                "Invalid license provided: {license_input}. Only SPDX license identifiers (https://spdx.org/licenses/) or \"proprietary\" are accepted."
+            ));
+        }
     };
 
     // Dependencies
