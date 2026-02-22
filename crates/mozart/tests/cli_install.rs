@@ -23,8 +23,8 @@ fn test_install_no_lock_file() {
         .arg("--working-dir")
         .arg(project.path())
         .assert()
-        .failure()
-        .stderr(contains("mozart update"));
+        .success()
+        .stderr(contains("No composer.lock file present"));
 }
 
 #[test]
