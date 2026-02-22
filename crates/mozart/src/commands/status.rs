@@ -38,7 +38,8 @@ struct FileChange {
 
 /// Changes detected for one package.
 struct PackageStatus {
-    name: String,
+    install_path: String,
+    note: Option<String>,
     changes: Vec<FileChange>,
 }
 
@@ -58,7 +59,7 @@ pub async fn execute(
     let installed = mozart_registry::installed::InstalledPackages::read(&vendor_dir)?;
 
     if installed.packages.is_empty() {
-        println!("No packages installed.");
+        eprintln!("No packages installed.");
         return Ok(());
     }
 
@@ -90,6 +91,17 @@ pub async fn execute(
                     install_path.display()
                 );
             }
+            continue;
+        }
+
+        // Check if the install path is a symlink — skip archive comparison
+        if install_path.is_symlink() {
+            let note = format!("{} is a symbolic link.", install_path.display());
+            modified_packages.push(PackageStatus {
+                install_path: install_path.to_string_lossy().into_owned(),
+                note: Some(note),
+                changes: Vec::new(),
+            });
             continue;
         }
 
@@ -148,40 +160,50 @@ pub async fn execute(
 
         if !changes.is_empty() {
             modified_packages.push(PackageStatus {
-                name: pkg.name.clone(),
+                install_path: install_path.to_string_lossy().into_owned(),
+                note: None,
                 changes,
             });
         }
     }
 
     if modified_packages.is_empty() {
-        println!("No local changes");
+        eprintln!("No local changes");
         return Ok(());
     }
 
-    println!("You have changes in the following dependencies:\n");
+    eprintln!("You have changes in the following dependencies:\n");
 
     for pkg_status in &modified_packages {
-        // Show package name with indicator
-        println!("vendor/{} (M)", pkg_status.name);
+        if let Some(ref note) = pkg_status.note {
+            println!("{}", note);
+        } else {
+            // Show full install path, matching Composer's format
+            println!("{}", pkg_status.install_path);
 
-        if show_files {
-            let mut sorted_changes: Vec<&FileChange> = pkg_status.changes.iter().collect();
-            sorted_changes.sort_by_key(|c| c.path.as_str());
+            if show_files {
+                let mut sorted_changes: Vec<&FileChange> = pkg_status.changes.iter().collect();
+                sorted_changes.sort_by_key(|c| c.path.as_str());
 
-            for change in sorted_changes {
-                let prefix = match change.kind {
-                    ChangeKind::Modified => 'M',
-                    ChangeKind::Added => '+',
-                    ChangeKind::Removed => '-',
-                };
-                println!("    {} {}", prefix, change.path);
+                for change in sorted_changes {
+                    let prefix = match change.kind {
+                        ChangeKind::Modified => 'M',
+                        ChangeKind::Added => '+',
+                        ChangeKind::Removed => '-',
+                    };
+                    println!("    {} {}", prefix, change.path);
+                }
             }
         }
     }
 
+    // Hint about --verbose if not already showing files and there are modified packages
+    if !show_files {
+        eprintln!("Use --verbose (-v) to see a list of files");
+    }
+
     // Exit with code 1 if modifications found
-    std::process::exit(1);
+    Err(mozart_core::exit_code::bail_silent(1))
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
