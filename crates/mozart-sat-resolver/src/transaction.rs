@@ -257,9 +257,6 @@ impl<'a> Transaction<'a> {
 pub struct LockTransaction<'a> {
     /// The base transaction.
     transaction: Transaction<'a>,
-    /// Package IDs that cannot be updated (platform, root, fixed repos).
-    #[allow(dead_code)]
-    unlockable_ids: HashSet<PackageId>,
     /// All result package IDs.
     all_result_ids: Vec<PackageId>,
     /// Non-dev result package IDs.
@@ -294,7 +291,6 @@ impl<'a> LockTransaction<'a> {
 
         LockTransaction {
             transaction,
-            unlockable_ids,
             all_result_ids,
             non_dev_ids,
             dev_ids: Vec::new(),

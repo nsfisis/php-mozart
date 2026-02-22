@@ -44,14 +44,12 @@ struct PackageEntry {
 /// An advisory that matched an installed package version.
 struct MatchedAdvisory {
     advisory: SecurityAdvisory,
-    #[allow(dead_code)]
     installed_version: String,
 }
 
 /// An abandoned package found during audit.
 struct AbandonedPackage {
     name: String,
-    #[allow(dead_code)]
     version: String,
     replacement: Option<String>,
 }
@@ -416,6 +414,7 @@ fn render_table(result: &AuditResult) {
                 let label_width = 17usize;
                 let rows: Vec<(&str, String)> = vec![
                     ("Package", adv.package_name.clone()),
+                    ("Version", matched.installed_version.clone()),
                     ("Severity", adv.severity.clone().unwrap_or_default()),
                     ("Advisory ID", adv.advisory_id.clone()),
                     (
@@ -458,7 +457,14 @@ fn render_table(result: &AuditResult) {
         println!("{}", mozart_core::console::highlight(&header));
         println!();
 
-        let label_width = 20usize;
+        let name_width = 20usize;
+        let ver_width = result
+            .abandoned
+            .iter()
+            .map(|a| a.version.len())
+            .max()
+            .unwrap_or(0)
+            .max("Version".len());
         let repl_width = result
             .abandoned
             .iter()
@@ -473,17 +479,21 @@ fn render_table(result: &AuditResult) {
             .max("Suggested Replacement".len());
 
         println!(
-            "| {:<lw$} | {:<rw$} |",
+            "| {:<nw$} | {:<vw$} | {:<rw$} |",
             "Abandoned Package",
+            "Version",
             "Suggested Replacement",
-            lw = label_width,
+            nw = name_width,
+            vw = ver_width,
             rw = repl_width
         );
         println!(
-            "+-{:-<lw$}-+-{:-<rw$}-+",
+            "+-{:-<nw$}-+-{:-<vw$}-+-{:-<rw$}-+",
             "",
             "",
-            lw = label_width,
+            "",
+            nw = name_width,
+            vw = ver_width,
             rw = repl_width
         );
         for pkg in &result.abandoned {
@@ -492,10 +502,12 @@ fn render_table(result: &AuditResult) {
                 .as_deref()
                 .unwrap_or("No replacement suggested");
             println!(
-                "| {:<lw$} | {:<rw$} |",
+                "| {:<nw$} | {:<vw$} | {:<rw$} |",
                 pkg.name,
+                pkg.version,
                 replacement,
-                lw = label_width,
+                nw = name_width,
+                vw = ver_width,
                 rw = repl_width
             );
         }
@@ -525,6 +537,7 @@ fn render_plain(result: &AuditResult) {
             for matched in advisories {
                 let adv = &matched.advisory;
                 println!("Package: {}", adv.package_name);
+                println!("Version: {}", matched.installed_version);
                 println!("Severity: {}", adv.severity.as_deref().unwrap_or(""));
                 println!("Advisory ID: {}", adv.advisory_id);
                 println!("CVE: {}", adv.cve.as_deref().unwrap_or("NO CVE"));
@@ -539,8 +552,8 @@ fn render_plain(result: &AuditResult) {
 
     for pkg in &result.abandoned {
         match &pkg.replacement {
-            Some(repl) => println!("{} is abandoned. Use {} instead.", pkg.name, repl),
-            None => println!("{} is abandoned. No replacement was suggested.", pkg.name),
+            Some(repl) => println!("{} ({}) is abandoned. Use {} instead.", pkg.name, pkg.version, repl),
+            None => println!("{} ({}) is abandoned. No replacement was suggested.", pkg.name, pkg.version),
         }
     }
 }
@@ -556,14 +569,18 @@ fn render_json(result: &AuditResult) -> anyhow::Result<()> {
         advisories_map.insert(pkg_name.clone(), serde_json::Value::Array(arr));
     }
 
-    // Build abandoned map: package_name -> replacement_or_null
+    // Build abandoned map: package_name -> { version, replacement }
     let mut abandoned_map: serde_json::Map<String, serde_json::Value> = serde_json::Map::new();
     for pkg in &result.abandoned {
         let repl = match &pkg.replacement {
             Some(s) => serde_json::Value::String(s.clone()),
             None => serde_json::Value::Null,
         };
-        abandoned_map.insert(pkg.name.clone(), repl);
+        let entry = serde_json::json!({
+            "version": pkg.version,
+            "replacement": repl,
+        });
+        abandoned_map.insert(pkg.name.clone(), entry);
     }
 
     let output = serde_json::json!({
@@ -593,8 +610,8 @@ fn render_summary(result: &AuditResult) {
 
     for pkg in &result.abandoned {
         match &pkg.replacement {
-            Some(repl) => println!("{} is abandoned. Use {} instead.", pkg.name, repl),
-            None => println!("{} is abandoned. No replacement was suggested.", pkg.name),
+            Some(repl) => println!("{} ({}) is abandoned. Use {} instead.", pkg.name, pkg.version, repl),
+            None => println!("{} ({}) is abandoned. No replacement was suggested.", pkg.name, pkg.version),
         }
     }
 }
