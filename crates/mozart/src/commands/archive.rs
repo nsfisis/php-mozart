@@ -10,7 +10,7 @@ pub struct ArchiveArgs {
     pub version: Option<String>,
 
     /// Format of the resulting archive (tar, tar.gz, tar.bz2, zip)
-    #[arg(short, long)]
+    #[arg(short, long, value_parser = ["tar", "tar.gz", "tar.bz2", "zip"])]
     pub format: Option<String>,
 
     /// Write the archive to this directory
@@ -148,7 +148,8 @@ pub async fn execute(
     // 5. Determine source directory and package metadata
     let meta: PackageMeta = if let Some(ref pkg_name) = args.package {
         // Remote package mode
-        resolve_remote_package(pkg_name, args.version.as_deref()).await?
+        console.info("Searching for the specified package.");
+        resolve_remote_package(pkg_name, args.version.as_deref(), console).await?
     } else {
         // Root package mode
         if !composer_json_path.exists() {
@@ -232,7 +233,8 @@ pub async fn execute(
     } else {
         target_path.display().to_string()
     };
-    println!("Created: {}", display_path);
+    eprint!("Created: ");
+    println!("{}", display_path);
 
     Ok(())
 }
@@ -242,9 +244,25 @@ pub async fn execute(
 async fn resolve_remote_package(
     package_name: &str,
     version_constraint: Option<&str>,
+    console: &mozart_core::console::Console,
 ) -> anyhow::Result<PackageMeta> {
     use mozart_core::package::Stability;
     use mozart_registry::version::find_best_candidate;
+
+    // Parse @stability suffix from version constraint (e.g. "^1.0@beta" → "^1.0", Stability::Beta)
+    let (constraint_stripped, stability) = if let Some(raw) = version_constraint {
+        if let Some(at_pos) = raw.find('@') {
+            let ver_part = raw[..at_pos].trim();
+            let stab_part = raw[at_pos + 1..].trim();
+            let stab = Stability::parse(stab_part);
+            (Some(ver_part.to_string()), stab)
+        } else {
+            (Some(raw.to_string()), Stability::Stable)
+        }
+    } else {
+        (None, Stability::Stable)
+    };
+    let version_constraint = constraint_stripped.as_deref();
 
     // Fetch versions from Packagist
     let versions = mozart_registry::packagist::fetch_package_versions(package_name, None).await?;
@@ -254,22 +272,41 @@ async fn resolve_remote_package(
 
     // Apply version constraint filtering if given
     let candidate = if let Some(constraint) = version_constraint {
-        versions
+        let matches: Vec<_> = versions
             .iter()
-            .find(|v| v.version == constraint || v.version_normalized.starts_with(constraint))
-            .ok_or_else(|| {
-                anyhow::anyhow!(
-                    "Could not find version \"{}\" for package \"{}\"",
-                    constraint,
-                    package_name
-                )
-            })?
+            .filter(|v| v.version == constraint || v.version_normalized.starts_with(constraint))
+            .collect();
+        if matches.is_empty() {
+            anyhow::bail!(
+                "Could not find version \"{}\" for package \"{}\"",
+                constraint,
+                package_name
+            );
+        }
+        let best = matches[0];
+        if matches.len() > 1 {
+            console.info(&format!(
+                "Found multiple matches, selected {} {}.",
+                package_name, best.version
+            ));
+        } else {
+            console.info(&format!(
+                "Found an exact match {} {}.",
+                package_name, best.version
+            ));
+        }
+        best
     } else {
-        find_best_candidate(&versions, Stability::Stable)
+        let best = find_best_candidate(&versions, stability)
             .or_else(|| find_best_candidate(&versions, Stability::Dev))
             .ok_or_else(|| {
                 anyhow::anyhow!("No suitable version found for package \"{}\"", package_name)
-            })?
+            })?;
+        console.info(&format!(
+            "Found an exact match {} {}.",
+            package_name, best.version
+        ));
+        best
     };
 
     let dist = candidate.dist.as_ref().ok_or_else(|| {
