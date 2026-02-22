@@ -1019,6 +1019,7 @@ mod tests {
 
         // Resolve monolog/monolog ^3.0
         let resolve_request = ResolveRequest {
+            root_name: String::new(),
             require: vec![("monolog/monolog".to_string(), "^3.0".to_string())],
             require_dev: vec![],
             include_dev: false,

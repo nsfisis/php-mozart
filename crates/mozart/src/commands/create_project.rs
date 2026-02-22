@@ -408,6 +408,7 @@ pub async fn execute(
         .unwrap_or(false);
 
     let request = ResolveRequest {
+        root_name: raw.name.clone(),
         require,
         require_dev,
         include_dev: dev_mode,

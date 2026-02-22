@@ -583,6 +583,7 @@ pub async fn execute(
     let prefer_stable = args.prefer_stable || composer_prefer_stable;
 
     let request = ResolveRequest {
+        root_name: raw.name.clone(),
         require,
         require_dev,
         include_dev: dev_mode,
@@ -924,6 +925,7 @@ mod tests {
         let composer_json: RawPackageData = serde_json::from_str(composer_json_content).unwrap();
 
         let request = ResolveRequest {
+            root_name: String::new(),
             require: vec![("psr/log".to_string(), "^3.0".to_string())],
             require_dev: vec![],
             include_dev: false,
@@ -975,6 +977,7 @@ mod tests {
         let raw: RawPackageData = serde_json::from_str(content).unwrap();
 
         let request = ResolveRequest {
+            root_name: String::new(),
             require: vec![("psr/log".to_string(), "^3.0".to_string())],
             require_dev: vec![],
             include_dev: false,

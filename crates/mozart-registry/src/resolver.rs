@@ -933,6 +933,9 @@ impl DependencyProvider for MozartProvider {
 
 /// Input to the resolver.
 pub struct ResolveRequest {
+    /// Root package name from composer.json "name" field (e.g. "laravel/laravel").
+    /// Used in error messages. Falls back to `__root__` if empty.
+    pub root_name: String,
     /// Dependencies from composer.json "require" section.
     pub require: Vec<(String, String)>,
     /// Dependencies from composer.json "require-dev" section.
@@ -1026,6 +1029,7 @@ pub async fn resolve(request: &ResolveRequest) -> Result<Vec<ResolvedPackage>, R
     let prefer_lowest = request.prefer_lowest;
     let ignore_platform_reqs = request.ignore_platform_reqs;
     let ignore_platform_req_list = request.ignore_platform_req_list.clone();
+    let root_name = request.root_name.clone();
 
     // 2. Run pubgrub on a blocking thread (it is CPU-bound + uses block_on for I/O)
     tokio::task::spawn_blocking(move || {
@@ -1078,6 +1082,14 @@ pub async fn resolve(request: &ResolveRequest) -> Result<Vec<ResolvedPackage>, R
             Err(PubGrubError::NoSolution(mut derivation_tree)) => {
                 derivation_tree.collapse_no_versions();
                 let report = DefaultStringReporter::report(&derivation_tree);
+                // Replace the internal __root__ identifier with the actual
+                // package name so that error messages are user-friendly
+                // (matching Composer behaviour).
+                let report = if !root_name.is_empty() {
+                    report.replace(PackageName::ROOT, &root_name)
+                } else {
+                    report
+                };
                 Err(ResolveError::NoSolution(report))
             }
             Err(PubGrubError::ErrorRetrievingDependencies {
@@ -1920,6 +1932,7 @@ mod tests {
     #[ignore]
     async fn test_resolve_monolog_e2e() {
         let request = ResolveRequest {
+            root_name: String::new(),
             require: vec![("monolog/monolog".to_string(), "^3.0".to_string())],
             require_dev: vec![],
             include_dev: false,
