@@ -1,7 +1,7 @@
 use clap::Parser;
 use mozart::commands;
 use mozart_core::exit_code;
-use tracing_subscriber::{fmt, prelude::*, EnvFilter};
+use tracing_subscriber::{EnvFilter, fmt, prelude::*};
 
 fn init_tracing(profile: bool, verbose: u8, quiet: bool) {
     // MOZART_LOG environment variable takes highest priority.
@@ -37,10 +37,11 @@ fn init_tracing(profile: bool, verbose: u8, quiet: bool) {
     // Otherwise: no subscriber installed → tracing macros are effectively zero-cost no-ops.
 }
 
-fn main() {
+#[tokio::main]
+async fn main() {
     let cli = commands::Cli::parse();
     init_tracing(cli.profile, cli.verbose, cli.quiet);
-    match commands::execute(&cli) {
+    match commands::execute(&cli).await {
         Ok(()) => {}
         Err(e) => {
             // Check if this is a structured MozartError with a specific exit code.

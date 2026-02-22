@@ -96,7 +96,7 @@ pub struct RemoveArgs {
     pub apcu_autoloader_prefix: Option<String>,
 }
 
-pub fn execute(
+pub async fn execute(
     args: &RemoveArgs,
     cli: &super::Cli,
     console: &mozart_core::console::Console,
@@ -285,7 +285,7 @@ pub fn execute(
     console.info("Resolving dependencies...");
 
     // Run resolver
-    let mut resolved = resolver::resolve(&request).map_err(|e| {
+    let mut resolved = resolver::resolve(&request).await.map_err(|e| {
         mozart_core::exit_code::bail(
             mozart_core::exit_code::DEPENDENCY_RESOLUTION_FAILED,
             e.to_string(),
@@ -370,7 +370,8 @@ pub fn execute(
         composer_json: raw.clone(),
         include_dev: dev_mode,
         repo_cache: None,
-    })?;
+    })
+    .await?;
 
     // Compute and print change report
     let changes = super::update::compute_update_changes(old_lock.as_ref(), &new_lock, dev_mode);
@@ -468,7 +469,8 @@ pub fn execute(
                 apcu_autoloader: false,
                 apcu_autoloader_prefix: None,
             },
-        )?;
+        )
+        .await?;
     }
 
     Ok(())
@@ -681,9 +683,9 @@ mod tests {
 
     // ──────────── Integration tests (network, #[ignore]) ────────────
 
-    #[test]
+    #[tokio::test]
     #[ignore]
-    fn test_remove_full_e2e() {
+    async fn test_remove_full_e2e() {
         use mozart_registry::lockfile::{LockFileGenerationRequest, generate_lock_file};
         use mozart_registry::resolver::{ResolveRequest, resolve};
         use std::collections::HashMap;
@@ -714,7 +716,9 @@ mod tests {
             ignore_platform_req_list: vec![],
             repo_cache: None,
         };
-        let resolved = resolve(&request).expect("initial resolution should succeed");
+        let resolved = resolve(&request)
+            .await
+            .expect("initial resolution should succeed");
         let initial_lock = generate_lock_file(&LockFileGenerationRequest {
             resolved_packages: resolved,
             composer_json_content: content.to_string(),
@@ -722,6 +726,7 @@ mod tests {
             include_dev: false,
             repo_cache: None,
         })
+        .await
         .expect("initial lock file generation should succeed");
         initial_lock
             .write_to_file(&lock_path)
@@ -745,7 +750,9 @@ mod tests {
             ignore_platform_req_list: vec![],
             repo_cache: None,
         };
-        let resolved2 = resolve(&request2).expect("post-remove resolution should succeed");
+        let resolved2 = resolve(&request2)
+            .await
+            .expect("post-remove resolution should succeed");
 
         let composer_json_content2 = std::fs::read_to_string(&composer_path).unwrap();
         let new_lock = generate_lock_file(&LockFileGenerationRequest {
@@ -755,6 +762,7 @@ mod tests {
             include_dev: false,
             repo_cache: None,
         })
+        .await
         .expect("post-remove lock file generation should succeed");
 
         // psr/log should no longer be in the new lock

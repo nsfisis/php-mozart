@@ -630,7 +630,7 @@ pub fn apply_minimal_changes(
 // Main execute function
 // ─────────────────────────────────────────────────────────────────────────────
 
-pub fn execute(
+pub async fn execute(
     args: &UpdateArgs,
     cli: &super::Cli,
     console: &mozart_core::console::Console,
@@ -743,7 +743,7 @@ pub fn execute(
     }
     console.info("Resolving dependencies...");
 
-    let mut resolved = match resolver::resolve(&request) {
+    let mut resolved = match resolver::resolve(&request).await {
         Ok(packages) => packages,
         Err(e) => {
             return Err(mozart_core::exit_code::bail(
@@ -859,7 +859,8 @@ pub fn execute(
         composer_json: composer_json.clone(),
         include_dev: dev_mode,
         repo_cache: None,
-    })?;
+    })
+    .await?;
 
     // Step 10: Compute and print change report
     let changes = compute_update_changes(old_lock.as_ref(), &new_lock, dev_mode);
@@ -968,7 +969,8 @@ pub fn execute(
                 apcu_autoloader: false,
                 apcu_autoloader_prefix: None,
             },
-        )?;
+        )
+        .await?;
     }
 
     Ok(())
@@ -1657,9 +1659,9 @@ mod tests {
 
     // ──────────── Integration test (network, #[ignore]) ────────────
 
-    #[test]
+    #[tokio::test]
     #[ignore]
-    fn test_update_full_e2e() {
+    async fn test_update_full_e2e() {
         use mozart_core::package::RawPackageData;
         use mozart_registry::lockfile::{LockFileGenerationRequest, generate_lock_file};
         use mozart_registry::resolver::{ResolveRequest, resolve};
@@ -1682,7 +1684,7 @@ mod tests {
             repo_cache: None,
         };
 
-        let resolved = resolve(&request).expect("Resolution should succeed");
+        let resolved = resolve(&request).await.expect("Resolution should succeed");
         assert!(!resolved.is_empty());
         assert!(resolved.iter().any(|p| p.name == "monolog/monolog"));
 
@@ -1693,6 +1695,7 @@ mod tests {
             include_dev: false,
             repo_cache: None,
         })
+        .await
         .expect("Lock file generation should succeed");
 
         assert!(!lock.content_hash.is_empty());

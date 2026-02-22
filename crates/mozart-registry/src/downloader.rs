@@ -79,7 +79,7 @@ impl DownloadProgress {
 /// the `Content-Length` response header.
 /// If `files_cache` is provided, the downloaded bytes are cached by URL; cache hits skip
 /// the network request entirely.
-pub fn download_dist(
+pub async fn download_dist(
     url: &str,
     expected_shasum: Option<&str>,
     progress: Option<&mut DownloadProgress>,
@@ -108,7 +108,7 @@ pub fn download_dist(
         }
     }
 
-    let response = reqwest::blocking::get(url)?;
+    let response = reqwest::get(url).await?;
 
     if !response.status().is_success() {
         anyhow::bail!(
@@ -123,20 +123,15 @@ pub fn download_dist(
         if let Some(content_length) = response.content_length() {
             pb.set_total(content_length);
         }
-        let mut reader = response;
         let mut buf = Vec::new();
-        let mut chunk = [0u8; 8192];
-        loop {
-            let n = reader.read(&mut chunk)?;
-            if n == 0 {
-                break;
-            }
-            buf.extend_from_slice(&chunk[..n]);
-            pb.inc(n as u64);
+        let mut stream = response;
+        while let Some(chunk) = stream.chunk().await? {
+            buf.extend_from_slice(&chunk);
+            pb.inc(chunk.len() as u64);
         }
         buf
     } else {
-        response.bytes()?.to_vec()
+        response.bytes().await?.to_vec()
     };
 
     // Verify SHA-1 checksum if provided
@@ -325,7 +320,7 @@ pub fn extract_tar_gz(data: &[u8], target_dir: &Path) -> anyhow::Result<()> {
 /// - `package_name`: e.g. `"monolog/monolog"`
 /// - `progress`: optional mutable progress tracker to update during download
 /// - `files_cache`: optional files cache; if provided, the archive bytes are cached by URL
-pub fn install_package(
+pub async fn install_package(
     dist_url: &str,
     dist_type: &str,
     dist_shasum: Option<&str>,
@@ -342,7 +337,7 @@ pub fn install_package(
     }
     fs::create_dir_all(&target)?;
 
-    let bytes = download_dist(dist_url, dist_shasum, progress, files_cache)?;
+    let bytes = download_dist(dist_url, dist_shasum, progress, files_cache).await?;
 
     match dist_type {
         "zip" => extract_zip(&bytes, &target)?,

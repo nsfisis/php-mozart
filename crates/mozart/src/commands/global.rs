@@ -13,7 +13,7 @@ pub struct GlobalArgs {
 
 // ─── Main entry point ────────────────────────────────────────────────────────
 
-pub fn execute(
+pub async fn execute(
     args: &GlobalArgs,
     cli: &super::Cli,
     console: &mozart_core::console::Console,
@@ -40,7 +40,7 @@ pub fn execute(
     argv.extend(args.args.iter().cloned());
 
     let new_cli = super::Cli::try_parse_from(&argv)?;
-    crate::commands::execute(&new_cli)
+    Box::pin(crate::commands::execute(&new_cli)).await
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────

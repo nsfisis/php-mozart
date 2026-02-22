@@ -128,7 +128,7 @@ pub fn parse_p2_response(json: &str, package_name: &str) -> anyhow::Result<Vec<P
 /// If `repo_cache` is provided, the JSON response is cached on disk under the
 /// key `"provider-{vendor}~{package}.json"`. Subsequent calls for the same
 /// package are served from cache without a network request.
-pub fn fetch_package_versions(
+pub async fn fetch_package_versions(
     package_name: &str,
     repo_cache: Option<&Cache>,
 ) -> anyhow::Result<Vec<PackagistVersion>> {
@@ -144,7 +144,7 @@ pub fn fetch_package_versions(
 
     // Cache miss — fetch from Packagist
     let url = format!("https://repo.packagist.org/p2/{package_name}.json");
-    let response = reqwest::blocking::get(&url)?;
+    let response = reqwest::get(&url).await?;
 
     if !response.status().is_success() {
         anyhow::bail!(
@@ -153,7 +153,7 @@ pub fn fetch_package_versions(
         );
     }
 
-    let body = response.text()?;
+    let body = response.text().await?;
 
     // Write to cache
     if let Some(cache) = repo_cache {
@@ -209,11 +209,11 @@ fn url_encode(s: &str) -> String {
 ///
 /// Fetches up to `SEARCH_MAX_PAGES` pages of results and returns the full list.
 /// An optional `package_type` filter can narrow results (e.g. `"library"`).
-pub fn search_packages(
+pub async fn search_packages(
     query: &str,
     package_type: Option<&str>,
 ) -> anyhow::Result<(Vec<SearchResult>, u64)> {
-    let client = reqwest::blocking::Client::builder()
+    let client = reqwest::Client::builder()
         .user_agent("mozart/0.1.0")
         .build()?;
 
@@ -224,11 +224,11 @@ pub fn search_packages(
 
     loop {
         let response: SearchResponse = if let Some(ref url) = next_url {
-            let resp = client.get(url).send()?;
+            let resp = client.get(url).send().await?;
             if !resp.status().is_success() {
                 anyhow::bail!("Packagist search request failed (HTTP {})", resp.status());
             }
-            resp.json()?
+            resp.json().await?
         } else {
             let encoded_query = url_encode(query);
             let mut url = format!("https://packagist.org/search.json?q={encoded_query}");
@@ -237,11 +237,11 @@ pub fn search_packages(
                 url.push_str(&url_encode(t));
             }
 
-            let resp = client.get(&url).send()?;
+            let resp = client.get(&url).send().await?;
             if !resp.status().is_success() {
                 anyhow::bail!("Packagist search request failed (HTTP {})", resp.status());
             }
-            resp.json()?
+            resp.json().await?
         };
 
         if page == 1 {
@@ -321,10 +321,10 @@ pub struct SecurityAdvisoriesResponse {
 ///
 /// If the package list is very large (500+), requests are batched in chunks of
 /// 500 names per request and the results are merged.
-pub fn fetch_security_advisories(
+pub async fn fetch_security_advisories(
     package_names: &[&str],
 ) -> anyhow::Result<BTreeMap<String, Vec<SecurityAdvisory>>> {
-    let client = reqwest::blocking::Client::builder()
+    let client = reqwest::Client::builder()
         .user_agent("mozart/0.1.0")
         .build()?;
 
@@ -343,7 +343,8 @@ pub fn fetch_security_advisories(
             .post("https://packagist.org/api/security-advisories/")
             .header("Content-Type", "application/x-www-form-urlencoded")
             .body(body)
-            .send()?;
+            .send()
+            .await?;
 
         if !response.status().is_success() {
             anyhow::bail!(
@@ -352,7 +353,7 @@ pub fn fetch_security_advisories(
             );
         }
 
-        let parsed: SecurityAdvisoriesResponse = response.json()?;
+        let parsed: SecurityAdvisoriesResponse = response.json().await?;
 
         for (pkg_name, advisories) in parsed.advisories {
             if !advisories.is_empty() {

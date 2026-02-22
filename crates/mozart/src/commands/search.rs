@@ -59,7 +59,7 @@ fn passes_only_vendor(result: &SearchResult, query: &str) -> bool {
     vendor.eq_ignore_ascii_case(query)
 }
 
-pub fn execute(
+pub async fn execute(
     args: &SearchArgs,
     _cli: &super::Cli,
     _console: &mozart_core::console::Console,
@@ -67,7 +67,7 @@ pub fn execute(
     let query = args.tokens.join(" ");
 
     let (all_results, total) =
-        mozart_registry::packagist::search_packages(&query, args.r#type.as_deref())?;
+        mozart_registry::packagist::search_packages(&query, args.r#type.as_deref()).await?;
 
     // Apply client-side filters
     let mut results: Vec<&SearchResult> = all_results.iter().collect();

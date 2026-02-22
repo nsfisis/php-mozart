@@ -82,7 +82,7 @@ impl Drop for PackageMeta {
 
 // ─── Main entry point ─────────────────────────────────────────────────────────
 
-pub fn execute(
+pub async fn execute(
     args: &ArchiveArgs,
     cli: &super::Cli,
     console: &mozart_core::console::Console,
@@ -148,7 +148,7 @@ pub fn execute(
     // 5. Determine source directory and package metadata
     let meta: PackageMeta = if let Some(ref pkg_name) = args.package {
         // Remote package mode
-        resolve_remote_package(pkg_name, args.version.as_deref())?
+        resolve_remote_package(pkg_name, args.version.as_deref()).await?
     } else {
         // Root package mode
         if !composer_json_path.exists() {
@@ -239,7 +239,7 @@ pub fn execute(
 
 // ─── Remote package resolution ────────────────────────────────────────────────
 
-fn resolve_remote_package(
+async fn resolve_remote_package(
     package_name: &str,
     version_constraint: Option<&str>,
 ) -> anyhow::Result<PackageMeta> {
@@ -247,7 +247,7 @@ fn resolve_remote_package(
     use mozart_registry::version::find_best_candidate;
 
     // Fetch versions from Packagist
-    let versions = mozart_registry::packagist::fetch_package_versions(package_name, None)?;
+    let versions = mozart_registry::packagist::fetch_package_versions(package_name, None).await?;
     if versions.is_empty() {
         anyhow::bail!("No versions found for package \"{}\"", package_name);
     }
@@ -293,7 +293,8 @@ fn resolve_remote_package(
     std::fs::create_dir_all(&temp_dir)?;
 
     let bytes =
-        mozart_registry::downloader::download_dist(&dist.url, dist.shasum.as_deref(), None, None)?;
+        mozart_registry::downloader::download_dist(&dist.url, dist.shasum.as_deref(), None, None)
+            .await?;
 
     match dist.dist_type.as_str() {
         "zip" => mozart_registry::downloader::extract_zip(&bytes, &temp_dir)?,

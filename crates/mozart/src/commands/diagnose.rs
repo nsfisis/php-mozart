@@ -76,12 +76,12 @@ fn check_version() -> CheckResult {
 /// Check 2 & 3: HTTP/HTTPS connectivity to Packagist.
 ///
 /// Returns Ok if reachable, Fail if not, Skip if network is disabled.
-fn check_http_connectivity(url: &str) -> CheckResult {
+async fn check_http_connectivity(url: &str) -> CheckResult {
     if std::env::var("COMPOSER_DISABLE_NETWORK").is_ok() {
         return CheckResult::Skip("COMPOSER_DISABLE_NETWORK is set".to_string());
     }
 
-    let client = match reqwest::blocking::Client::builder()
+    let client = match reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(10))
         .user_agent(concat!("mozart/", env!("CARGO_PKG_VERSION")))
         .build()
@@ -90,7 +90,7 @@ fn check_http_connectivity(url: &str) -> CheckResult {
         Err(e) => return CheckResult::Fail(format!("Could not build HTTP client: {e}")),
     };
 
-    match client.get(url).send() {
+    match client.get(url).send().await {
         Ok(resp) => {
             let status = resp.status();
             if status.is_success() || status.is_redirection() {
@@ -104,12 +104,12 @@ fn check_http_connectivity(url: &str) -> CheckResult {
 }
 
 /// Check 4: GitHub API connectivity.
-fn check_github_api() -> CheckResult {
+async fn check_github_api() -> CheckResult {
     if std::env::var("COMPOSER_DISABLE_NETWORK").is_ok() {
         return CheckResult::Skip("COMPOSER_DISABLE_NETWORK is set".to_string());
     }
 
-    let client = match reqwest::blocking::Client::builder()
+    let client = match reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(10))
         .user_agent(concat!("mozart/", env!("CARGO_PKG_VERSION")))
         .build()
@@ -119,7 +119,7 @@ fn check_github_api() -> CheckResult {
     };
 
     let url = "https://api.github.com/";
-    match client.get(url).send() {
+    match client.get(url).send().await {
         Ok(resp) => {
             let status = resp.status();
             if status.is_success() || status.is_redirection() {
@@ -371,7 +371,7 @@ fn check_cache_dir(cache_dir: &Path) -> CheckResult {
 
 // ─── Main execute function ─────────────────────────────────────────────────────
 
-pub fn execute(
+pub async fn execute(
     _args: &DiagnoseArgs,
     cli: &super::Cli,
     _console: &mozart_core::console::Console,
@@ -402,7 +402,7 @@ pub fn execute(
     println!();
 
     // 2. HTTPS connectivity to Packagist
-    let https_result = check_http_connectivity("https://repo.packagist.org/packages.json");
+    let https_result = check_http_connectivity("https://repo.packagist.org/packages.json").await;
     print_check(
         "https connectivity to packagist",
         &https_result,
@@ -410,7 +410,7 @@ pub fn execute(
     );
 
     // 3. HTTP connectivity to Packagist
-    let http_result = check_http_connectivity("http://repo.packagist.org/packages.json");
+    let http_result = check_http_connectivity("http://repo.packagist.org/packages.json").await;
     print_check(
         "http connectivity to packagist",
         &http_result,
@@ -418,7 +418,7 @@ pub fn execute(
     );
 
     // 4. GitHub API connectivity
-    let github_result = check_github_api();
+    let github_result = check_github_api().await;
     print_check("github.com connectivity", &github_result, &mut exit_code);
 
     // 5. HTTP proxy config
@@ -723,30 +723,30 @@ mod tests {
 
     // ── network tests (ignored by default) ───────────────────────────────────
 
-    #[test]
+    #[tokio::test]
     #[ignore]
-    fn test_check_https_packagist_connectivity() {
-        let result = check_http_connectivity("https://repo.packagist.org/packages.json");
+    async fn test_check_https_packagist_connectivity() {
+        let result = check_http_connectivity("https://repo.packagist.org/packages.json").await;
         assert!(
             matches!(result, CheckResult::Ok(_)),
             "expected Ok for HTTPS Packagist connectivity"
         );
     }
 
-    #[test]
+    #[tokio::test]
     #[ignore]
-    fn test_check_http_packagist_connectivity() {
-        let result = check_http_connectivity("http://repo.packagist.org/packages.json");
+    async fn test_check_http_packagist_connectivity() {
+        let result = check_http_connectivity("http://repo.packagist.org/packages.json").await;
         assert!(
             matches!(result, CheckResult::Ok(_) | CheckResult::Warning(_)),
             "expected Ok or Warning for HTTP Packagist connectivity"
         );
     }
 
-    #[test]
+    #[tokio::test]
     #[ignore]
-    fn test_check_github_api_connectivity() {
-        let result = check_github_api();
+    async fn test_check_github_api_connectivity() {
+        let result = check_github_api().await;
         assert!(
             matches!(result, CheckResult::Ok(_)),
             "expected Ok for GitHub API connectivity"

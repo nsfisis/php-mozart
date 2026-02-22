@@ -48,7 +48,7 @@ pub struct DumpAutoloadArgs {
     pub strict_ambiguous: bool,
 }
 
-pub fn execute(
+pub async fn execute(
     args: &DumpAutoloadArgs,
     cli: &super::Cli,
     console: &mozart_core::console::Console,

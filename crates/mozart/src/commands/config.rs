@@ -603,7 +603,7 @@ fn render_value(v: &serde_json::Value) -> String {
 
 // ─── execute() ───────────────────────────────────────────────────────────────
 
-pub fn execute(
+pub async fn execute(
     args: &ConfigArgs,
     cli: &super::Cli,
     _console: &mozart_core::console::Console,

@@ -35,7 +35,7 @@ pub struct RepositoryArgs {
     pub after: Option<String>,
 }
 
-pub fn execute(
+pub async fn execute(
     _args: &RepositoryArgs,
     _cli: &super::Cli,
     _console: &mozart_core::console::Console,

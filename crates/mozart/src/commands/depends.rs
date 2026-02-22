@@ -19,7 +19,7 @@ pub struct DependsArgs {
     pub locked: bool,
 }
 
-pub fn execute(
+pub async fn execute(
     args: &DependsArgs,
     cli: &super::Cli,
     _console: &mozart_core::console::Console,

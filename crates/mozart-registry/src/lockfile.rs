@@ -392,11 +392,12 @@ fn extract_platform_requirements(requirements: &BTreeMap<String, String>) -> ser
 /// 2. Separates packages into production vs dev-only
 /// 3. Computes the content-hash
 /// 4. Assembles the complete `LockFile` struct
-pub fn generate_lock_file(request: &LockFileGenerationRequest) -> anyhow::Result<LockFile> {
+pub async fn generate_lock_file(request: &LockFileGenerationRequest) -> anyhow::Result<LockFile> {
     // 1. Fetch full metadata for all resolved packages
     let mut package_metadata: HashMap<String, PackagistVersion> = HashMap::new();
     for pkg in &request.resolved_packages {
-        let versions = packagist::fetch_package_versions(&pkg.name, request.repo_cache.as_ref())?;
+        let versions =
+            packagist::fetch_package_versions(&pkg.name, request.repo_cache.as_ref()).await?;
         // Find the exact version matching pkg.version_normalized
         let matching = versions
             .into_iter()
@@ -913,8 +914,8 @@ mod tests {
         assert_eq!(platform, serde_json::json!({}));
     }
 
-    #[test]
-    fn test_generate_lock_file_minimal() {
+    #[tokio::test]
+    async fn test_generate_lock_file_minimal() {
         let composer_json_content =
             r#"{"name": "test/project", "require": {"php": ">=8.1"}}"#.to_string();
         let composer_json: RawPackageData = serde_json::from_str(&composer_json_content).unwrap();
@@ -927,7 +928,7 @@ mod tests {
             repo_cache: None,
         };
 
-        let lock = generate_lock_file(&request).unwrap();
+        let lock = generate_lock_file(&request).await.unwrap();
 
         assert_eq!(lock.packages.len(), 0);
         assert_eq!(lock.packages_dev.as_ref().unwrap().len(), 0);
@@ -1009,9 +1010,9 @@ mod tests {
         assert_eq!(packages[1].name, "vendor/zebra");
     }
 
-    #[test]
+    #[tokio::test]
     #[ignore]
-    fn test_generate_lock_file_monolog() {
+    async fn test_generate_lock_file_monolog() {
         use crate::resolver::PlatformConfig;
         use crate::resolver::{ResolveRequest, resolve};
         use mozart_core::package::Stability;
@@ -1031,7 +1032,9 @@ mod tests {
             repo_cache: None,
         };
 
-        let resolved = resolve(&resolve_request).expect("Resolution should succeed");
+        let resolved = resolve(&resolve_request)
+            .await
+            .expect("Resolution should succeed");
         assert!(!resolved.is_empty());
 
         let composer_json_content =
@@ -1046,7 +1049,9 @@ mod tests {
             repo_cache: None,
         };
 
-        let lock = generate_lock_file(&gen_request).expect("Lock file generation should succeed");
+        let lock = generate_lock_file(&gen_request)
+            .await
+            .expect("Lock file generation should succeed");
 
         // Verify monolog is in packages
         assert!(

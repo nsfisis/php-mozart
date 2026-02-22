@@ -55,7 +55,7 @@ pub struct InitArgs {
     pub autoload: Option<String>,
 }
 
-pub fn execute(
+pub async fn execute(
     args: &InitArgs,
     cli: &super::Cli,
     console: &console::Console,

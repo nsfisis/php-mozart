@@ -131,7 +131,7 @@ pub struct RequireArgs {
 ///
 /// Returns a list of `"vendor/package:constraint"` strings that the user confirmed,
 /// or an empty vec if the user typed nothing / pressed Ctrl-D immediately.
-fn interactive_search_packages(
+async fn interactive_search_packages(
     already_required: &std::collections::HashSet<String>,
     preferred_stability: Stability,
     fixed: bool,
@@ -165,7 +165,7 @@ fn interactive_search_packages(
         }
 
         // Search Packagist
-        let (results, total) = match packagist::search_packages(&query, None) {
+        let (results, total) = match packagist::search_packages(&query, None).await {
             Ok(r) => r,
             Err(e) => {
                 eprintln!(
@@ -276,7 +276,7 @@ fn interactive_search_packages(
                 ))
             );
 
-            match packagist::fetch_package_versions(&package_name, None) {
+            match packagist::fetch_package_versions(&package_name, None).await {
                 Ok(versions) => {
                     match version::find_best_candidate(&versions, preferred_stability) {
                         Some(best) => {
@@ -343,7 +343,7 @@ fn interactive_search_packages(
     Ok(selected)
 }
 
-pub fn execute(
+pub async fn execute(
     args: &RequireArgs,
     cli: &super::Cli,
     console: &mozart_core::console::Console,
@@ -389,7 +389,7 @@ pub fn execute(
             .unwrap_or(Stability::Stable);
 
         let found =
-            interactive_search_packages(&already_required, preferred_stability, args.fixed)?;
+            interactive_search_packages(&already_required, preferred_stability, args.fixed).await?;
 
         if found.is_empty() {
             // Nothing selected — exit cleanly
@@ -466,7 +466,7 @@ pub fn execute(
                     ))
                 );
 
-                let versions = packagist::fetch_package_versions(&name, None)?;
+                let versions = packagist::fetch_package_versions(&name, None).await?;
                 let best = version::find_best_candidate(&versions, preferred_stability)
                     .ok_or_else(|| {
                         anyhow::anyhow!(
@@ -606,7 +606,7 @@ pub fn execute(
     console.info("Resolving dependencies...");
 
     // Run resolver
-    let mut resolved = match resolver::resolve(&request) {
+    let mut resolved = match resolver::resolve(&request).await {
         Ok(packages) => packages,
         Err(e) => {
             return Err(mozart_core::exit_code::bail(
@@ -671,7 +671,8 @@ pub fn execute(
         composer_json: raw.clone(),
         include_dev: dev_mode,
         repo_cache: None,
-    })?;
+    })
+    .await?;
 
     // Compute and print change report
     let changes = super::update::compute_update_changes(old_lock.as_ref(), &new_lock, dev_mode);
@@ -779,7 +780,8 @@ pub fn execute(
                 apcu_autoloader: false,
                 apcu_autoloader_prefix: None,
             },
-        )?;
+        )
+        .await?;
     }
 
     Ok(())
@@ -912,9 +914,9 @@ mod tests {
     // Integration tests (network, #[ignore])
     // ─────────────────────────────────────────────────────────────────────────
 
-    #[test]
+    #[tokio::test]
     #[ignore]
-    fn test_require_full_e2e() {
+    async fn test_require_full_e2e() {
         use mozart_core::package::RawPackageData;
         use mozart_registry::lockfile::{LockFileGenerationRequest, generate_lock_file};
 
@@ -935,7 +937,9 @@ mod tests {
             repo_cache: None,
         };
 
-        let resolved = resolver::resolve(&request).expect("Resolution should succeed");
+        let resolved = resolver::resolve(&request)
+            .await
+            .expect("Resolution should succeed");
         assert!(!resolved.is_empty());
         assert!(resolved.iter().any(|p| p.name == "psr/log"));
 
@@ -946,6 +950,7 @@ mod tests {
             include_dev: false,
             repo_cache: None,
         })
+        .await
         .expect("Lock file generation should succeed");
 
         assert!(!lock.content_hash.is_empty());
@@ -953,9 +958,9 @@ mod tests {
         assert!(lock.packages.iter().any(|p| p.name == "psr/log"));
     }
 
-    #[test]
+    #[tokio::test]
     #[ignore]
-    fn test_require_no_install_writes_lock_only() {
+    async fn test_require_no_install_writes_lock_only() {
         use mozart_core::package::RawPackageData;
         use tempfile::tempdir;
 
@@ -983,7 +988,9 @@ mod tests {
             repo_cache: None,
         };
 
-        let resolved = resolver::resolve(&request).expect("Resolution should succeed");
+        let resolved = resolver::resolve(&request)
+            .await
+            .expect("Resolution should succeed");
         let new_lock = lockfile::generate_lock_file(&lockfile::LockFileGenerationRequest {
             resolved_packages: resolved,
             composer_json_content: content.to_string(),
@@ -991,6 +998,7 @@ mod tests {
             include_dev: false,
             repo_cache: None,
         })
+        .await
         .expect("Lock file generation should succeed");
 
         // Simulate --no-install: write lock but don't install

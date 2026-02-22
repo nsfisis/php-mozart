@@ -96,7 +96,7 @@ struct OutdatedEntry {
 
 // ─── Main entry point ───────────────────────────────────────────────────────
 
-pub fn execute(
+pub async fn execute(
     args: &OutdatedArgs,
     cli: &super::Cli,
     _console: &mozart_core::console::Console,
@@ -179,7 +179,7 @@ pub fn execute(
         }
 
         // Fetch latest version from Packagist
-        let latest = match fetch_latest_version(&pkg.name) {
+        let latest = match fetch_latest_version(&pkg.name).await {
             Ok(v) => v,
             Err(_) => {
                 // Skip packages we can't fetch (platform packages, private, etc.)
@@ -333,11 +333,11 @@ fn load_locked_packages(working_dir: &Path, no_dev: bool) -> anyhow::Result<Vec<
 
 // ─── Version fetching ────────────────────────────────────────────────────────
 
-fn fetch_latest_version(name: &str) -> anyhow::Result<PackageInfo> {
+async fn fetch_latest_version(name: &str) -> anyhow::Result<PackageInfo> {
     use mozart_core::package::Stability;
     use mozart_registry::version::find_best_candidate;
 
-    let versions = mozart_registry::packagist::fetch_package_versions(name, None)?;
+    let versions = mozart_registry::packagist::fetch_package_versions(name, None).await?;
     let best = find_best_candidate(&versions, Stability::Stable)
         .ok_or_else(|| anyhow::anyhow!("No stable version found for {name}"))?;
 

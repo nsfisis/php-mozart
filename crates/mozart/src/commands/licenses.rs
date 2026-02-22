@@ -27,7 +27,7 @@ struct LicenseEntry {
 
 // ─── Main entry point ───────────────────────────────────────────────────────
 
-pub fn execute(
+pub async fn execute(
     args: &LicensesArgs,
     cli: &super::Cli,
     _console: &mozart_core::console::Console,

@@ -1,5 +1,5 @@
 use clap::Args;
-use std::io::{Read, Write};
+use std::io::Write;
 use std::path::{Path, PathBuf};
 
 // ─── CLI args ─────────────────────────────────────────────────────────────────
@@ -50,7 +50,7 @@ const BACKUP_EXTENSION: &str = ".old";
 
 // ─── Public entry point ───────────────────────────────────────────────────────
 
-pub fn execute(
+pub async fn execute(
     args: &SelfUpdateArgs,
     _cli: &super::Cli,
     _console: &mozart_core::console::Console,
@@ -69,7 +69,7 @@ pub fn execute(
     if args.rollback {
         rollback(&current_exe, &data_dir)
     } else {
-        update(args, &current_exe, &data_dir)
+        update(args, &current_exe, &data_dir).await
     }
 }
 
@@ -128,10 +128,10 @@ fn platform_asset_name() -> anyhow::Result<String> {
 
 // ─── GitHub fetching ──────────────────────────────────────────────────────────
 
-fn fetch_releases(include_prerelease: bool) -> anyhow::Result<Vec<GitHubRelease>> {
+async fn fetch_releases(include_prerelease: bool) -> anyhow::Result<Vec<GitHubRelease>> {
     let url = format!("{GITHUB_API_BASE}/{GITHUB_REPO}/releases");
 
-    let client = reqwest::blocking::Client::builder()
+    let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(30))
         .user_agent(concat!("mozart/", env!("CARGO_PKG_VERSION")))
         .build()
@@ -140,6 +140,7 @@ fn fetch_releases(include_prerelease: bool) -> anyhow::Result<Vec<GitHubRelease>
     let response = client
         .get(&url)
         .send()
+        .await
         .map_err(|e| anyhow::anyhow!("Could not fetch releases from GitHub: {e}"))?;
 
     if !response.status().is_success() {
@@ -151,6 +152,7 @@ fn fetch_releases(include_prerelease: bool) -> anyhow::Result<Vec<GitHubRelease>
 
     let mut releases: Vec<GitHubRelease> = response
         .json()
+        .await
         .map_err(|e| anyhow::anyhow!("Could not parse GitHub releases response: {e}"))?;
 
     if !include_prerelease {
@@ -203,16 +205,21 @@ fn find_asset<'a>(release: &'a GitHubRelease, asset_name: &str) -> anyhow::Resul
 
 // ─── Download ─────────────────────────────────────────────────────────────────
 
-fn download_asset(asset: &GitHubAsset, dest: &Path, show_progress: bool) -> anyhow::Result<()> {
-    let client = reqwest::blocking::Client::builder()
+async fn download_asset(
+    asset: &GitHubAsset,
+    dest: &Path,
+    show_progress: bool,
+) -> anyhow::Result<()> {
+    let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(300))
         .user_agent(concat!("mozart/", env!("CARGO_PKG_VERSION")))
         .build()
         .map_err(|e| anyhow::anyhow!("Could not build HTTP client: {e}"))?;
 
-    let mut response = client
+    let response = client
         .get(&asset.browser_download_url)
         .send()
+        .await
         .map_err(|e| anyhow::anyhow!("Could not download asset: {e}"))?;
 
     if !response.status().is_success() {
@@ -228,18 +235,16 @@ fn download_asset(asset: &GitHubAsset, dest: &Path, show_progress: bool) -> anyh
 
     let total_bytes = asset.size;
     let mut downloaded: u64 = 0;
-    let mut buf = [0u8; 8192];
+    let mut stream = response;
 
-    loop {
-        let n = response
-            .read(&mut buf)
-            .map_err(|e| anyhow::anyhow!("Error reading download stream: {e}"))?;
-        if n == 0 {
-            break;
-        }
-        file.write_all(&buf[..n])
+    while let Some(chunk) = stream
+        .chunk()
+        .await
+        .map_err(|e| anyhow::anyhow!("Error reading download stream: {e}"))?
+    {
+        file.write_all(&chunk)
             .map_err(|e| anyhow::anyhow!("Error writing to destination file: {e}"))?;
-        downloaded += n as u64;
+        downloaded += chunk.len() as u64;
 
         if show_progress && total_bytes > 0 {
             let pct = (downloaded * 100) / total_bytes;
@@ -257,13 +262,13 @@ fn download_asset(asset: &GitHubAsset, dest: &Path, show_progress: bool) -> anyh
 
 // ─── Core update flow ─────────────────────────────────────────────────────────
 
-fn update(args: &SelfUpdateArgs, current_exe: &Path, data_dir: &Path) -> anyhow::Result<()> {
+async fn update(args: &SelfUpdateArgs, current_exe: &Path, data_dir: &Path) -> anyhow::Result<()> {
     let current_version = get_current_version();
 
     println!("Updating Mozart...");
 
     // Fetch releases
-    let releases = fetch_releases(args.preview)?;
+    let releases = fetch_releases(args.preview).await?;
 
     // Find target release
     let target_release = find_target_release(&releases, args.version.as_deref())?;
@@ -298,7 +303,7 @@ fn update(args: &SelfUpdateArgs, current_exe: &Path, data_dir: &Path) -> anyhow:
         .map_err(|e| anyhow::anyhow!("Could not create temporary file: {e}"))?;
     let tmp_path = tmp.path().to_path_buf();
 
-    download_asset(asset, &tmp_path, !args.no_progress)?;
+    download_asset(asset, &tmp_path, !args.no_progress).await?;
 
     // Set executable permission on Unix
     #[cfg(unix)]

@@ -18,7 +18,7 @@ pub struct BrowseArgs {
 
 // ─── Main entry point ────────────────────────────────────────────────────────
 
-pub fn execute(
+pub async fn execute(
     args: &BrowseArgs,
     cli: &super::Cli,
     console: &mozart_core::console::Console,
@@ -45,7 +45,7 @@ pub fn execute(
     let mut exit_code = 0i32;
 
     for package_name in &packages {
-        match resolve_url(package_name, &working_dir, args.homepage)? {
+        match resolve_url(package_name, &working_dir, args.homepage).await? {
             Some(url) => {
                 if args.show {
                     println!("{}", url);
@@ -76,7 +76,7 @@ pub fn execute(
 
 // ─── URL resolution ───────────────────────────────────────────────────────────
 
-fn resolve_url(
+async fn resolve_url(
     package_name: &str,
     working_dir: &Path,
     prefer_homepage: bool,
@@ -109,7 +109,7 @@ fn resolve_url(
     }
 
     // 3. Fall back to Packagist API
-    match mozart_registry::packagist::fetch_package_versions(package_name, None) {
+    match mozart_registry::packagist::fetch_package_versions(package_name, None).await {
         Ok(versions) => {
             // Find the latest stable version (first non-dev, or fallback to first)
             let best = versions

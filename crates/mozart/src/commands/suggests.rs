@@ -38,7 +38,7 @@ struct Suggestion {
 
 // ─── Main entry point ────────────────────────────────────────────────────────
 
-pub fn execute(
+pub async fn execute(
     args: &SuggestsArgs,
     cli: &super::Cli,
     _console: &mozart_core::console::Console,

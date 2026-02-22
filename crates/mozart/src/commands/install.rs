@@ -310,7 +310,7 @@ fn make_progress(show: bool, pkg_name: &str, version: &str) -> downloader::Downl
 /// 7. Writes vendor/composer/installed.json
 /// 8. Cleans up empty vendor directories
 /// 9. Generates the autoloader (unless no_autoloader)
-pub fn install_from_lock(
+pub async fn install_from_lock(
     lock: &lockfile::LockFile,
     working_dir: &Path,
     vendor_dir: &Path,
@@ -418,7 +418,8 @@ pub fn install_from_lock(
                 &pkg.name,
                 Some(&mut progress),
                 None,
-            )?;
+            )
+            .await?;
 
             progress.finish();
         }
@@ -496,7 +497,7 @@ pub fn install_from_lock(
     Ok(())
 }
 
-pub fn execute(
+pub async fn execute(
     args: &InstallArgs,
     cli: &super::Cli,
     console: &mozart_core::console::Console,
@@ -590,6 +591,7 @@ pub fn execute(
             apcu_autoloader_prefix: args.apcu_autoloader_prefix.clone(),
         },
     )
+    .await
 }
 
 #[cfg(test)]

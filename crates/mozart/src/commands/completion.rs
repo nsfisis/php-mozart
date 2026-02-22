@@ -9,7 +9,7 @@ pub struct CompletionArgs {
     pub shell: Shell,
 }
 
-pub fn execute(
+pub async fn execute(
     args: &CompletionArgs,
     _cli: &super::Cli,
     _console: &mozart_core::console::Console,

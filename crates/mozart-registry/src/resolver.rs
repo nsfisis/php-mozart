@@ -586,6 +586,9 @@ struct VersionDependencies {
 
 /// pubgrub `DependencyProvider` that fetches package metadata from Packagist.
 pub struct MozartProvider {
+    /// Tokio runtime handle for calling async functions from sync trait methods.
+    handle: tokio::runtime::Handle,
+
     /// Cache of fetched package metadata. Populated lazily from Packagist.
     package_cache: RefCell<HashMap<String, PackageVersions>>,
 
@@ -632,13 +635,16 @@ impl MozartProvider {
         }
 
         // Fetch from Packagist (with optional on-disk repo cache)
-        let packagist_versions = packagist::fetch_package_versions(
-            package_name,
-            self.repo_cache.as_ref(),
-        )
-        .map_err(|e| {
-            ResolverError::PackagistError(format!("Failed to fetch {}: {}", package_name, e))
-        })?;
+        // Uses block_on because pubgrub's DependencyProvider trait is synchronous.
+        let packagist_versions = self
+            .handle
+            .block_on(packagist::fetch_package_versions(
+                package_name,
+                self.repo_cache.as_ref(),
+            ))
+            .map_err(|e| {
+                ResolverError::PackagistError(format!("Failed to fetch {}: {}", package_name, e))
+            })?;
 
         // Convert and filter
         let mut versions = BTreeMap::new();
@@ -975,8 +981,8 @@ pub struct ResolvedPackage {
 ///
 /// Returns a list of resolved packages (excluding root and platform packages),
 /// or a human-readable error.
-pub fn resolve(request: &ResolveRequest) -> Result<Vec<ResolvedPackage>, ResolveError> {
-    // 1. Build root dependencies
+pub async fn resolve(request: &ResolveRequest) -> Result<Vec<ResolvedPackage>, ResolveError> {
+    // 1. Build root dependencies (parsing is CPU-only, no async needed)
     let mut root_deps: Vec<(PackageName, ComposerVS)> = Vec::new();
     let root_conflicts: Vec<(PackageName, ComposerVS)> = Vec::new();
 
@@ -1012,79 +1018,94 @@ pub fn resolve(request: &ResolveRequest) -> Result<Vec<ResolvedPackage>, Resolve
         }
     }
 
-    // 2. Build the provider
-    let provider = MozartProvider {
-        package_cache: RefCell::new(HashMap::new()),
-        repo_cache: request.repo_cache.clone(),
-        platform_packages: request.platform.to_versions(),
-        minimum_stability: request.minimum_stability,
-        stability_flags: request.stability_flags.clone(),
-        prefer_stable: request.prefer_stable,
-        prefer_lowest: request.prefer_lowest,
-        root_dependencies: root_deps,
-        root_conflicts,
-        ignore_platform_reqs: request.ignore_platform_reqs,
-        ignore_platform_req_list: request.ignore_platform_req_list.clone(),
-    };
+    // Capture the current tokio Handle so the provider can call async functions
+    // from within pubgrub's synchronous DependencyProvider trait methods.
+    let handle = tokio::runtime::Handle::current();
 
-    // 3. Run pubgrub
-    let root = PackageName::root();
-    let root_version = ComposerVersion::stable(0, 0, 0, 0);
+    // Clone data needed by spawn_blocking (which requires 'static)
+    let repo_cache = request.repo_cache.clone();
+    let platform_packages = request.platform.to_versions();
+    let minimum_stability = request.minimum_stability;
+    let stability_flags = request.stability_flags.clone();
+    let prefer_stable = request.prefer_stable;
+    let prefer_lowest = request.prefer_lowest;
+    let ignore_platform_reqs = request.ignore_platform_reqs;
+    let ignore_platform_req_list = request.ignore_platform_req_list.clone();
 
-    match pubgrub::resolve(&provider, root, root_version) {
-        Ok(solution) => {
-            // 4. Convert solution to ResolvedPackage list
-            let mut result = Vec::new();
-            for (pkg, version) in solution {
-                // Skip root and platform packages
-                if pkg.is_root() || pkg.is_platform() {
-                    continue;
-                }
+    // 2. Run pubgrub on a blocking thread (it is CPU-bound + uses block_on for I/O)
+    tokio::task::spawn_blocking(move || {
+        let provider = MozartProvider {
+            handle,
+            package_cache: RefCell::new(HashMap::new()),
+            repo_cache,
+            platform_packages,
+            minimum_stability,
+            stability_flags,
+            prefer_stable,
+            prefer_lowest,
+            root_dependencies: root_deps,
+            root_conflicts,
+            ignore_platform_reqs,
+            ignore_platform_req_list,
+        };
 
-                // Look up the original version string from the cache
-                let cache = provider.package_cache.borrow();
-                let (version_str, version_normalized) = if let Some(pvs) = cache.get(&pkg.0) {
-                    if let Some(vd) = pvs.versions.get(&version) {
-                        (vd.version_string.clone(), vd.version_normalized.clone())
+        let root = PackageName::root();
+        let root_version = ComposerVersion::stable(0, 0, 0, 0);
+
+        match pubgrub::resolve(&provider, root, root_version) {
+            Ok(solution) => {
+                let mut result = Vec::new();
+                for (pkg, version) in solution {
+                    if pkg.is_root() || pkg.is_platform() {
+                        continue;
+                    }
+
+                    let cache = provider.package_cache.borrow();
+                    let (version_str, version_normalized) = if let Some(pvs) = cache.get(&pkg.0) {
+                        if let Some(vd) = pvs.versions.get(&version) {
+                            (vd.version_string.clone(), vd.version_normalized.clone())
+                        } else {
+                            (version.to_string(), version.to_string())
+                        }
                     } else {
                         (version.to_string(), version.to_string())
-                    }
-                } else {
-                    (version.to_string(), version.to_string())
-                };
+                    };
 
-                result.push(ResolvedPackage {
-                    name: pkg.0.clone(),
-                    version: version_str,
-                    version_normalized,
-                    is_dev: version.stability < STABILITY_ALPHA_BASE,
-                });
+                    result.push(ResolvedPackage {
+                        name: pkg.0.clone(),
+                        version: version_str,
+                        version_normalized,
+                        is_dev: version.stability < STABILITY_ALPHA_BASE,
+                    });
+                }
+                Ok(result)
             }
-            Ok(result)
+            Err(PubGrubError::NoSolution(mut derivation_tree)) => {
+                derivation_tree.collapse_no_versions();
+                let report = DefaultStringReporter::report(&derivation_tree);
+                Err(ResolveError::NoSolution(report))
+            }
+            Err(PubGrubError::ErrorRetrievingDependencies {
+                package,
+                version,
+                source,
+            }) => Err(ResolveError::DependencyFetchError(format!(
+                "Error retrieving dependencies for {} {}: {}",
+                package, version, source
+            ))),
+            Err(PubGrubError::ErrorChoosingVersion { package, source }) => {
+                Err(ResolveError::DependencyFetchError(format!(
+                    "Error choosing version for {}: {}",
+                    package, source
+                )))
+            }
+            Err(PubGrubError::ErrorInShouldCancel(e)) => {
+                Err(ResolveError::Internal(format!("Resolver cancelled: {}", e)))
+            }
         }
-        Err(PubGrubError::NoSolution(mut derivation_tree)) => {
-            derivation_tree.collapse_no_versions();
-            let report = DefaultStringReporter::report(&derivation_tree);
-            Err(ResolveError::NoSolution(report))
-        }
-        Err(PubGrubError::ErrorRetrievingDependencies {
-            package,
-            version,
-            source,
-        }) => Err(ResolveError::DependencyFetchError(format!(
-            "Error retrieving dependencies for {} {}: {}",
-            package, version, source
-        ))),
-        Err(PubGrubError::ErrorChoosingVersion { package, source }) => {
-            Err(ResolveError::DependencyFetchError(format!(
-                "Error choosing version for {}: {}",
-                package, source
-            )))
-        }
-        Err(PubGrubError::ErrorInShouldCancel(e)) => {
-            Err(ResolveError::Internal(format!("Resolver cancelled: {}", e)))
-        }
-    }
+    })
+    .await
+    .unwrap()
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1095,6 +1116,13 @@ pub fn resolve(request: &ResolveRequest) -> Result<Vec<ResolvedPackage>, Resolve
 mod tests {
     use super::*;
     use pubgrub::{OfflineDependencyProvider, Ranges};
+
+    fn test_handle() -> tokio::runtime::Handle {
+        static RT: std::sync::OnceLock<tokio::runtime::Runtime> = std::sync::OnceLock::new();
+        RT.get_or_init(|| tokio::runtime::Runtime::new().unwrap())
+            .handle()
+            .clone()
+    }
 
     // ──────────── ComposerVersion parsing ────────────
 
@@ -1532,6 +1560,7 @@ mod tests {
     #[test]
     fn test_stability_filter() {
         let provider = MozartProvider {
+            handle: test_handle(),
             package_cache: RefCell::new(HashMap::new()),
             platform_packages: HashMap::new(),
             minimum_stability: Stability::Stable,
@@ -1585,6 +1614,7 @@ mod tests {
     #[test]
     fn test_stability_filter_beta() {
         let provider = MozartProvider {
+            handle: test_handle(),
             package_cache: RefCell::new(HashMap::new()),
             platform_packages: HashMap::new(),
             minimum_stability: Stability::Beta,
@@ -1630,6 +1660,7 @@ mod tests {
     #[test]
     fn test_stability_filter_dev() {
         let provider = MozartProvider {
+            handle: test_handle(),
             package_cache: RefCell::new(HashMap::new()),
             platform_packages: HashMap::new(),
             minimum_stability: Stability::Dev,
@@ -1656,6 +1687,7 @@ mod tests {
     #[test]
     fn test_skip_platform_dep() {
         let provider = MozartProvider {
+            handle: test_handle(),
             package_cache: RefCell::new(HashMap::new()),
             platform_packages: HashMap::new(),
             minimum_stability: Stability::Stable,
@@ -1677,6 +1709,7 @@ mod tests {
     #[test]
     fn test_skip_specific_platform_dep() {
         let provider = MozartProvider {
+            handle: test_handle(),
             package_cache: RefCell::new(HashMap::new()),
             platform_packages: HashMap::new(),
             minimum_stability: Stability::Stable,
@@ -1699,6 +1732,7 @@ mod tests {
     #[test]
     fn test_root_package_choose_version() {
         let provider = MozartProvider {
+            handle: test_handle(),
             package_cache: RefCell::new(HashMap::new()),
             platform_packages: HashMap::new(),
             minimum_stability: Stability::Stable,
@@ -1726,6 +1760,7 @@ mod tests {
         platform.insert("php".to_string(), php_v);
 
         let provider = MozartProvider {
+            handle: test_handle(),
             package_cache: RefCell::new(HashMap::new()),
             platform_packages: platform,
             minimum_stability: Stability::Stable,
@@ -1884,9 +1919,9 @@ mod tests {
 
     // ──────────── End-to-end tests (require network, marked #[ignore]) ────────────
 
-    #[test]
+    #[tokio::test]
     #[ignore]
-    fn test_resolve_monolog_e2e() {
+    async fn test_resolve_monolog_e2e() {
         let request = ResolveRequest {
             require: vec![("monolog/monolog".to_string(), "^3.0".to_string())],
             require_dev: vec![],
@@ -1901,7 +1936,7 @@ mod tests {
             repo_cache: None,
         };
 
-        let result = resolve(&request);
+        let result = resolve(&request).await;
         match result {
             Ok(packages) => {
                 println!("Resolved {} packages:", packages.len());

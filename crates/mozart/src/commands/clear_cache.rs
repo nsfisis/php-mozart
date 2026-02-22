@@ -8,7 +8,7 @@ pub struct ClearCacheArgs {
     pub gc: bool,
 }
 
-pub fn execute(
+pub async fn execute(
     args: &ClearCacheArgs,
     cli: &super::Cli,
     console: &mozart_core::console::Console,

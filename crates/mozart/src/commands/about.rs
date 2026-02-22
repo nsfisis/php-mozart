@@ -4,7 +4,7 @@ use mozart_core::console;
 #[derive(Args)]
 pub struct AboutArgs {}
 
-pub fn execute(
+pub async fn execute(
     _args: &AboutArgs,
     _cli: &super::Cli,
     _console: &console::Console,

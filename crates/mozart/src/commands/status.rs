@@ -44,7 +44,7 @@ struct PackageStatus {
 
 // ─── Main entry point ────────────────────────────────────────────────────────
 
-pub fn execute(
+pub async fn execute(
     args: &StatusArgs,
     cli: &super::Cli,
     _console: &mozart_core::console::Console,
@@ -104,7 +104,8 @@ pub fn execute(
             dist.shasum.as_deref(),
             None,
             Some(&files_cache),
-        );
+        )
+        .await;
 
         let bytes = match downloaded {
             Ok(b) => b,

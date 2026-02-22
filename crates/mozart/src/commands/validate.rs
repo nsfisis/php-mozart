@@ -67,7 +67,7 @@ impl ValidationResult {
 
 // ─── Entry point ─────────────────────────────────────────────────────────────
 
-pub fn execute(
+pub async fn execute(
     args: &ValidateArgs,
     cli: &super::Cli,
     console: &mozart_core::console::Console,

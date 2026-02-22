@@ -170,7 +170,7 @@ fn is_dir_non_empty(path: &Path) -> bool {
         .unwrap_or(false)
 }
 
-pub fn execute(
+pub async fn execute(
     args: &CreateProjectArgs,
     cli: &super::Cli,
     console: &mozart_core::console::Console,
@@ -278,7 +278,7 @@ pub fn execute(
     ));
     console.info("Loading composer repositories with package information");
 
-    let versions = packagist::fetch_package_versions(&package_name, None)?;
+    let versions = packagist::fetch_package_versions(&package_name, None).await?;
 
     // Find the best candidate matching the version constraint and stability
     let best = if let Some(ref constraint) = version_constraint {
@@ -331,7 +331,8 @@ pub fn execute(
     );
 
     let bytes =
-        downloader::download_dist(&dist.url, dist.shasum.as_deref(), Some(&mut progress), None)?;
+        downloader::download_dist(&dist.url, dist.shasum.as_deref(), Some(&mut progress), None)
+            .await?;
 
     progress.finish();
 
@@ -422,7 +423,7 @@ pub fn execute(
 
     console.info("Resolving dependencies...");
 
-    let resolved = resolver::resolve(&request).map_err(|e| {
+    let resolved = resolver::resolve(&request).await.map_err(|e| {
         mozart_core::exit_code::bail(
             mozart_core::exit_code::DEPENDENCY_RESOLUTION_FAILED,
             e.to_string(),
@@ -437,7 +438,8 @@ pub fn execute(
         composer_json: raw.clone(),
         include_dev: dev_mode,
         repo_cache: None,
-    })?;
+    })
+    .await?;
 
     // Print change report (all will be installs for a new project)
     let changes = super::update::compute_update_changes(None, &new_lock, dev_mode);
@@ -498,7 +500,8 @@ pub fn execute(
             apcu_autoloader: false,
             apcu_autoloader_prefix: None,
         },
-    )?;
+    )
+    .await?;
 
     Ok(())
 }

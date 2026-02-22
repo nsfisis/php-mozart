@@ -70,7 +70,7 @@ struct AuditResult {
 
 // ─── Main entry point ─────────────────────────────────────────────────────────
 
-pub fn execute(
+pub async fn execute(
     args: &AuditArgs,
     cli: &super::Cli,
     _console: &mozart_core::console::Console,
@@ -111,7 +111,7 @@ pub fn execute(
 
     // Fetch advisories
     let names: Vec<&str> = packages.iter().map(|p| p.name.as_str()).collect();
-    let all_advisories = match mozart_registry::packagist::fetch_security_advisories(&names) {
+    let all_advisories = match mozart_registry::packagist::fetch_security_advisories(&names).await {
         Ok(a) => a,
         Err(e) => {
             if args.ignore_unreachable {

@@ -99,7 +99,7 @@ pub struct ShowArgs {
     pub ignore_platform_reqs: bool,
 }
 
-pub fn execute(
+pub async fn execute(
     args: &ShowArgs,
     cli: &super::Cli,
     _console: &mozart_core::console::Console,
@@ -126,21 +126,21 @@ pub fn execute(
 
     // --available: show available versions for installed packages
     if args.available {
-        return show_available(args, &working_dir);
+        return show_available(args, &working_dir).await;
     }
 
     // --locked: show from lock file
     if args.locked {
-        return execute_locked(args, &working_dir);
+        return execute_locked(args, &working_dir).await;
     }
 
     // Default: installed mode
-    execute_installed(args, &working_dir)
+    execute_installed(args, &working_dir).await
 }
 
 // ─── Installed mode ────────────────────────────────────────────────────────
 
-fn execute_installed(args: &ShowArgs, working_dir: &Path) -> anyhow::Result<()> {
+async fn execute_installed(args: &ShowArgs, working_dir: &Path) -> anyhow::Result<()> {
     let vendor_dir = working_dir.join("vendor");
     let installed = mozart_registry::installed::InstalledPackages::read(&vendor_dir)?;
 
@@ -193,7 +193,7 @@ fn execute_installed(args: &ShowArgs, working_dir: &Path) -> anyhow::Result<()> 
     if let Some(ref package_filter) = args.package {
         if package_filter.contains('*') {
             packages.retain(|p| matches_wildcard(&p.name, package_filter));
-            show_installed_package_list(&packages, args, &vendor_dir)?;
+            show_installed_package_list(&packages, args, &vendor_dir).await?;
             return Ok(());
         } else {
             // Single package detail view
@@ -212,7 +212,7 @@ fn execute_installed(args: &ShowArgs, working_dir: &Path) -> anyhow::Result<()> 
     }
 
     // List view
-    show_installed_package_list(&packages, args, &vendor_dir)
+    show_installed_package_list(&packages, args, &vendor_dir).await
 }
 
 fn filter_installed_packages<'a>(
@@ -253,7 +253,7 @@ fn filter_installed_packages<'a>(
     Ok(packages)
 }
 
-fn show_installed_package_list(
+async fn show_installed_package_list(
     packages: &[&mozart_registry::installed::InstalledPackageEntry],
     args: &ShowArgs,
     _vendor_dir: &Path,
@@ -289,7 +289,7 @@ fn show_installed_package_list(
         let description = get_installed_description(pkg);
 
         let latest_info = if show_latest {
-            fetch_latest_for_package(&pkg.name).ok()
+            fetch_latest_for_package(&pkg.name).await.ok()
         } else {
             None
         };
@@ -472,11 +472,11 @@ fn extract_major(version_normalized: &str) -> u64 {
         .unwrap_or(0)
 }
 
-fn fetch_latest_for_package(name: &str) -> anyhow::Result<LatestInfo> {
+async fn fetch_latest_for_package(name: &str) -> anyhow::Result<LatestInfo> {
     use mozart_core::package::Stability;
     use mozart_registry::version::find_best_candidate;
 
-    let versions = mozart_registry::packagist::fetch_package_versions(name, None)?;
+    let versions = mozart_registry::packagist::fetch_package_versions(name, None).await?;
     let best = find_best_candidate(&versions, Stability::Stable)
         .ok_or_else(|| anyhow::anyhow!("No stable version found for {name}"))?;
 
@@ -644,7 +644,7 @@ fn show_installed_package_detail(
 
 // ─── Locked mode ───────────────────────────────────────────────────────────
 
-fn execute_locked(args: &ShowArgs, working_dir: &Path) -> anyhow::Result<()> {
+async fn execute_locked(args: &ShowArgs, working_dir: &Path) -> anyhow::Result<()> {
     let lock_path = working_dir.join("composer.lock");
     if !lock_path.exists() {
         anyhow::bail!(
@@ -684,18 +684,18 @@ fn execute_locked(args: &ShowArgs, working_dir: &Path) -> anyhow::Result<()> {
     if let Some(ref package_filter) = args.package {
         if package_filter.contains('*') {
             packages.retain(|p| matches_wildcard(&p.name, package_filter));
-            show_locked_package_list(&packages, args)?;
+            show_locked_package_list(&packages, args).await?;
         } else {
             show_locked_package_detail(&lock, package_filter)?;
         }
     } else {
-        show_locked_package_list(&packages, args)?;
+        show_locked_package_list(&packages, args).await?;
     }
 
     Ok(())
 }
 
-fn show_locked_package_list(
+async fn show_locked_package_list(
     packages: &[&mozart_registry::lockfile::LockedPackage],
     args: &ShowArgs,
 ) -> anyhow::Result<()> {
@@ -729,7 +729,7 @@ fn show_locked_package_list(
         let description = pkg.description.as_deref().unwrap_or("").to_string();
 
         let latest_info = if show_latest {
-            fetch_latest_for_package(&pkg.name).ok()
+            fetch_latest_for_package(&pkg.name).await.ok()
         } else {
             None
         };
@@ -1346,10 +1346,10 @@ fn show_platform(args: &ShowArgs, working_dir: &Path) -> anyhow::Result<()> {
 
 // ─── Available mode ─────────────────────────────────────────────────────────
 
-fn show_available(args: &ShowArgs, working_dir: &Path) -> anyhow::Result<()> {
+async fn show_available(args: &ShowArgs, working_dir: &Path) -> anyhow::Result<()> {
     // If a specific package name is given, show available versions for it
     if let Some(ref pkg_name) = args.package {
-        return show_available_versions(pkg_name, args);
+        return show_available_versions(pkg_name, args).await;
     }
 
     // Otherwise, show all installed packages with their available (latest) versions
@@ -1384,7 +1384,7 @@ fn show_available(args: &ShowArgs, working_dir: &Path) -> anyhow::Result<()> {
                     if is_platform_package(&pkg.name) {
                         continue;
                     }
-                    show_available_versions_inline(&pkg.name);
+                    show_available_versions_inline(&pkg.name).await;
                 }
                 return Ok(());
             }
@@ -1413,7 +1413,7 @@ fn show_available(args: &ShowArgs, working_dir: &Path) -> anyhow::Result<()> {
             if is_platform_package(&pkg.name) {
                 continue;
             }
-            match mozart_registry::packagist::fetch_package_versions(&pkg.name, None) {
+            match mozart_registry::packagist::fetch_package_versions(&pkg.name, None).await {
                 Ok(versions) => {
                     let version_strings: Vec<String> =
                         versions.iter().map(|v| v.version.clone()).collect();
@@ -1441,14 +1441,14 @@ fn show_available(args: &ShowArgs, working_dir: &Path) -> anyhow::Result<()> {
         if is_platform_package(&pkg.name) {
             continue;
         }
-        show_available_versions_inline(&pkg.name);
+        show_available_versions_inline(&pkg.name).await;
     }
 
     Ok(())
 }
 
-fn show_available_versions(pkg_name: &str, args: &ShowArgs) -> anyhow::Result<()> {
-    let versions = mozart_registry::packagist::fetch_package_versions(pkg_name, None)?;
+async fn show_available_versions(pkg_name: &str, args: &ShowArgs) -> anyhow::Result<()> {
+    let versions = mozart_registry::packagist::fetch_package_versions(pkg_name, None).await?;
     if versions.is_empty() {
         println!("No versions found for {pkg_name}");
         return Ok(());
@@ -1475,8 +1475,8 @@ fn show_available_versions(pkg_name: &str, args: &ShowArgs) -> anyhow::Result<()
     Ok(())
 }
 
-fn show_available_versions_inline(pkg_name: &str) {
-    match mozart_registry::packagist::fetch_package_versions(pkg_name, None) {
+async fn show_available_versions_inline(pkg_name: &str) {
+    match mozart_registry::packagist::fetch_package_versions(pkg_name, None).await {
         Ok(versions) => {
             if versions.is_empty() {
                 println!(

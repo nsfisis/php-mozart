@@ -22,7 +22,7 @@ pub struct BumpArgs {
 
 // ─── Main entry point ─────────────────────────────────────────────────────────
 
-pub fn execute(
+pub async fn execute(
     args: &BumpArgs,
     cli: &super::Cli,
     console: &mozart_core::console::Console,
@@ -324,8 +324,8 @@ mod tests {
 
     // ── Basic bump ─────────────────────────────────────────────────────────
 
-    #[test]
-    fn test_basic_bump_modifies_composer_json() {
+    #[tokio::test]
+    async fn test_basic_bump_modifies_composer_json() {
         let dir = tempdir().unwrap();
         let composer_json = r#"{
     "name": "test/project",
@@ -351,7 +351,7 @@ mod tests {
             verbosity: mozart_core::console::Verbosity::Normal,
             decorated: false,
         };
-        execute(&args, &cli, &console).unwrap();
+        execute(&args, &cli, &console).await.unwrap();
 
         let updated = std::fs::read_to_string(dir.path().join("composer.json")).unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&updated).unwrap();
@@ -360,8 +360,8 @@ mod tests {
 
     // ── Dry run ────────────────────────────────────────────────────────────
 
-    #[test]
-    fn test_dry_run_does_not_modify_files() {
+    #[tokio::test]
+    async fn test_dry_run_does_not_modify_files() {
         let dir = tempdir().unwrap();
         let composer_json = r#"{
     "name": "test/project",
@@ -387,7 +387,7 @@ mod tests {
             verbosity: mozart_core::console::Verbosity::Normal,
             decorated: false,
         };
-        execute(&args, &cli, &console).unwrap();
+        execute(&args, &cli, &console).await.unwrap();
 
         // composer.json should be unchanged
         let content = std::fs::read_to_string(dir.path().join("composer.json")).unwrap();
@@ -397,8 +397,8 @@ mod tests {
 
     // ── No changes ─────────────────────────────────────────────────────────
 
-    #[test]
-    fn test_no_changes_when_already_bumped() {
+    #[tokio::test]
+    async fn test_no_changes_when_already_bumped() {
         let dir = tempdir().unwrap();
         let composer_json = r#"{
     "name": "test/project",
@@ -424,7 +424,7 @@ mod tests {
             verbosity: mozart_core::console::Verbosity::Normal,
             decorated: false,
         };
-        execute(&args, &cli, &console).unwrap();
+        execute(&args, &cli, &console).await.unwrap();
 
         // No changes should be made
         let content = std::fs::read_to_string(dir.path().join("composer.json")).unwrap();
@@ -434,8 +434,8 @@ mod tests {
 
     // ── Dev-only flag ──────────────────────────────────────────────────────
 
-    #[test]
-    fn test_dev_only_flag_only_bumps_require_dev() {
+    #[tokio::test]
+    async fn test_dev_only_flag_only_bumps_require_dev() {
         let dir = tempdir().unwrap();
         let composer_json = r#"{
     "name": "test/project",
@@ -467,7 +467,7 @@ mod tests {
             verbosity: mozart_core::console::Verbosity::Normal,
             decorated: false,
         };
-        execute(&args, &cli, &console).unwrap();
+        execute(&args, &cli, &console).await.unwrap();
 
         let content = std::fs::read_to_string(dir.path().join("composer.json")).unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
@@ -479,8 +479,8 @@ mod tests {
 
     // ── No-dev-only flag ───────────────────────────────────────────────────
 
-    #[test]
-    fn test_no_dev_only_flag_only_bumps_require() {
+    #[tokio::test]
+    async fn test_no_dev_only_flag_only_bumps_require() {
         let dir = tempdir().unwrap();
         let composer_json = r#"{
     "name": "test/project",
@@ -512,7 +512,7 @@ mod tests {
             verbosity: mozart_core::console::Verbosity::Normal,
             decorated: false,
         };
-        execute(&args, &cli, &console).unwrap();
+        execute(&args, &cli, &console).await.unwrap();
 
         let content = std::fs::read_to_string(dir.path().join("composer.json")).unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
@@ -569,8 +569,8 @@ mod tests {
 
     // ── Lock file hash updated ─────────────────────────────────────────────
 
-    #[test]
-    fn test_lock_file_hash_updated_after_bump() {
+    #[tokio::test]
+    async fn test_lock_file_hash_updated_after_bump() {
         let dir = tempdir().unwrap();
         let composer_json = r#"{
     "name": "test/project",
@@ -596,7 +596,7 @@ mod tests {
             verbosity: mozart_core::console::Verbosity::Normal,
             decorated: false,
         };
-        execute(&args, &cli, &console).unwrap();
+        execute(&args, &cli, &console).await.unwrap();
 
         // The lock file content-hash should now match the updated composer.json
         let updated_composer = std::fs::read_to_string(dir.path().join("composer.json")).unwrap();
@@ -609,8 +609,8 @@ mod tests {
 
     // ── Package filter ─────────────────────────────────────────────────────
 
-    #[test]
-    fn test_package_filter_only_bumps_specified_packages() {
+    #[tokio::test]
+    async fn test_package_filter_only_bumps_specified_packages() {
         let dir = tempdir().unwrap();
         let composer_json = r#"{
     "name": "test/project",
@@ -643,7 +643,7 @@ mod tests {
             verbosity: mozart_core::console::Verbosity::Normal,
             decorated: false,
         };
-        execute(&args, &cli, &console).unwrap();
+        execute(&args, &cli, &console).await.unwrap();
 
         let content = std::fs::read_to_string(dir.path().join("composer.json")).unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();

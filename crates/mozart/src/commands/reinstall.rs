@@ -65,7 +65,7 @@ pub struct ReinstallArgs {
 
 // ─── Main entry point ─────────────────────────────────────────────────────────
 
-pub fn execute(
+pub async fn execute(
     args: &ReinstallArgs,
     cli: &super::Cli,
     console: &mozart_core::console::Console,
@@ -215,7 +215,8 @@ pub fn execute(
             &locked.name,
             Some(&mut progress),
             Some(&files_cache),
-        )?;
+        )
+        .await?;
 
         progress.finish();
         reinstalled_count += 1;

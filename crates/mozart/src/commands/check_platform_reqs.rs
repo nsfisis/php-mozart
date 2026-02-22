@@ -52,7 +52,7 @@ struct CheckResult {
 
 // ─── Main entry point ────────────────────────────────────────────────────────
 
-pub fn execute(
+pub async fn execute(
     args: &CheckPlatformReqsArgs,
     cli: &super::Cli,
     _console: &mozart_core::console::Console,
