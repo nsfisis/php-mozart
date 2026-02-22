@@ -365,23 +365,28 @@ impl VersionConstraint {
     }
 }
 
-/// Split on `||` (pipe-OR), but not inside version strings.
+/// Split on `|` or `||` (pipe-OR). Composer accepts both forms.
 fn split_or(s: &str) -> Vec<&str> {
     let mut parts = Vec::new();
     let mut start = 0;
     let bytes = s.as_bytes();
     let mut i = 0;
     while i < bytes.len() {
-        if i + 1 < bytes.len() && bytes[i] == b'|' && bytes[i + 1] == b'|' {
+        if bytes[i] == b'|' {
             parts.push(s[start..i].trim());
-            i += 2;
+            i += 1;
+            // Skip second pipe if `||`
+            if i < bytes.len() && bytes[i] == b'|' {
+                i += 1;
+            }
             start = i;
         } else {
             i += 1;
         }
     }
     parts.push(s[start..].trim());
-    parts
+    // Filter out empty parts (e.g. from leading/trailing pipes)
+    parts.into_iter().filter(|p| !p.is_empty()).collect()
 }
 
 /// Parse an AND group (space or comma separated constraints).
@@ -1602,6 +1607,16 @@ mod tests {
         assert!(satisfies("^8.0||^9.0||^10.0||^11.0", "11.0.1"));
         assert!(!satisfies("^8.0||^9.0||^10.0||^11.0", "7.9.9"));
         assert!(!satisfies("^8.0||^9.0||^10.0||^11.0", "12.0.0"));
+    }
+
+    #[test]
+    fn test_single_pipe_or() {
+        // Single pipe `|` is the standard Composer OR separator
+        assert!(satisfies("^6.0|^7.0|^8.0|^9.0|^10.0|^11.0", "6.0.0"));
+        assert!(satisfies("^6.0|^7.0|^8.0|^9.0|^10.0|^11.0", "9.0.0"));
+        assert!(satisfies("^6.0|^7.0|^8.0|^9.0|^10.0|^11.0", "11.5.0"));
+        assert!(!satisfies("^6.0|^7.0|^8.0|^9.0|^10.0|^11.0", "5.9.9"));
+        assert!(!satisfies("^6.0|^7.0|^8.0|^9.0|^10.0|^11.0", "12.0.0"));
     }
 
     #[test]
