@@ -41,7 +41,7 @@ pub async fn execute(
     let format = args.format.as_deref().unwrap_or("text");
     if format != "text" && format != "json" && format != "summary" {
         anyhow::bail!(
-            "Invalid format \"{}\". Supported formats: text, json, summary",
+            "Unsupported format \"{}\".  See help for supported formats.",
             format
         );
     }
@@ -130,7 +130,7 @@ fn load_locked_licenses(working_dir: &Path, no_dev: bool) -> anyhow::Result<Vec<
     let lock_path = working_dir.join("composer.lock");
     if !lock_path.exists() {
         anyhow::bail!(
-            "A valid composer.json and composer.lock file is required to run this command with --locked"
+            "Valid composer.json and composer.lock files are required to run this command with --locked"
         );
     }
 
