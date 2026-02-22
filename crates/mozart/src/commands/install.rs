@@ -536,12 +536,46 @@ pub async fn execute(
     }
 
     // Step 3: Read composer.lock
+    // If no lock file present, fall back to update (matching Composer behavior).
     let lock_path = working_dir.join("composer.lock");
     if !lock_path.exists() {
-        return Err(mozart_core::exit_code::bail(
-            mozart_core::exit_code::LOCK_FILE_INVALID,
-            "No composer.lock file present. Run \"mozart update\" to generate one.",
+        console.info(&console::warning(
+            "No composer.lock file present. Updating dependencies to latest instead of installing from lock file.",
         ));
+        let update_args = super::update::UpdateArgs {
+            packages: vec![],
+            with: vec![],
+            prefer_source: args.prefer_source,
+            prefer_dist: args.prefer_dist,
+            prefer_install: args.prefer_install.clone(),
+            dry_run: args.dry_run,
+            dev: args.dev,
+            no_dev: args.no_dev,
+            lock: false,
+            no_install: false,
+            no_audit: !args.audit,
+            audit_format: args.audit_format.clone(),
+            no_security_blocking: args.no_security_blocking,
+            no_autoloader: args.no_autoloader,
+            no_suggest: args.no_suggest,
+            no_progress: args.no_progress,
+            with_dependencies: false,
+            with_all_dependencies: false,
+            optimize_autoloader: args.optimize_autoloader,
+            classmap_authoritative: args.classmap_authoritative,
+            apcu_autoloader: args.apcu_autoloader,
+            apcu_autoloader_prefix: args.apcu_autoloader_prefix.clone(),
+            ignore_platform_req: args.ignore_platform_req.clone(),
+            ignore_platform_reqs: args.ignore_platform_reqs,
+            prefer_stable: false,
+            prefer_lowest: false,
+            minimal_changes: false,
+            patch_only: false,
+            interactive: false,
+            root_reqs: false,
+            bump_after_update: None,
+        };
+        return super::update::execute(&update_args, cli, console).await;
     }
     let lock = lockfile::LockFile::read_from_file(&lock_path)?;
 
