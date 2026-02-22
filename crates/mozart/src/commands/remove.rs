@@ -781,7 +781,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
     fn test_remove_no_update_only_modifies_json() {
         use tempfile::tempdir;
 
@@ -814,7 +813,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
     fn test_remove_dry_run_modifies_nothing() {
         use tempfile::tempdir;
 

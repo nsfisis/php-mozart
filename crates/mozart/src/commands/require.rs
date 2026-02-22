@@ -1012,7 +1012,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
     fn test_require_dry_run_modifies_nothing() {
         use tempfile::tempdir;
 

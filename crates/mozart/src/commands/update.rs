@@ -1704,7 +1704,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
     fn test_update_lock_only_e2e() {
         use tempfile::tempdir;
 
