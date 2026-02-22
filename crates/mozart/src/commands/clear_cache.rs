@@ -20,7 +20,8 @@ pub async fn execute(
         let repo_cache = Cache::repo(&config);
         let files_cache = Cache::files(&config);
 
-        repo_cache.gc(config.cache_ttl, u64::MAX)?;
+        // Composer enforces a 1 GB cap on the repo cache during GC
+        repo_cache.gc(config.cache_ttl, 1024 * 1024 * 1024)?;
         files_cache.gc(config.cache_files_ttl, config.cache_files_maxsize)?;
 
         console.info("Cache garbage collection complete.");
