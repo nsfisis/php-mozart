@@ -37,6 +37,7 @@ pub async fn execute(
                 "No composer.json found in the current directory and no package specified."
             );
         }
+        eprintln!("No package specified, opening homepage for the root package");
         let root = mozart_core::package::read_from_file(&composer_json)?;
         vec![root.name.clone()]
     } else {
@@ -47,19 +48,30 @@ pub async fn execute(
 
     for package_name in &packages {
         match resolve_url(package_name, &working_dir, args.homepage).await? {
-            Some(url) => {
+            ResolveResult::Found(url) => {
                 if args.show {
-                    println!("{}", url);
+                    console.write_stdout(
+                        &console_format!("<info>{}</info>", url),
+                        mozart_core::console::Verbosity::Normal,
+                    );
                 } else {
-                    console.info(&format!("Opening {} in browser.", url));
                     open_browser(&url)?;
                 }
             }
-            None => {
-                console.info(&console_format!(
-                    "<warning>No URL found for package \"{}\".</warning>",
-                    package_name
-                ));
+            ResolveResult::NotFound => {
+                eprintln!(
+                    "{}",
+                    console_format!("<warning>Package {} not found</warning>", package_name)
+                );
+                exit_code = 1;
+            }
+            ResolveResult::NoUrl => {
+                let msg = if args.homepage {
+                    format!("Invalid or missing homepage for {}", package_name)
+                } else {
+                    format!("Invalid or missing repository URL for {}", package_name)
+                };
+                eprintln!("{}", console_format!("<warning>{}</warning>", msg));
                 exit_code = 1;
             }
         }
@@ -74,19 +86,30 @@ pub async fn execute(
 
 // ─── URL resolution ───────────────────────────────────────────────────────────
 
+enum ResolveResult {
+    /// Package found and URL resolved
+    Found(String),
+    /// Package found but no valid URL available
+    NoUrl,
+    /// Package not found in any source
+    NotFound,
+}
+
 async fn resolve_url(
     package_name: &str,
     working_dir: &Path,
     prefer_homepage: bool,
-) -> anyhow::Result<Option<String>> {
+) -> anyhow::Result<ResolveResult> {
     // 1. Check root package (composer.json)
     let composer_json = working_dir.join("composer.json");
     if composer_json.exists()
         && let Ok(root) = mozart_core::package::read_from_file(&composer_json)
         && root.name.eq_ignore_ascii_case(package_name)
-        && let Some(url) = extract_url_from_root(&root, prefer_homepage)
     {
-        return Ok(Some(url));
+        return Ok(match extract_url_from_root(&root, prefer_homepage) {
+            Some(url) => ResolveResult::Found(url),
+            None => ResolveResult::NoUrl,
+        });
     }
 
     // 2. Check lock file (composer.lock)
@@ -101,14 +124,17 @@ async fn resolve_url(
 
         for pkg in all_packages {
             if pkg.name.eq_ignore_ascii_case(package_name) {
-                return Ok(extract_url_from_locked(pkg, prefer_homepage));
+                return Ok(match extract_url_from_locked(pkg, prefer_homepage) {
+                    Some(url) => ResolveResult::Found(url),
+                    None => ResolveResult::NoUrl,
+                });
             }
         }
     }
 
     // 3. Fall back to Packagist API
     match mozart_registry::packagist::fetch_package_versions(package_name, None).await {
-        Ok(versions) => {
+        Ok(versions) if !versions.is_empty() => {
             // Find the latest stable version (first non-dev, or fallback to first)
             let best = versions
                 .iter()
@@ -116,11 +142,14 @@ async fn resolve_url(
                 .or_else(|| versions.first());
 
             if let Some(version) = best {
-                return Ok(extract_url_from_packagist(version, prefer_homepage));
+                return Ok(match extract_url_from_packagist(version, prefer_homepage) {
+                    Some(url) => ResolveResult::Found(url),
+                    None => ResolveResult::NoUrl,
+                });
             }
-            Ok(None)
+            Ok(ResolveResult::NotFound)
         }
-        Err(_) => Ok(None),
+        _ => Ok(ResolveResult::NotFound),
     }
 }
 
