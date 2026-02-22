@@ -31,7 +31,34 @@ pub struct RunScriptArgs {
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
-const INTERNAL_ONLY_EVENTS: &[&str] = &[
+const ALLOWED_SCRIPT_EVENTS: &[&str] = &[
+    "pre-install-cmd",
+    "post-install-cmd",
+    "pre-update-cmd",
+    "post-update-cmd",
+    "pre-status-cmd",
+    "post-status-cmd",
+    "post-root-package-install",
+    "post-create-project-cmd",
+    "pre-archive-cmd",
+    "post-archive-cmd",
+    "pre-autoload-dump",
+    "post-autoload-dump",
+];
+
+const ALL_SCRIPT_EVENTS: &[&str] = &[
+    "pre-install-cmd",
+    "post-install-cmd",
+    "pre-update-cmd",
+    "post-update-cmd",
+    "pre-status-cmd",
+    "post-status-cmd",
+    "post-root-package-install",
+    "post-create-project-cmd",
+    "pre-archive-cmd",
+    "post-archive-cmd",
+    "pre-autoload-dump",
+    "post-autoload-dump",
     "pre-dependencies-solving",
     "post-dependencies-solving",
     "pre-package-install",
@@ -39,9 +66,10 @@ const INTERNAL_ONLY_EVENTS: &[&str] = &[
     "pre-package-update",
     "post-package-update",
     "pre-package-uninstall",
+    "post-package-uninstall",
     "pre-operations-exec",
-    "command",
-    "pre-command-run",
+    "pre-pool-create",
+    "pre-file-download",
 ];
 
 // ─── Main entry point ────────────────────────────────────────────────────────
@@ -62,6 +90,10 @@ pub async fn execute(
         return list_scripts(&scripts, &descriptions);
     }
 
+    if cli.no_scripts {
+        return Ok(());
+    }
+
     let script_name = match &args.script {
         Some(name) => name.clone(),
         None => {
@@ -69,27 +101,35 @@ pub async fn execute(
         }
     };
 
-    if INTERNAL_ONLY_EVENTS.contains(&script_name.as_str()) {
-        anyhow::bail!(
-            "Script \"{}\" cannot be run via run-script (internal event only)",
-            script_name
-        );
+    if !ALLOWED_SCRIPT_EVENTS.contains(&script_name.as_str())
+        && ALL_SCRIPT_EVENTS.contains(&script_name.as_str())
+    {
+        anyhow::bail!("Script \"{}\" cannot be run with this command", script_name);
     }
 
     if !scripts.contains_key(&script_name) {
         anyhow::bail!("Script \"{}\" is not defined in this package", script_name);
     }
 
-    let timeout = args.timeout.map(Duration::from_secs).or_else(|| {
-        let composer_json_path = working_dir.join("composer.json");
-        if let Ok(content) = std::fs::read_to_string(&composer_json_path)
-            && let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&content)
-            && let Some(secs) = parsed["config"]["process-timeout"].as_u64()
-        {
-            return Some(Duration::from_secs(secs));
+    let timeout = match args.timeout {
+        Some(0) => None,
+        Some(secs) => Some(Duration::from_secs(secs)),
+        None => {
+            let composer_json_path = working_dir.join("composer.json");
+            if let Ok(content) = std::fs::read_to_string(&composer_json_path)
+                && let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&content)
+                && let Some(secs) = parsed["config"]["process-timeout"].as_u64()
+            {
+                if secs == 0 {
+                    None
+                } else {
+                    Some(Duration::from_secs(secs))
+                }
+            } else {
+                Some(Duration::from_secs(300))
+            }
         }
-        Some(Duration::from_secs(300))
-    });
+    };
 
     let dev_mode = !args.no_dev;
 
@@ -114,7 +154,7 @@ pub async fn execute(
     )?;
 
     if exit_code != 0 {
-        std::process::exit(exit_code);
+        return Err(mozart_core::exit_code::bail_silent(exit_code));
     }
 
     Ok(())
@@ -339,12 +379,7 @@ fn run_script_entry(
         format!("{} {}", entry, effective_args.join(" "))
     };
 
-    let env_overrides = vec![(
-        "COMPOSER_DEV_MODE".to_string(),
-        if dev_mode { "1" } else { "0" }.to_string(),
-    )];
-
-    run_shell_command(&full_cmd, working_dir, bin_dir, timeout, &env_overrides)
+    run_shell_command(&full_cmd, working_dir, bin_dir, timeout, &[])
 }
 
 fn run_shell_command(
@@ -447,7 +482,7 @@ fn is_php_callback(entry: &str) -> bool {
     if trimmed.contains("::") {
         return true;
     }
-    if trimmed.contains('\\') && trimmed.ends_with("Command") {
+    if trimmed.contains('\\') {
         return true;
     }
     false
@@ -489,6 +524,11 @@ mod tests {
     #[test]
     fn test_is_php_callback_fqn_command() {
         assert!(is_php_callback("Vendor\\MyCommand"));
+    }
+
+    #[test]
+    fn test_is_php_callback_namespaced_listener() {
+        assert!(is_php_callback("App\\Listeners\\PostInstall"));
     }
 
     #[test]
@@ -942,8 +982,15 @@ mod tests {
 
     #[test]
     fn test_internal_event_rejected() {
-        assert!(INTERNAL_ONLY_EVENTS.contains(&"pre-package-install"));
-        assert!(INTERNAL_ONLY_EVENTS.contains(&"post-package-install"));
-        assert!(INTERNAL_ONLY_EVENTS.contains(&"command"));
+        // Internal events are in ALL_SCRIPT_EVENTS but not in ALLOWED_SCRIPT_EVENTS
+        assert!(ALL_SCRIPT_EVENTS.contains(&"pre-package-install"));
+        assert!(ALL_SCRIPT_EVENTS.contains(&"post-package-install"));
+        assert!(ALL_SCRIPT_EVENTS.contains(&"pre-dependencies-solving"));
+        assert!(!ALLOWED_SCRIPT_EVENTS.contains(&"pre-package-install"));
+        assert!(!ALLOWED_SCRIPT_EVENTS.contains(&"post-package-install"));
+        assert!(!ALLOWED_SCRIPT_EVENTS.contains(&"pre-dependencies-solving"));
+        // User-runnable events are in both
+        assert!(ALLOWED_SCRIPT_EVENTS.contains(&"pre-install-cmd"));
+        assert!(ALL_SCRIPT_EVENTS.contains(&"pre-install-cmd"));
     }
 }
