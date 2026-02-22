@@ -135,8 +135,8 @@ pub async fn execute(
     };
 
     if selected.is_empty() {
-        println!("No packages matched the given criteria.");
-        return Ok(());
+        eprintln!("Found no packages to reinstall, aborting.");
+        std::process::exit(1);
     }
 
     // Step 6: For each selected package, find its locked metadata.
