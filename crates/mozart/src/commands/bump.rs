@@ -3,6 +3,9 @@ use mozart_core::console_format;
 use std::collections::HashMap;
 use std::path::PathBuf;
 
+/// Exit code for stale lock file (matches Composer's BumpCommand::ERROR_LOCK_OUTDATED)
+const ERROR_LOCK_OUTDATED: i32 = 2;
+
 #[derive(Args)]
 pub struct BumpArgs {
     /// Package(s) to bump
@@ -71,7 +74,7 @@ pub async fn execute(
     // Check lock file freshness
     if !lock.is_fresh(&composer_json_content) {
         return Err(mozart_core::exit_code::bail(
-            mozart_core::exit_code::LOCK_FILE_INVALID,
+            ERROR_LOCK_OUTDATED,
             "composer.lock is not up to date with composer.json. \
              Run `mozart install` or `mozart update` to refresh it.",
         ));
@@ -606,8 +609,8 @@ mod tests {
 
     // ── Stale lock file ────────────────────────────────────────────────────
 
-    #[test]
-    fn test_stale_lock_file_produces_exit_code_2() {
+    #[tokio::test]
+    async fn test_stale_lock_file_produces_exit_code_2() {
         let dir = tempdir().unwrap();
         let composer_json = r#"{
     "name": "test/project",
@@ -623,18 +626,26 @@ mod tests {
         lock.write_to_file(&dir.path().join("composer.lock"))
             .unwrap();
 
-        let _args = BumpArgs {
+        let args = BumpArgs {
             packages: vec![],
             dev_only: false,
             no_dev_only: false,
             dry_run: false,
         };
-        let _cli = make_cli(dir.path());
+        let cli = make_cli(dir.path());
+        let console = mozart_core::console::Console {
+            interactive: false,
+            verbosity: mozart_core::console::Verbosity::Normal,
+            decorated: false,
+        };
+        let result = execute(&args, &cli, &console).await;
 
-        // The execute function returns Err(MozartError) with LOCK_FILE_INVALID for stale lock.
-        // We verify the lock IS stale here as a prerequisite check.
-        let lock_loaded = LockFile::read_from_file(&dir.path().join("composer.lock")).unwrap();
-        assert!(!lock_loaded.is_fresh(composer_json));
+        // stale lock file should return exit code 2 (ERROR_LOCK_OUTDATED)
+        let err = result.unwrap_err();
+        let mozart_err = err
+            .downcast_ref::<mozart_core::exit_code::MozartError>()
+            .expect("should be MozartError");
+        assert_eq!(mozart_err.exit_code, ERROR_LOCK_OUTDATED);
     }
 
     // ── Platform packages skipped ──────────────────────────────────────────
