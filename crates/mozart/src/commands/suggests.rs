@@ -1,5 +1,6 @@
 use clap::Args;
-use std::collections::{BTreeMap, HashSet};
+use mozart_core::console;
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 #[derive(Args)]
@@ -41,7 +42,7 @@ struct Suggestion {
 pub async fn execute(
     args: &SuggestsArgs,
     cli: &super::Cli,
-    _console: &mozart_core::console::Console,
+    _console: &console::Console,
 ) -> anyhow::Result<()> {
     let working_dir = match &cli.working_dir {
         Some(dir) => PathBuf::from(dir),
@@ -61,6 +62,9 @@ pub async fn execute(
     // Also collect root package's own suggestions
     let root_suggestions = collect_suggestions_from_root(&working_dir)?;
     suggestions.extend(root_suggestions);
+
+    // Deduplicate by (source, target) pair — last reason wins (Composer behavior)
+    let suggestions = deduplicate_suggestions(suggestions);
 
     // 2. Collect installed names for filtering
     let installed_names = if has_lock {
@@ -130,8 +134,9 @@ pub async fn execute(
         let diff = total_before_direct_filter.saturating_sub(shown);
         if diff > 0 {
             println!(
-                "{} additional suggestions by transitive dependencies can be shown with --all",
-                diff
+                "{} by transitive dependencies can be shown with {}",
+                console::info(&format!("{diff} additional suggestions")),
+                console::info("--all"),
             );
         }
     }
@@ -401,6 +406,28 @@ fn sanitize_reason(reason: &str) -> String {
         .collect()
 }
 
+// ─── Deduplication ────────────────────────────────────────────────────────────
+
+/// Deduplicate suggestions by (source, target) pair.
+/// If the same source suggests the same target multiple times, the last reason wins.
+/// This matches Composer's behavior where map insertion overwrites previous entries.
+fn deduplicate_suggestions(suggestions: Vec<Suggestion>) -> Vec<Suggestion> {
+    let mut seen: HashMap<(String, String), usize> = HashMap::new();
+    let mut deduped: Vec<Suggestion> = Vec::new();
+
+    for s in suggestions {
+        let key = (s.source.to_lowercase(), s.target.to_lowercase());
+        if let Some(&idx) = seen.get(&key) {
+            deduped[idx].reason = s.reason;
+        } else {
+            seen.insert(key, deduped.len());
+            deduped.push(s);
+        }
+    }
+
+    deduped
+}
+
 // ─── Rendering ───────────────────────────────────────────────────────────────
 
 fn render_list(suggestions: &[&Suggestion]) {
@@ -408,7 +435,7 @@ fn render_list(suggestions: &[&Suggestion]) {
     targets.sort_unstable();
     targets.dedup();
     for t in targets {
-        println!("{}", t);
+        println!("{}", console::info(t));
     }
 }
 
@@ -419,13 +446,13 @@ fn render_by_package(suggestions: &[&Suggestion]) {
         grouped.entry(s.source.as_str()).or_default().push(s);
     }
     for (source, items) in &grouped {
-        println!("{} suggests:", source);
+        println!("{} suggests:", console::comment(source));
         for s in items {
             let reason = sanitize_reason(&s.reason);
             if reason.is_empty() {
-                println!(" - {}", s.target);
+                println!(" - {}", console::info(&s.target));
             } else {
-                println!(" - {}: {}", s.target, reason);
+                println!(" - {}: {}", console::info(&s.target), reason);
             }
         }
         println!();
@@ -439,13 +466,13 @@ fn render_by_suggestion(suggestions: &[&Suggestion]) {
         grouped.entry(s.target.as_str()).or_default().push(s);
     }
     for (target, items) in &grouped {
-        println!("{} is suggested by:", target);
+        println!("{} is suggested by:", console::info(target));
         for s in items {
             let reason = sanitize_reason(&s.reason);
             if reason.is_empty() {
-                println!(" - {}", s.source);
+                println!(" - {}", console::comment(&s.source));
             } else {
-                println!(" - {}: {}", s.source, reason);
+                println!(" - {}: {}", console::comment(&s.source), reason);
             }
         }
         println!();
@@ -542,6 +569,47 @@ mod tests {
             platform_dev: serde_json::json!({}),
             plugin_api_version: Some("2.6.0".to_string()),
         }
+    }
+
+    // ── Deduplication tests ────────────────────────────────────────────────────
+
+    #[test]
+    fn test_deduplicate_keeps_last_reason() {
+        let suggestions = vec![
+            make_suggestion("vendor/a", "ext-intl", "first reason"),
+            make_suggestion("vendor/b", "ext-redis", "only reason"),
+            make_suggestion("vendor/a", "ext-intl", "second reason"),
+        ];
+        let deduped = deduplicate_suggestions(suggestions);
+        assert_eq!(deduped.len(), 2);
+        // First entry should be vendor/a -> ext-intl with updated reason
+        assert_eq!(deduped[0].source, "vendor/a");
+        assert_eq!(deduped[0].target, "ext-intl");
+        assert_eq!(deduped[0].reason, "second reason");
+        // Second entry should be vendor/b -> ext-redis
+        assert_eq!(deduped[1].source, "vendor/b");
+        assert_eq!(deduped[1].target, "ext-redis");
+    }
+
+    #[test]
+    fn test_deduplicate_case_insensitive() {
+        let suggestions = vec![
+            make_suggestion("Vendor/A", "Ext-Intl", "first"),
+            make_suggestion("vendor/a", "ext-intl", "second"),
+        ];
+        let deduped = deduplicate_suggestions(suggestions);
+        assert_eq!(deduped.len(), 1);
+        assert_eq!(deduped[0].reason, "second");
+    }
+
+    #[test]
+    fn test_deduplicate_no_duplicates() {
+        let suggestions = vec![
+            make_suggestion("vendor/a", "ext-intl", "reason a"),
+            make_suggestion("vendor/b", "ext-redis", "reason b"),
+        ];
+        let deduped = deduplicate_suggestions(suggestions);
+        assert_eq!(deduped.len(), 2);
     }
 
     // ── Filter tests ──────────────────────────────────────────────────────────
