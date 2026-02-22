@@ -83,7 +83,7 @@ async fn check_http_connectivity(url: &str) -> CheckResult {
 
     let client = match reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(10))
-        .user_agent(concat!("mozart/", env!("CARGO_PKG_VERSION")))
+        .user_agent(mozart_core::http::user_agent())
         .build()
     {
         Ok(c) => c,
@@ -111,7 +111,7 @@ async fn check_github_api() -> CheckResult {
 
     let client = match reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(10))
-        .user_agent(concat!("mozart/", env!("CARGO_PKG_VERSION")))
+        .user_agent(mozart_core::http::user_agent())
         .build()
     {
         Ok(c) => c,

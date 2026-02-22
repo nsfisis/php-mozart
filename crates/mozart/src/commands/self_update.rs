@@ -133,7 +133,7 @@ async fn fetch_releases(include_prerelease: bool) -> anyhow::Result<Vec<GitHubRe
 
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(30))
-        .user_agent(concat!("mozart/", env!("CARGO_PKG_VERSION")))
+        .user_agent(mozart_core::http::user_agent())
         .build()
         .map_err(|e| anyhow::anyhow!("Could not build HTTP client: {e}"))?;
 
@@ -212,7 +212,7 @@ async fn download_asset(
 ) -> anyhow::Result<()> {
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(300))
-        .user_agent(concat!("mozart/", env!("CARGO_PKG_VERSION")))
+        .user_agent(mozart_core::http::user_agent())
         .build()
         .map_err(|e| anyhow::anyhow!("Could not build HTTP client: {e}"))?;
 

@@ -1,5 +1,6 @@
 pub mod console;
 pub mod exit_code;
+pub mod http;
 pub mod package;
 pub mod platform;
 pub mod suggest;

@@ -108,7 +108,10 @@ pub async fn download_dist(
         }
     }
 
-    let response = reqwest::get(url).await?;
+    let client = reqwest::Client::builder()
+        .user_agent(mozart_core::http::user_agent())
+        .build()?;
+    let response = client.get(url).send().await?;
 
     if !response.status().is_success() {
         anyhow::bail!(
