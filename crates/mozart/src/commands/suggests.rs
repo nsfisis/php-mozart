@@ -143,7 +143,7 @@ pub async fn execute(
         render_by_suggestion(&filtered);
     } else if args.by_package && args.by_suggestion {
         render_by_package(&filtered);
-        println!("---");
+        println!("{}", "-".repeat(78));
         render_by_suggestion(&filtered);
     } else {
         // Default: by-package
@@ -379,10 +379,26 @@ fn compute_direct_deps(working_dir: &Path) -> anyhow::Result<HashSet<String>> {
     }
     let root = mozart_core::package::read_from_file(&composer_json_path)?;
     let mut deps: HashSet<String> = HashSet::new();
+    // Include the root package itself so its suggestions are shown
+    if !root.name.is_empty() {
+        deps.insert(root.name.to_lowercase());
+    }
     for name in root.require.keys().chain(root.require_dev.keys()) {
         deps.insert(name.to_lowercase());
     }
     Ok(deps)
+}
+
+// ─── Sanitization ────────────────────────────────────────────────────────────
+
+/// Sanitize a suggestion reason string for safe terminal output.
+/// Replaces newlines with spaces and strips control characters.
+fn sanitize_reason(reason: &str) -> String {
+    reason
+        .replace(['\n', '\r'], " ")
+        .chars()
+        .filter(|c| !c.is_control() || *c == ' ')
+        .collect()
 }
 
 // ─── Rendering ───────────────────────────────────────────────────────────────
@@ -405,12 +421,14 @@ fn render_by_package(suggestions: &[&Suggestion]) {
     for (source, items) in &grouped {
         println!("{} suggests:", source);
         for s in items {
-            if s.reason.is_empty() {
+            let reason = sanitize_reason(&s.reason);
+            if reason.is_empty() {
                 println!(" - {}", s.target);
             } else {
-                println!(" - {}: {}", s.target, s.reason);
+                println!(" - {}: {}", s.target, reason);
             }
         }
+        println!();
     }
 }
 
@@ -423,12 +441,14 @@ fn render_by_suggestion(suggestions: &[&Suggestion]) {
     for (target, items) in &grouped {
         println!("{} is suggested by:", target);
         for s in items {
-            if s.reason.is_empty() {
+            let reason = sanitize_reason(&s.reason);
+            if reason.is_empty() {
                 println!(" - {}", s.source);
             } else {
-                println!(" - {}: {}", s.source, s.reason);
+                println!(" - {}: {}", s.source, reason);
             }
         }
+        println!();
     }
 }
 
