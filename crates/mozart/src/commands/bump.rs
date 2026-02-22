@@ -88,7 +88,12 @@ pub async fn execute(
     let package_filter: Option<Vec<String>> = if args.packages.is_empty() {
         None
     } else {
-        Some(args.packages.iter().map(|p| p.to_lowercase()).collect())
+        Some(
+            args.packages
+                .iter()
+                .map(|p| strip_inline_constraint(p).to_lowercase())
+                .collect(),
+        )
     };
 
     // Collect changes
@@ -102,7 +107,7 @@ pub async fn execute(
                 continue;
             }
             if let Some(ref filter) = package_filter
-                && !filter.contains(&pkg_name.to_lowercase())
+                && !matches_filter(filter, pkg_name)
             {
                 continue;
             }
@@ -126,7 +131,7 @@ pub async fn execute(
                 continue;
             }
             if let Some(ref filter) = package_filter
-                && !filter.contains(&pkg_name.to_lowercase())
+                && !matches_filter(filter, pkg_name)
             {
                 continue;
             }
@@ -233,6 +238,67 @@ fn build_locked_versions_map(
     }
 
     map
+}
+
+/// Strip an inline constraint suffix from a package filter argument.
+///
+/// Composer allows arguments like `vendor/pkg:^2.0`, `vendor/pkg=2.0`, or
+/// `vendor/pkg ^2.0`. This function strips everything from the first `:`,
+/// `=`, or ` ` character onward, returning just the package name portion.
+fn strip_inline_constraint(arg: &str) -> &str {
+    arg.find([':', '=', ' '])
+        .map(|pos| &arg[..pos])
+        .unwrap_or(arg)
+}
+
+/// Returns true if `name` matches any of the glob patterns in `filter`.
+///
+/// Patterns may contain `*` wildcards (e.g. `psr/*`, `symfony/*`).
+/// Matching is case-insensitive. Exact patterns are also supported.
+fn matches_filter(filter: &[String], name: &str) -> bool {
+    let name_lower = name.to_lowercase();
+    filter.iter().any(|pat| glob_matches(pat, &name_lower))
+}
+
+/// Match a single package name against a glob pattern.
+///
+/// Only `*` wildcards are supported (matches any sequence of characters within
+/// a path segment). Matching is case-insensitive.
+///   - `psr/*`      matches `psr/log`, `psr/container`
+///   - `symfony/*`  matches `symfony/console`, `symfony/http-kernel`
+fn glob_matches(pattern: &str, name: &str) -> bool {
+    // Fast path: no wildcard
+    if !pattern.contains('*') {
+        return pattern == name;
+    }
+    let pat_parts: Vec<&str> = pattern.splitn(2, '/').collect();
+    let name_parts: Vec<&str> = name.splitn(2, '/').collect();
+    if pat_parts.len() != name_parts.len() {
+        return false;
+    }
+    pat_parts
+        .iter()
+        .zip(name_parts.iter())
+        .all(|(pp, np)| glob_segment_matches(pp, np))
+}
+
+/// Match a single path segment against a pattern segment (no `/` involved).
+/// `*` matches any sequence of characters (including empty). Both inputs are
+/// already lowercased before being passed here.
+fn glob_segment_matches(pattern: &str, text: &str) -> bool {
+    glob_segment_matches_inner(pattern.as_bytes(), text.as_bytes())
+}
+
+fn glob_segment_matches_inner(pattern: &[u8], text: &[u8]) -> bool {
+    match (pattern.first(), text.first()) {
+        (None, None) => true,
+        (Some(&b'*'), _) => {
+            glob_segment_matches_inner(&pattern[1..], text)
+                || (!text.is_empty() && glob_segment_matches_inner(pattern, &text[1..]))
+        }
+        (Some(p), Some(t)) if p == t => glob_segment_matches_inner(&pattern[1..], &text[1..]),
+        _ => false,
+    }
 }
 
 /// Returns true if the package name is a platform requirement (php, ext-*, lib-*, etc.).
@@ -623,6 +689,81 @@ mod tests {
         );
     }
 
+    // ── strip_inline_constraint ────────────────────────────────────────────
+
+    #[test]
+    fn test_strip_inline_constraint_colon() {
+        assert_eq!(strip_inline_constraint("vendor/pkg:^2.0"), "vendor/pkg");
+    }
+
+    #[test]
+    fn test_strip_inline_constraint_equals() {
+        assert_eq!(strip_inline_constraint("vendor/pkg=2.0.0"), "vendor/pkg");
+    }
+
+    #[test]
+    fn test_strip_inline_constraint_space() {
+        assert_eq!(strip_inline_constraint("vendor/pkg ^2.0"), "vendor/pkg");
+    }
+
+    #[test]
+    fn test_strip_inline_constraint_no_suffix() {
+        assert_eq!(strip_inline_constraint("vendor/pkg"), "vendor/pkg");
+        assert_eq!(strip_inline_constraint("psr/log"), "psr/log");
+    }
+
+    // ── glob_matches ───────────────────────────────────────────────────────
+
+    #[test]
+    fn test_glob_matches_exact() {
+        assert!(glob_matches("psr/log", "psr/log"));
+        assert!(!glob_matches("psr/log", "psr/container"));
+    }
+
+    #[test]
+    fn test_glob_matches_wildcard_vendor() {
+        assert!(glob_matches("psr/*", "psr/log"));
+        assert!(glob_matches("psr/*", "psr/container"));
+        assert!(!glob_matches("psr/*", "symfony/console"));
+    }
+
+    #[test]
+    fn test_glob_matches_wildcard_suffix() {
+        assert!(glob_matches("monolog/mono*", "monolog/monolog"));
+        assert!(!glob_matches("monolog/mono*", "monolog/other"));
+    }
+
+    #[test]
+    fn test_glob_matches_case_insensitive() {
+        // pattern is lowercased before being stored; name is also lowercased
+        assert!(glob_matches("psr/log", "psr/log"));
+    }
+
+    // ── matches_filter ─────────────────────────────────────────────────────
+
+    #[test]
+    fn test_matches_filter_exact() {
+        let filter = vec!["psr/log".to_string()];
+        assert!(matches_filter(&filter, "psr/log"));
+        assert!(!matches_filter(&filter, "psr/container"));
+    }
+
+    #[test]
+    fn test_matches_filter_glob() {
+        let filter = vec!["psr/*".to_string()];
+        assert!(matches_filter(&filter, "psr/log"));
+        assert!(matches_filter(&filter, "psr/container"));
+        assert!(!matches_filter(&filter, "monolog/monolog"));
+    }
+
+    #[test]
+    fn test_matches_filter_multiple_patterns() {
+        let filter = vec!["psr/*".to_string(), "monolog/monolog".to_string()];
+        assert!(matches_filter(&filter, "psr/log"));
+        assert!(matches_filter(&filter, "monolog/monolog"));
+        assert!(!matches_filter(&filter, "symfony/console"));
+    }
+
     // ── Package filter ─────────────────────────────────────────────────────
 
     #[tokio::test]
@@ -666,5 +807,98 @@ mod tests {
         assert_eq!(parsed["require"]["psr/log"], "^1.1.4");
         // psr/http-message should NOT be bumped
         assert_eq!(parsed["require"]["psr/http-message"], "^1.0");
+    }
+
+    #[tokio::test]
+    async fn test_package_filter_glob_wildcard() {
+        let dir = tempdir().unwrap();
+        let composer_json = r#"{
+    "name": "test/project",
+    "type": "project",
+    "require": {
+        "psr/log": "^1.0",
+        "psr/container": "^1.0",
+        "monolog/monolog": "^2.0"
+    }
+}"#;
+        write_composer_json(dir.path(), composer_json);
+
+        let lock = minimal_lock(
+            vec![
+                make_locked_package("psr/log", "1.1.4"),
+                make_locked_package("psr/container", "1.1.1"),
+                make_locked_package("monolog/monolog", "2.9.0"),
+            ],
+            vec![],
+        );
+        write_lock_with_hash(dir.path(), lock, composer_json);
+
+        // Filter using a wildcard: only bump psr/* packages
+        let args = BumpArgs {
+            packages: vec!["psr/*".to_string()],
+            dev_only: false,
+            no_dev_only: false,
+            dry_run: false,
+        };
+        let cli = make_cli(dir.path());
+        let console = mozart_core::console::Console {
+            interactive: false,
+            verbosity: mozart_core::console::Verbosity::Normal,
+            decorated: false,
+        };
+        execute(&args, &cli, &console).await.unwrap();
+
+        let content = std::fs::read_to_string(dir.path().join("composer.json")).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
+        // Both psr/* packages should be bumped
+        assert_eq!(parsed["require"]["psr/log"], "^1.1.4");
+        assert_eq!(parsed["require"]["psr/container"], "^1.1.1");
+        // monolog/monolog should NOT be bumped
+        assert_eq!(parsed["require"]["monolog/monolog"], "^2.0");
+    }
+
+    #[tokio::test]
+    async fn test_package_filter_with_inline_constraint() {
+        let dir = tempdir().unwrap();
+        let composer_json = r#"{
+    "name": "test/project",
+    "type": "project",
+    "require": {
+        "psr/log": "^1.0",
+        "monolog/monolog": "^2.0"
+    }
+}"#;
+        write_composer_json(dir.path(), composer_json);
+
+        let lock = minimal_lock(
+            vec![
+                make_locked_package("psr/log", "1.1.4"),
+                make_locked_package("monolog/monolog", "2.9.0"),
+            ],
+            vec![],
+        );
+        write_lock_with_hash(dir.path(), lock, composer_json);
+
+        // Specify filter with an inline constraint suffix (Composer-style: "psr/log:^1.0")
+        let args = BumpArgs {
+            packages: vec!["psr/log:^1.0".to_string()],
+            dev_only: false,
+            no_dev_only: false,
+            dry_run: false,
+        };
+        let cli = make_cli(dir.path());
+        let console = mozart_core::console::Console {
+            interactive: false,
+            verbosity: mozart_core::console::Verbosity::Normal,
+            decorated: false,
+        };
+        execute(&args, &cli, &console).await.unwrap();
+
+        let content = std::fs::read_to_string(dir.path().join("composer.json")).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
+        // psr/log should be bumped (constraint suffix stripped from filter arg)
+        assert_eq!(parsed["require"]["psr/log"], "^1.1.4");
+        // monolog/monolog should NOT be bumped
+        assert_eq!(parsed["require"]["monolog/monolog"], "^2.0");
     }
 }
