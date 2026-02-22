@@ -107,15 +107,9 @@ impl PackageName {
         PackageName(Self::ROOT.to_string())
     }
 
-    /// Returns true if this is a platform package (php, ext-*, lib-*).
+    /// Returns true if this is a platform package (php, ext-*, lib-*, composer pseudo packages).
     pub fn is_platform(&self) -> bool {
-        self.0 == "php"
-            || self.0.starts_with("ext-")
-            || self.0.starts_with("lib-")
-            || self.0 == "php-64bit"
-            || self.0 == "php-ipv6"
-            || self.0 == "php-zts"
-            || self.0 == "php-debug"
+        mozart_core::platform::is_platform_package(&self.0)
     }
 
     /// Returns true if this is the virtual root package.
@@ -711,6 +705,9 @@ mod tests {
         assert!(PackageName("php".to_string()).is_platform());
         assert!(PackageName("ext-json".to_string()).is_platform());
         assert!(PackageName("lib-curl".to_string()).is_platform());
+        assert!(PackageName("composer".to_string()).is_platform());
+        assert!(PackageName("composer-plugin-api".to_string()).is_platform());
+        assert!(PackageName("composer-runtime-api".to_string()).is_platform());
         assert!(!PackageName("monolog/monolog".to_string()).is_platform());
         assert!(!PackageName("vendor/package".to_string()).is_platform());
     }

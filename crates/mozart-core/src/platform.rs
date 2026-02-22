@@ -31,6 +31,17 @@ pub fn is_platform_package(name: &str) -> bool {
 
 // ─── Detection ───────────────────────────────────────────────────────────────
 
+/// Composer runtime API version that Mozart emulates.
+/// Corresponds to `Composer::RUNTIME_API_VERSION` in Composer.
+pub const COMPOSER_RUNTIME_API_VERSION: &str = "2.2.2";
+
+/// Composer plugin API version that Mozart emulates.
+/// Corresponds to `PluginInterface::PLUGIN_API_VERSION` in Composer.
+pub const COMPOSER_PLUGIN_API_VERSION: &str = "2.6.0";
+
+/// Composer version that Mozart emulates.
+pub const COMPOSER_VERSION: &str = "2.8.0";
+
 /// Detect all platform packages by running a single PHP invocation.
 ///
 /// Returns an empty vec if PHP is not found or not executable.
@@ -168,8 +179,36 @@ pub fn parse_platform_info(output: &str) -> Vec<PlatformPackage> {
         }
 
         result.extend(packages);
+
+        // Add Composer pseudo packages
+        result.push(PlatformPackage {
+            name: "composer".to_string(),
+            version: COMPOSER_VERSION.to_string(),
+        });
+        result.push(PlatformPackage {
+            name: "composer-plugin-api".to_string(),
+            version: COMPOSER_PLUGIN_API_VERSION.to_string(),
+        });
+        result.push(PlatformPackage {
+            name: "composer-runtime-api".to_string(),
+            version: COMPOSER_RUNTIME_API_VERSION.to_string(),
+        });
+
         result
     } else {
+        // Even without PHP, provide Composer pseudo packages
+        packages.push(PlatformPackage {
+            name: "composer".to_string(),
+            version: COMPOSER_VERSION.to_string(),
+        });
+        packages.push(PlatformPackage {
+            name: "composer-plugin-api".to_string(),
+            version: COMPOSER_PLUGIN_API_VERSION.to_string(),
+        });
+        packages.push(PlatformPackage {
+            name: "composer-runtime-api".to_string(),
+            version: COMPOSER_RUNTIME_API_VERSION.to_string(),
+        });
         packages
     }
 }
@@ -290,6 +329,11 @@ mod tests {
 
         let ext_ctype = packages.iter().find(|p| p.name == "ext-ctype");
         assert!(ext_ctype.is_some());
+
+        // Composer pseudo packages should always be present
+        assert!(packages.iter().any(|p| p.name == "composer"));
+        assert!(packages.iter().any(|p| p.name == "composer-plugin-api"));
+        assert!(packages.iter().any(|p| p.name == "composer-runtime-api"));
     }
 
     #[test]
