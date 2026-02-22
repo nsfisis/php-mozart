@@ -170,6 +170,18 @@ fn parse_minimum_stability(s: &str) -> Stability {
     package::Stability::parse(s)
 }
 
+/// Check whether a package name refers to a platform package (php, ext-*, lib-*, composer-*).
+fn is_platform_package(name: &str) -> bool {
+    let lower = name.to_lowercase();
+    lower == "php"
+        || lower.starts_with("ext-")
+        || lower.starts_with("lib-")
+        || lower.starts_with("composer-")
+        || lower == "composer"
+        || lower == "composer-runtime-api"
+        || lower == "composer-plugin-api"
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Helper: compute changes between old and new lock
 // ─────────────────────────────────────────────────────────────────────────────
@@ -626,6 +638,57 @@ pub fn apply_minimal_changes(
     apply_partial_update(resolved, old_lock, &[])
 }
 
+/// Filter resolved packages to only allow patch-level version changes.
+///
+/// For each resolved package, if the old lock has a version with the same
+/// major.minor, the upgrade is allowed. Otherwise the package is pinned
+/// back to its old locked version.
+pub fn apply_patch_only(
+    resolved: Vec<ResolvedPackage>,
+    old_lock: &lockfile::LockFile,
+) -> Vec<ResolvedPackage> {
+    let mut old_pkg_map: HashMap<String, &lockfile::LockedPackage> = HashMap::new();
+    for pkg in &old_lock.packages {
+        old_pkg_map.insert(pkg.name.to_lowercase(), pkg);
+    }
+    if let Some(ref dev_pkgs) = old_lock.packages_dev {
+        for pkg in dev_pkgs {
+            old_pkg_map.insert(pkg.name.to_lowercase(), pkg);
+        }
+    }
+
+    resolved
+        .into_iter()
+        .map(|mut pkg| {
+            let name_lower = pkg.name.to_lowercase();
+            if let Some(old_pkg) = old_pkg_map.get(&name_lower) {
+                let old_norm = old_pkg
+                    .version_normalized
+                    .as_deref()
+                    .unwrap_or(&old_pkg.version);
+                let new_norm = &pkg.version_normalized;
+
+                // Compare major.minor: if they differ, pin to old version
+                let old_mm = major_minor(old_norm);
+                let new_mm = major_minor(new_norm);
+                if old_mm != new_mm {
+                    pkg.version = old_pkg.version.clone();
+                    pkg.version_normalized = old_norm.to_string();
+                }
+            }
+            pkg
+        })
+        .collect()
+}
+
+/// Extract (major, minor) from a normalized version string.
+fn major_minor(version: &str) -> (u64, u64) {
+    let parts: Vec<&str> = version.split('.').collect();
+    let major = parts.first().and_then(|s| s.parse().ok()).unwrap_or(0);
+    let minor = parts.get(1).and_then(|s| s.parse().ok()).unwrap_or(0);
+    (major, minor)
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Main execute function
 // ─────────────────────────────────────────────────────────────────────────────
@@ -650,21 +713,9 @@ pub async fn execute(
         ));
     }
 
-    // Warn about still-deferred flags
-    if args.patch_only {
-        console.info(&console::warning(
-            "--patch-only is not yet implemented and will be ignored.",
-        ));
-    }
-    if args.root_reqs {
-        console.info(&console::warning(
-            "--root-reqs is not yet implemented and will be ignored.",
-        ));
-    }
-    if args.bump_after_update.is_some() {
-        console.info(&console::warning(
-            "--bump-after-update is not yet implemented and will be ignored.",
-        ));
+    // --root-reqs: if no packages specified, auto-populate with root requirements
+    if args.root_reqs && args.packages.is_empty() {
+        console.info("Using root requirements as the update list (--root-reqs).");
     }
 
     // Step 3: Read composer.json
@@ -775,7 +826,29 @@ pub async fn execute(
     //
     // Note: wildcard expansion and dependency traversal both require a lock file.
     // If --minimal-changes is requested without specific packages, we pin all packages.
-    let update_packages: Vec<String> = if !args.packages.is_empty() {
+    // --root-reqs: treat root requirements as the package list
+    let effective_packages: Vec<String> = if args.root_reqs && args.packages.is_empty() {
+        let mut root_pkgs: Vec<String> = composer_json
+            .require
+            .keys()
+            .filter(|k| !is_platform_package(k))
+            .map(|k| k.to_lowercase())
+            .collect();
+        if dev_mode {
+            root_pkgs.extend(
+                composer_json
+                    .require_dev
+                    .keys()
+                    .filter(|k| !is_platform_package(k))
+                    .map(|k| k.to_lowercase()),
+            );
+        }
+        root_pkgs
+    } else {
+        args.packages.clone()
+    };
+
+    let update_packages: Vec<String> = if !effective_packages.is_empty() {
         match &old_lock {
             None => {
                 return Err(mozart_core::exit_code::bail(
@@ -786,7 +859,7 @@ pub async fn execute(
             Some(lock) => {
                 // 1. Expand wildcards
                 let mut expanded = expand_packages(
-                    &args.packages,
+                    &effective_packages,
                     Some(lock),
                     args.with_dependencies,
                     args.with_all_dependencies,
@@ -850,6 +923,14 @@ pub async fn execute(
         if let Some(ref lock) = old_lock {
             console.info("Minimal changes mode: preserving locked versions where possible.");
             resolved = apply_minimal_changes(resolved, lock);
+        }
+    }
+
+    // Apply --patch-only filter: restrict updates to patch-level changes only
+    if args.patch_only {
+        if let Some(ref lock) = old_lock {
+            console.info("Patch-only mode: restricting updates to patch-level changes.");
+            resolved = apply_patch_only(resolved, lock);
         }
     }
 
@@ -937,6 +1018,106 @@ pub async fn execute(
     if !args.dry_run {
         console.info("Writing lock file");
         new_lock.write_to_file(&lock_path)?;
+    }
+
+    // Step 11b: Bump composer.json constraints if --bump-after-update
+    if let Some(ref bump_mode) = args.bump_after_update {
+        if !args.dry_run {
+            let mode = bump_mode.as_deref().unwrap_or("all");
+            let bump_require = mode == "all" || mode == "no-dev";
+            let bump_require_dev = mode == "all" || mode == "dev";
+
+            // Build locked versions map from the new lock
+            let mut locked_versions: HashMap<String, (String, Option<String>)> = HashMap::new();
+            for pkg in &new_lock.packages {
+                locked_versions.insert(
+                    pkg.name.to_lowercase(),
+                    (
+                        pkg.version.clone(),
+                        pkg.version_normalized.clone(),
+                    ),
+                );
+            }
+            if let Some(ref dev_pkgs) = new_lock.packages_dev {
+                for pkg in dev_pkgs {
+                    locked_versions.insert(
+                        pkg.name.to_lowercase(),
+                        (
+                            pkg.version.clone(),
+                            pkg.version_normalized.clone(),
+                        ),
+                    );
+                }
+            }
+
+            let mut bumped = 0u32;
+            let mut root = composer_json.clone();
+
+            if bump_require {
+                for (pkg_name, constraint) in &composer_json.require {
+                    if is_platform_package(pkg_name) {
+                        continue;
+                    }
+                    if let Some((pretty_version, version_normalized)) =
+                        locked_versions.get(&pkg_name.to_lowercase())
+                        && let Some(new_constraint) =
+                            mozart_core::version_bumper::bump_requirement(
+                                constraint,
+                                pretty_version,
+                                version_normalized.as_deref(),
+                            )
+                    {
+                        console.info(&format!(
+                            "  Bumping {}: {} => {}",
+                            pkg_name, constraint, new_constraint
+                        ));
+                        root.require.insert(pkg_name.clone(), new_constraint);
+                        bumped += 1;
+                    }
+                }
+            }
+
+            if bump_require_dev {
+                for (pkg_name, constraint) in &composer_json.require_dev {
+                    if is_platform_package(pkg_name) {
+                        continue;
+                    }
+                    if let Some((pretty_version, version_normalized)) =
+                        locked_versions.get(&pkg_name.to_lowercase())
+                        && let Some(new_constraint) =
+                            mozart_core::version_bumper::bump_requirement(
+                                constraint,
+                                pretty_version,
+                                version_normalized.as_deref(),
+                            )
+                    {
+                        console.info(&format!(
+                            "  Bumping {}: {} => {}",
+                            pkg_name, constraint, new_constraint
+                        ));
+                        root.require_dev.insert(pkg_name.clone(), new_constraint);
+                        bumped += 1;
+                    }
+                }
+            }
+
+            if bumped > 0 {
+                package::write_to_file(&root, &composer_json_path)?;
+
+                // Update lock file content-hash to match the new composer.json
+                let new_content = std::fs::read_to_string(&composer_json_path)?;
+                let new_hash =
+                    lockfile::LockFile::compute_content_hash(&new_content)?;
+                let mut updated_lock = new_lock.clone();
+                updated_lock.content_hash = new_hash;
+                updated_lock.write_to_file(&lock_path)?;
+
+                console.info(&format!(
+                    "{} constraint(s) bumped.",
+                    bumped
+                ));
+            }
+        }
     }
 
     // Step 12: Install packages (unless --no-install or --dry-run)
