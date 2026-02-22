@@ -125,7 +125,7 @@ pub fn find_recommended_require_version(
         Stability::RC => format!("{constraint}@RC"),
         Stability::Beta => format!("{constraint}@beta"),
         Stability::Alpha => format!("{constraint}@alpha"),
-        Stability::Dev => unreachable!(),
+        Stability::Dev => format!("{constraint}@dev"),
     }
 }
 
