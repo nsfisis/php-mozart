@@ -64,7 +64,23 @@ pub async fn execute(
     _cli: &super::Cli,
     _console: &mozart_core::console::Console,
 ) -> anyhow::Result<()> {
+    if args.only_name && args.only_vendor {
+        anyhow::bail!("--only-name and --only-vendor cannot be used together");
+    }
+
     let query = args.tokens.join(" ");
+
+    let format = args.format.as_deref().unwrap_or("text");
+
+    if !matches!(format, "text" | "json") {
+        eprintln!(
+            "{}",
+            mozart_core::console::error(&format!(
+                "Unsupported format \"{format}\". See help for supported formats."
+            ))
+        );
+        std::process::exit(1);
+    }
 
     let (all_results, total) =
         mozart_registry::packagist::search_packages(&query, args.r#type.as_deref()).await?;
@@ -81,8 +97,6 @@ pub async fn execute(
     }
 
     // Output
-    let format = args.format.as_deref().unwrap_or("text");
-
     match format {
         "json" => {
             let owned: Vec<SearchResult> = results.into_iter().cloned().collect();
