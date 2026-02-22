@@ -127,6 +127,23 @@ fn platform_asset_name() -> anyhow::Result<String> {
     }
 }
 
+// ─── Channel helper ───────────────────────────────────────────────────────────
+
+fn effective_channel(preview: bool) -> &'static str {
+    if preview { "preview" } else { "stable" }
+}
+
+// ─── Backup version helper ────────────────────────────────────────────────────
+
+fn version_from_backup(path: &Path) -> String {
+    path.file_name()
+        .and_then(|n| n.to_str())
+        .and_then(|n| n.strip_prefix("mozart-"))
+        .and_then(|n| n.strip_suffix(BACKUP_EXTENSION))
+        .unwrap_or("unknown")
+        .to_string()
+}
+
 // ─── GitHub fetching ──────────────────────────────────────────────────────────
 
 async fn fetch_releases(include_prerelease: bool) -> anyhow::Result<Vec<GitHubRelease>> {
@@ -265,8 +282,7 @@ async fn download_asset(
 
 async fn update(args: &SelfUpdateArgs, current_exe: &Path, data_dir: &Path) -> anyhow::Result<()> {
     let current_version = get_current_version();
-
-    println!("Updating Mozart...");
+    let channel = effective_channel(args.preview);
 
     // Fetch releases
     let releases = fetch_releases(args.preview).await?;
@@ -285,11 +301,24 @@ async fn update(args: &SelfUpdateArgs, current_exe: &Path, data_dir: &Path) -> a
         println!(
             "{}",
             console_format!(
-                "<info>Mozart is already at the latest version ({current_version})</info>"
+                "<info>You are already using the latest available Mozart version {current_version} ({channel} channel).</info>"
             )
         );
+
+        if args.clean_backups {
+            // Preserve the most recent backup
+            let latest = find_latest_backup(data_dir).ok();
+            clean_backups(data_dir, latest.as_deref())?;
+            println!(
+                "{}",
+                console_format!("<comment>Old backups removed.</comment>")
+            );
+        }
+
         return Ok(());
     }
+
+    println!("Upgrading to version {target_version} ({channel} channel).");
 
     // Find the platform asset
     let asset_name = platform_asset_name()?;
@@ -339,9 +368,10 @@ async fn update(args: &SelfUpdateArgs, current_exe: &Path, data_dir: &Path) -> a
             "<info>Mozart updated successfully from {current_version} to {target_version}</info>"
         )
     );
+    println!("Use `mozart self-update --rollback` to return to version {current_version}");
 
     if args.clean_backups {
-        clean_backups(data_dir)?;
+        clean_backups(data_dir, Some(&backup_path))?;
         println!(
             "{}",
             console_format!("<comment>Old backups removed.</comment>")
@@ -355,8 +385,9 @@ async fn update(args: &SelfUpdateArgs, current_exe: &Path, data_dir: &Path) -> a
 
 fn rollback(current_exe: &Path, data_dir: &Path) -> anyhow::Result<()> {
     let backup = find_latest_backup(data_dir)?;
+    let backup_version = version_from_backup(&backup);
 
-    println!("Rolling back to {}...", backup.display());
+    println!("Rolling back to version {backup_version}...");
 
     // Set executable permission on Unix before replacing
     #[cfg(unix)]
@@ -371,15 +402,9 @@ fn rollback(current_exe: &Path, data_dir: &Path) -> anyhow::Result<()> {
     self_replace::self_replace(&backup)
         .map_err(|e| anyhow::anyhow!("Could not restore backup: {e}"))?;
 
-    // Remove the backup file we just restored from
-    let _ = std::fs::remove_file(&backup);
-
     println!(
         "{}",
-        console_format!(
-            "<info>Rollback successful. Restored from {}</info>",
-            backup.file_name().unwrap_or_default().to_string_lossy()
-        )
+        console_format!("<info>Rollback successful. Restored version {backup_version}</info>")
     );
 
     let _ = current_exe; // suppress unused warning
@@ -420,7 +445,7 @@ fn find_latest_backup(data_dir: &Path) -> anyhow::Result<PathBuf> {
     Ok(backups.into_iter().next().unwrap())
 }
 
-fn clean_backups(data_dir: &Path) -> anyhow::Result<()> {
+fn clean_backups(data_dir: &Path, except: Option<&Path>) -> anyhow::Result<()> {
     let entries = std::fs::read_dir(data_dir).map_err(|e| {
         anyhow::anyhow!("Could not read data directory {}: {e}", data_dir.display())
     })?;
@@ -434,6 +459,10 @@ fn clean_backups(data_dir: &Path) -> anyhow::Result<()> {
             .unwrap_or(false);
 
         if is_backup {
+            if let Some(exc) = except
+                && path == exc {
+                    continue;
+                }
             std::fs::remove_file(&path)
                 .map_err(|e| anyhow::anyhow!("Could not remove backup {}: {e}", path.display()))?;
         }
@@ -674,10 +703,47 @@ mod tests {
         fs::write(&backup2, b"binary").unwrap();
         fs::write(&keep, b"keep me").unwrap();
 
-        clean_backups(dir.path()).expect("clean_backups should succeed");
+        clean_backups(dir.path(), None).expect("clean_backups should succeed");
 
         assert!(!backup1.exists(), "backup1 should be removed");
         assert!(!backup2.exists(), "backup2 should be removed");
         assert!(keep.exists(), "non-backup file should remain");
+    }
+
+    // ── test_clean_backups_with_except ────────────────────────────────────────
+
+    #[test]
+    fn test_clean_backups_with_except() {
+        let dir = tempdir().unwrap();
+
+        let backup1 = dir.path().join("mozart-0.1.0.old");
+        let backup2 = dir.path().join("mozart-0.2.0.old");
+
+        fs::write(&backup1, b"binary").unwrap();
+        fs::write(&backup2, b"binary").unwrap();
+
+        clean_backups(dir.path(), Some(&backup2)).expect("clean_backups should succeed");
+
+        assert!(!backup1.exists(), "backup1 should be removed");
+        assert!(backup2.exists(), "backup2 should be preserved (excepted)");
+    }
+
+    // ── test_effective_channel ────────────────────────────────────────────────
+
+    #[test]
+    fn test_effective_channel() {
+        assert_eq!(effective_channel(false), "stable");
+        assert_eq!(effective_channel(true), "preview");
+    }
+
+    // ── test_version_from_backup ──────────────────────────────────────────────
+
+    #[test]
+    fn test_version_from_backup() {
+        let path = PathBuf::from("/some/dir/mozart-0.3.1.old");
+        assert_eq!(version_from_backup(&path), "0.3.1");
+
+        let bad_path = PathBuf::from("/some/dir/unknown-file.txt");
+        assert_eq!(version_from_backup(&bad_path), "unknown");
     }
 }
