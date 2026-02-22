@@ -552,6 +552,11 @@ fn parse_single(s: &str) -> Result<VersionConstraint, String> {
         let v = Version::parse_for_constraint(rest.trim())?;
         return Ok(VersionConstraint::Single(Constraint::NotEqual(v)));
     }
+    // Double-equals `==` is treated the same as `=` (exact match)
+    if let Some(rest) = s.strip_prefix("==") {
+        let v = Version::parse_for_constraint(rest.trim())?;
+        return Ok(VersionConstraint::Single(Constraint::Exact(v)));
+    }
     if let Some(rest) = s.strip_prefix('>') {
         let v = Version::parse_for_constraint(rest.trim())?;
         return Ok(VersionConstraint::Single(Constraint::GreaterThan(v)));
@@ -1528,12 +1533,8 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "== (double equals) is not supported: the '=' handler passes '=1.2.3' to \
-                Version::parse_for_constraint which fails to parse '=1' as a major number"]
     fn test_double_equals_sign() {
-        // "==1.2.3" — the '=' branch strips one '=', leaving "=1.2.3", which is then
-        // passed to Version::parse_for_constraint. That function tries to parse "=1" as
-        // a major version number and fails. Double-equals is not a supported syntax.
+        // "==1.2.3" is treated the same as "=1.2.3" (exact match)
         assert!(satisfies("==1.2.3", "1.2.3"));
         assert!(!satisfies("==1.2.3", "1.2.4"));
     }
