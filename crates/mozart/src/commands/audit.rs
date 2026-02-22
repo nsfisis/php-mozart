@@ -83,7 +83,7 @@ pub async fn execute(
     }
 
     // Validate --abandoned
-    let abandoned_mode = match args.abandoned.as_deref().unwrap_or("report") {
+    let abandoned_mode = match args.abandoned.as_deref().unwrap_or("fail") {
         "ignore" => "ignore",
         "report" => "report",
         "fail" => "fail",
