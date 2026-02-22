@@ -36,7 +36,7 @@ pub struct RemoveArgs {
     pub no_audit: bool,
 
     /// Audit output format
-    #[arg(long, value_parser = ["table", "plain", "json", "summary"])]
+    #[arg(long, value_parser = ["table", "plain", "json", "summary"], default_value = "summary")]
     pub audit_format: Option<String>,
 
     /// Do not block on security advisories
@@ -188,6 +188,7 @@ pub async fn execute(
     } else if any_removed {
         package::write_to_file(&raw, &composer_path)?;
     }
+    eprintln!("./composer.json has been updated");
 
     // Step 7: Handle --no-update early return
     if args.no_update {
@@ -252,6 +253,11 @@ pub async fn execute(
     };
 
     // Print header messages
+    let pkg_names = args.packages.join(" ");
+    console.info(&console_format!(
+        "<info>Running composer update {}</info>",
+        pkg_names
+    ));
     console.info("Loading composer repositories with package information");
     if dev_mode {
         console.info("Updating dependencies (including require-dev)");
@@ -428,8 +434,8 @@ pub async fn execute(
                 ignore_platform_req: args.ignore_platform_req.clone(),
                 optimize_autoloader: args.optimize_autoloader,
                 classmap_authoritative: args.classmap_authoritative,
-                apcu_autoloader: false,
-                apcu_autoloader_prefix: None,
+                apcu_autoloader: args.apcu_autoloader || args.apcu_autoloader_prefix.is_some(),
+                apcu_autoloader_prefix: args.apcu_autoloader_prefix.clone(),
                 download_only: false,
             },
         )
@@ -566,8 +572,8 @@ async fn remove_unused(
                 ignore_platform_req: args.ignore_platform_req.clone(),
                 optimize_autoloader: args.optimize_autoloader,
                 classmap_authoritative: args.classmap_authoritative,
-                apcu_autoloader: false,
-                apcu_autoloader_prefix: None,
+                apcu_autoloader: args.apcu_autoloader || args.apcu_autoloader_prefix.is_some(),
+                apcu_autoloader_prefix: args.apcu_autoloader_prefix.clone(),
                 download_only: false,
             },
         )
