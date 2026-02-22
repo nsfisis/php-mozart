@@ -542,7 +542,15 @@ pub fn print_table(results: &[DependencyResult]) {
         .max()
         .unwrap_or(0);
 
+    let mut seen: HashSet<String> = HashSet::new();
     for r in results {
+        let key = format!(
+            "{}|{}|{}|{}",
+            r.package_name, r.package_version, r.link_description, r.link_constraint
+        );
+        if !seen.insert(key) {
+            continue;
+        }
         println!(
             "{:<name_w$}  {:<ver_w$}  {:<desc_w$}  {}",
             mozart_core::console::info(&r.package_name),

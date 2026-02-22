@@ -44,12 +44,22 @@ pub async fn execute(
         ));
     }
 
+    let target = args.package.to_lowercase();
+
+    // Fix #2: Verify the target package is known
+    let target_known = packages.iter().any(|p| p.name.to_lowercase() == target);
+    if !target_known {
+        anyhow::bail!(
+            "Could not find package \"{}\" in your project",
+            args.package
+        );
+    }
+
     // Parse the version constraint the user is asking about
     let version_constraint = mozart_semver::VersionConstraint::parse(&args.version)
         .map_err(|e| anyhow::anyhow!("Invalid version constraint '{}': {}", args.version, e))?;
 
     let recursive = args.tree || args.recursive;
-    let target = args.package.to_lowercase();
     let needles = vec![target];
 
     let results = super::dependency::get_dependents(
@@ -78,5 +88,39 @@ pub async fn execute(
         super::dependency::print_table(&results);
     }
 
-    Ok(())
+    // Fix #5: Print resolution hint message
+    // Determine the appropriate composer command based on whether the needle
+    // is in root's require or require-dev.
+    let needle_lower = args.package.to_lowercase();
+    let composer_command = packages
+        .iter()
+        .find(|p| p.is_root)
+        .map(|root| {
+            if root
+                .require
+                .keys()
+                .any(|k| k.to_lowercase() == needle_lower)
+            {
+                "require"
+            } else if root
+                .require_dev
+                .keys()
+                .any(|k| k.to_lowercase() == needle_lower)
+            {
+                "require --dev"
+            } else {
+                "update"
+            }
+        })
+        .unwrap_or("update");
+
+    eprintln!(
+        "Not finding what you were looking for? Try calling `composer {} \"{}:{}\" --dry-run` to get another view on the problem.",
+        composer_command, args.package, args.version
+    );
+
+    // Fix #3: Return exit code 1 when prohibitors are found
+    Err(mozart_core::exit_code::bail_silent(
+        mozart_core::exit_code::GENERAL_ERROR,
+    ))
 }
