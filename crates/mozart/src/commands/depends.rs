@@ -44,6 +44,12 @@ pub async fn execute(
 
     // Verify the target package is known
     let target_known = packages.iter().any(|p| p.name.to_lowercase() == target);
+    if !target_known && mozart_core::platform::is_platform_package(&target) {
+        anyhow::bail!(
+            "Could not find platform package \"{}\". Is PHP available?",
+            args.package
+        );
+    }
     if !target_known {
         anyhow::bail!(
             "Could not find package \"{}\" in your project",

@@ -59,11 +59,34 @@ pub fn load_packages(working_dir: &Path, locked: bool) -> Result<Vec<PackageInfo
     let composer_json_path = working_dir.join("composer.json");
 
     // Load locked / installed packages
-    let mut packages: Vec<PackageInfo> = if locked || lock_path.exists() {
+    let mut packages: Vec<PackageInfo> = if locked {
         load_from_lockfile(&lock_path)?
     } else {
-        load_from_installed(working_dir)?
+        let installed = load_from_installed(working_dir);
+        match installed {
+            Ok(pkgs) if !pkgs.is_empty() => pkgs,
+            _ => {
+                if lock_path.exists() {
+                    load_from_lockfile(&lock_path)?
+                } else {
+                    vec![]
+                }
+            }
+        }
     };
+
+    // Add platform packages (php, ext-*, lib-*, composer-*-api)
+    let platform = mozart_core::platform::detect_platform();
+    for pp in &platform {
+        packages.push(PackageInfo {
+            name: pp.name.clone(),
+            version: pp.version.clone(),
+            require: BTreeMap::new(),
+            require_dev: BTreeMap::new(),
+            conflict: BTreeMap::new(),
+            is_root: false,
+        });
+    }
 
     // Add the root package (composer.json) as a synthetic entry
     if composer_json_path.exists()
