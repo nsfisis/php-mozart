@@ -55,7 +55,7 @@ struct CheckResult {
 pub async fn execute(
     args: &CheckPlatformReqsArgs,
     cli: &super::Cli,
-    _console: &mozart_core::console::Console,
+    console: &mozart_core::console::Console,
 ) -> anyhow::Result<()> {
     let working_dir = match &cli.working_dir {
         Some(dir) => PathBuf::from(dir),
@@ -78,7 +78,7 @@ pub async fn execute(
     }
 
     // Collect platform requirements from all packages + root
-    let requirements = collect_requirements(&working_dir, args)?;
+    let requirements = collect_requirements(&working_dir, args, console)?;
 
     if requirements.is_empty() {
         // No platform requirements to check
@@ -118,8 +118,11 @@ pub async fn execute(
 fn collect_requirements(
     working_dir: &Path,
     args: &CheckPlatformReqsArgs,
+    console: &mozart_core::console::Console,
 ) -> anyhow::Result<BTreeMap<String, Vec<PlatformRequirement>>> {
     let mut requirements: BTreeMap<String, Vec<PlatformRequirement>> = BTreeMap::new();
+
+    let dev_text = if args.no_dev { "non-dev " } else { "" };
 
     // Determine package source
     let lock_path = working_dir.join("composer.lock");
@@ -131,12 +134,51 @@ fn collect_requirements(
         if !lock_path.exists() {
             anyhow::bail!("No composer.lock found. Run `mozart install` or `mozart update` first.");
         }
+        console.info(&format!(
+            "Checking {}platform requirements using the lock file",
+            dev_text
+        ));
         collect_from_lock(&lock_path, args.no_dev, &mut requirements)?;
     } else if installed_path.exists() {
         // Default: read from installed.json
-        collect_from_installed(&vendor_dir, args.no_dev, &mut requirements)?;
+        let installed = mozart_registry::installed::InstalledPackages::read(&vendor_dir)?;
+        if installed.packages.is_empty() {
+            // Fall through to lock file with a warning
+            console.write(
+                &format!(
+                    "{}",
+                    mozart_core::console::warning(&format!(
+                        "No vendor dir present, checking {}platform requirements from the lock file",
+                        dev_text
+                    ))
+                ),
+                mozart_core::console::Verbosity::Normal,
+            );
+            if !lock_path.exists() {
+                anyhow::bail!(
+                    "No installed packages found. Run `mozart install` or `mozart update` first."
+                );
+            }
+            collect_from_lock(&lock_path, args.no_dev, &mut requirements)?;
+        } else {
+            console.info(&format!(
+                "Checking {}platform requirements for packages in the vendor dir",
+                dev_text
+            ));
+            collect_from_installed_data(&installed, args.no_dev, &mut requirements);
+        }
     } else if lock_path.exists() {
         // Fallback: read from lock file
+        console.write(
+            &format!(
+                "{}",
+                mozart_core::console::warning(&format!(
+                    "No vendor dir present, checking {}platform requirements from the lock file",
+                    dev_text
+                ))
+            ),
+            mozart_core::console::Verbosity::Normal,
+        );
         collect_from_lock(&lock_path, args.no_dev, &mut requirements)?;
     } else {
         anyhow::bail!(
@@ -176,13 +218,11 @@ fn collect_from_lock(
     Ok(())
 }
 
-fn collect_from_installed(
-    vendor_dir: &Path,
+fn collect_from_installed_data(
+    installed: &mozart_registry::installed::InstalledPackages,
     no_dev: bool,
     requirements: &mut BTreeMap<String, Vec<PlatformRequirement>>,
-) -> anyhow::Result<()> {
-    let installed = mozart_registry::installed::InstalledPackages::read(vendor_dir)?;
-
+) {
     let dev_names: std::collections::HashSet<String> = installed
         .dev_package_names
         .iter()
@@ -213,8 +253,6 @@ fn collect_from_installed(
             }
         }
     }
-
-    Ok(())
 }
 
 fn add_platform_requirements_from_map(
@@ -414,6 +452,10 @@ mod tests {
 
     // ── Helpers ──────────────────────────────────────────────────────────────
 
+    fn test_console() -> mozart_core::console::Console {
+        mozart_core::console::Console::new(0, true, false, true, true)
+    }
+
     fn make_platform(entries: &[(&str, &str)]) -> Vec<PlatformPackage> {
         entries
             .iter()
@@ -534,7 +576,8 @@ mod tests {
             format: None,
         };
 
-        let reqs = collect_requirements(working_dir, &args).unwrap();
+        let console = test_console();
+        let reqs = collect_requirements(working_dir, &args, &console).unwrap();
 
         assert!(reqs.contains_key("php"), "php should be in requirements");
         assert!(
@@ -577,13 +620,15 @@ mod tests {
             &[("vendor/devpkg", dev_require)],
         );
 
+        let console = test_console();
+
         // With --no-dev
         let args_no_dev = CheckPlatformReqsArgs {
             no_dev: true,
             lock: true,
             format: None,
         };
-        let reqs_no_dev = collect_requirements(working_dir, &args_no_dev).unwrap();
+        let reqs_no_dev = collect_requirements(working_dir, &args_no_dev, &console).unwrap();
         assert!(reqs_no_dev.contains_key("php"));
         assert!(
             !reqs_no_dev.contains_key("ext-xdebug"),
@@ -596,7 +641,7 @@ mod tests {
             lock: true,
             format: None,
         };
-        let reqs_with_dev = collect_requirements(working_dir, &args_with_dev).unwrap();
+        let reqs_with_dev = collect_requirements(working_dir, &args_with_dev, &console).unwrap();
         assert!(reqs_with_dev.contains_key("php"));
         assert!(
             reqs_with_dev.contains_key("ext-xdebug"),
@@ -625,7 +670,8 @@ mod tests {
             format: None,
         };
 
-        let reqs = collect_requirements(working_dir, &args).unwrap();
+        let console = test_console();
+        let reqs = collect_requirements(working_dir, &args, &console).unwrap();
 
         assert!(
             reqs.contains_key("php"),
