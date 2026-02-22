@@ -1,4 +1,5 @@
 use clap::Args;
+use serde::Serialize;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
@@ -217,7 +218,11 @@ fn render_text(grouped: &BTreeMap<String, BTreeMap<String, Vec<String>>>) {
 }
 
 fn render_json(grouped: &BTreeMap<String, BTreeMap<String, Vec<String>>>) -> anyhow::Result<()> {
-    println!("{}", serde_json::to_string_pretty(grouped)?);
+    let buf = Vec::new();
+    let formatter = serde_json::ser::PrettyFormatter::with_indent(b"    ");
+    let mut ser = serde_json::Serializer::with_formatter(buf, formatter);
+    grouped.serialize(&mut ser)?;
+    println!("{}", String::from_utf8(ser.into_inner())?);
     Ok(())
 }
 
