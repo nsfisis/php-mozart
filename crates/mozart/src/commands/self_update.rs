@@ -460,9 +460,10 @@ fn clean_backups(data_dir: &Path, except: Option<&Path>) -> anyhow::Result<()> {
 
         if is_backup {
             if let Some(exc) = except
-                && path == exc {
-                    continue;
-                }
+                && path == exc
+            {
+                continue;
+            }
             std::fs::remove_file(&path)
                 .map_err(|e| anyhow::anyhow!("Could not remove backup {}: {e}", path.display()))?;
         }

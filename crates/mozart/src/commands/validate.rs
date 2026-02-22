@@ -66,6 +66,17 @@ impl ValidationResult {
     }
 }
 
+// ─── Helpers ─────────────────────────────────────────────────────────────────
+
+fn should_check_lock(args: &ValidateArgs, manifest: &serde_json::Value) -> bool {
+    let config_lock_enabled = manifest
+        .get("config")
+        .and_then(|c| c.get("lock"))
+        .and_then(|v| v.as_bool())
+        .unwrap_or(true);
+    (!args.no_check_lock && config_lock_enabled) || args.check_lock
+}
+
 // ─── Entry point ─────────────────────────────────────────────────────────────
 
 pub async fn execute(
@@ -126,7 +137,7 @@ pub async fn execute(
 
     // Check lock file freshness
     let mut lock_errors: Vec<String> = Vec::new();
-    let check_lock = !args.no_check_lock || args.check_lock;
+    let check_lock = should_check_lock(args, &json_value);
     if check_lock {
         check_lock_freshness(&content, &file, &mut lock_errors);
     }
@@ -201,6 +212,7 @@ fn validate_manifest(
     check_commit_references(obj, result);
     check_empty_psr_prefixes(obj, result);
     check_minimum_stability(obj, result);
+    check_scripts_orphans(obj, result);
 }
 
 // ─── Individual checks ───────────────────────────────────────────────────────
@@ -393,6 +405,38 @@ fn check_minimum_stability(
             "The minimum-stability \"{stability}\" is invalid. \
              Must be one of: dev, alpha, beta, rc, stable."
         ));
+    }
+}
+
+/// Warn about keys in scripts-descriptions or scripts-aliases that have no matching script.
+fn check_scripts_orphans(
+    obj: &serde_json::Map<String, serde_json::Value>,
+    result: &mut ValidationResult,
+) {
+    let script_keys: std::collections::HashSet<&str> = obj
+        .get("scripts")
+        .and_then(|v| v.as_object())
+        .map(|m| m.keys().map(|k| k.as_str()).collect())
+        .unwrap_or_default();
+
+    if let Some(descriptions) = obj.get("scripts-descriptions").and_then(|v| v.as_object()) {
+        for key in descriptions.keys() {
+            if !script_keys.contains(key.as_str()) {
+                result.warnings.push(format!(
+                    "Description for non-existent script \"{key}\" found in \"scripts-descriptions\""
+                ));
+            }
+        }
+    }
+
+    if let Some(aliases) = obj.get("scripts-aliases").and_then(|v| v.as_object()) {
+        for key in aliases.keys() {
+            if !script_keys.contains(key.as_str()) {
+                result.warnings.push(format!(
+                    "Aliases for non-existent script \"{key}\" found in \"scripts-aliases\""
+                ));
+            }
+        }
     }
 }
 
@@ -1105,6 +1149,104 @@ mod tests {
             "stale lock should produce a lock error"
         );
         assert!(lock_errors[0].contains("not up to date"));
+    }
+
+    // ── check_scripts_orphans ──────────────────────────────────────────────
+
+    #[test]
+    fn test_validate_scripts_descriptions_orphan_warns() {
+        let json = r#"{
+            "name": "vendor/pkg",
+            "license": "MIT",
+            "scripts": {"build": "make build"},
+            "scripts-descriptions": {"build": "Build the project", "nonexistent": "Ghost script"}
+        }"#;
+        let result = parse_and_validate(json, &make_args());
+        assert!(
+            result
+                .warnings
+                .iter()
+                .any(|w| w.contains("nonexistent") && w.contains("scripts-descriptions")),
+            "expected orphan warning for scripts-descriptions, got: {:?}",
+            result.warnings
+        );
+        assert!(
+            !result
+                .warnings
+                .iter()
+                .any(|w| w.contains("\"build\"") && w.contains("scripts-descriptions")),
+            "should not warn about existing script 'build'"
+        );
+    }
+
+    #[test]
+    fn test_validate_scripts_aliases_orphan_warns() {
+        let json = r#"{
+            "name": "vendor/pkg",
+            "license": "MIT",
+            "scripts": {"build": "make build"},
+            "scripts-aliases": {"build": ["b"], "ghost": ["g"]}
+        }"#;
+        let result = parse_and_validate(json, &make_args());
+        assert!(
+            result
+                .warnings
+                .iter()
+                .any(|w| w.contains("ghost") && w.contains("scripts-aliases")),
+            "expected orphan warning for scripts-aliases, got: {:?}",
+            result.warnings
+        );
+        assert!(
+            !result
+                .warnings
+                .iter()
+                .any(|w| w.contains("\"build\"") && w.contains("scripts-aliases")),
+            "should not warn about existing script 'build'"
+        );
+    }
+
+    #[test]
+    fn test_validate_scripts_valid_no_orphan_warning() {
+        let json = r#"{
+            "name": "vendor/pkg",
+            "license": "MIT",
+            "scripts": {"build": "make build", "test": "phpunit"},
+            "scripts-descriptions": {"build": "Build the project", "test": "Run tests"},
+            "scripts-aliases": {"build": ["b"], "test": ["t"]}
+        }"#;
+        let result = parse_and_validate(json, &make_args());
+        assert!(
+            !result
+                .warnings
+                .iter()
+                .any(|w| w.contains("scripts-descriptions") || w.contains("scripts-aliases")),
+            "should produce no orphan warnings when all keys match, got: {:?}",
+            result.warnings
+        );
+    }
+
+    // ── should_check_lock ──────────────────────────────────────────────────
+
+    #[test]
+    fn test_should_check_lock_config_false_disables() {
+        let args = make_args();
+        let manifest = serde_json::json!({"config": {"lock": false}});
+        assert!(!should_check_lock(&args, &manifest));
+    }
+
+    #[test]
+    fn test_should_check_lock_config_false_overridden_by_flag() {
+        let mut args = make_args();
+        args.check_lock = true;
+        let manifest = serde_json::json!({"config": {"lock": false}});
+        assert!(should_check_lock(&args, &manifest));
+    }
+
+    #[test]
+    fn test_should_check_lock_defaults_to_true() {
+        let args = make_args();
+        let manifest = serde_json::json!({"name": "vendor/pkg"});
+        assert!(should_check_lock(&args, &manifest));
     }
 
     // ── Full manifest: valid package ───────────────────────────────────────
