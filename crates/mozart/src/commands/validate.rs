@@ -135,23 +135,34 @@ pub async fn execute(
     output_result(&file, &result, check_publish, check_lock, &lock_errors);
 
     // Validate dependencies' composer.json files
-    if args.with_dependencies {
+    let (dep_errors, dep_warnings) = if args.with_dependencies {
         let vendor_dir = file.parent().unwrap_or(Path::new(".")).join("vendor");
         if vendor_dir.exists() {
-            validate_dependencies(&vendor_dir, args, console);
+            validate_dependencies(&vendor_dir, args, console)
         } else {
             console
                 .info("No vendor directory found. Run `mozart install` to install dependencies.");
+            (0, 0)
         }
-    }
+    } else {
+        (0, 0)
+    };
 
-    let exit_code = compute_exit_code(
+    let mut exit_code = compute_exit_code(
         &result,
         &lock_errors,
         check_publish,
         check_lock,
         args.strict,
     );
+
+    // Merge dependency validation results into exit code (matching Composer behavior)
+    if dep_errors > 0 {
+        exit_code = exit_code.max(2);
+    } else if dep_warnings > 0 && args.strict {
+        exit_code = exit_code.max(1);
+    }
+
     if exit_code != 0 {
         return Err(mozart_core::exit_code::bail_silent(exit_code));
     }
@@ -205,7 +216,11 @@ fn check_name(obj: &serde_json::Map<String, serde_json::Value>, result: &mut Val
         Some(name) => {
             // Uppercase characters are a publish error
             if name.chars().any(|c| c.is_ascii_uppercase()) {
-                let suggested = name.to_lowercase();
+                let suggested = name
+                    .split('/')
+                    .map(mozart_core::validation::sanitize_package_name_component)
+                    .collect::<Vec<_>>()
+                    .join("/");
                 result.publish_errors.push(format!(
                     "Name \"{name}\" does not match the best practice (e.g. lower-cased/with-dashes). \
                      We suggest using \"{suggested}\" instead. As such you will not be able to submit it to Packagist."
@@ -386,14 +401,14 @@ fn validate_dependencies(
     vendor_dir: &Path,
     args: &ValidateArgs,
     console: &mozart_core::console::Console,
-) {
+) -> (u32, u32) {
     let mut dep_errors = 0u32;
     let mut dep_warnings = 0u32;
     let mut dep_count = 0u32;
 
     // Walk vendor/<vendor>/<package>/composer.json
     let Ok(vendors) = std::fs::read_dir(vendor_dir) else {
-        return;
+        return (0, 0);
     };
 
     for vendor_entry in vendors.flatten() {
@@ -474,6 +489,8 @@ fn validate_dependencies(
             dep_warnings
         ));
     }
+
+    (dep_errors, dep_warnings)
 }
 
 // ─── Lock file freshness ─────────────────────────────────────────────────────
@@ -701,6 +718,18 @@ mod tests {
         assert!(!result.publish_errors.is_empty());
         assert!(result.publish_errors[0].contains("does not match the best practice"));
         assert!(result.publish_errors[0].contains("vendor/package"));
+    }
+
+    #[test]
+    fn test_validate_uppercase_name_camel_case_to_dashes() {
+        let json = r#"{"name": "MyCompany/MyLibrary", "license": "MIT"}"#;
+        let result = parse_and_validate(json, &make_args());
+        assert!(!result.publish_errors.is_empty());
+        assert!(
+            result.publish_errors[0].contains("my-company/my-library"),
+            "expected CamelCase-to-dashes conversion, got: {}",
+            result.publish_errors[0]
+        );
     }
 
     #[test]
