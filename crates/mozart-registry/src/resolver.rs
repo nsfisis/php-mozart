@@ -433,33 +433,17 @@ impl Default for PlatformConfig {
 }
 
 impl PlatformConfig {
-    /// Create a default platform config with PHP 8.1 and common extensions.
+    /// Detect platform packages from the local PHP installation.
+    ///
+    /// Runs `php -r …` to discover the PHP version, extensions and
+    /// capabilities.  Returns an empty config when PHP is not found.
     pub fn new() -> Self {
+        let detected = mozart_core::platform::detect_platform();
         let mut packages = HashMap::new();
-        packages.insert("php".to_string(), "8.1.0.0".to_string());
-        packages.insert("php-64bit".to_string(), "8.1.0.0".to_string());
-        for ext in &[
-            "json",
-            "mbstring",
-            "openssl",
-            "pdo",
-            "tokenizer",
-            "xml",
-            "ctype",
-            "iconv",
-            "curl",
-            "dom",
-            "fileinfo",
-            "filter",
-            "hash",
-            "pcre",
-            "session",
-            "zlib",
-            "intl",
-            "gd",
-            "bcmath",
-        ] {
-            packages.insert(format!("ext-{ext}"), "8.1.0.0".to_string());
+        for pkg in detected {
+            // Normalize version to four-component form (e.g. "8.2.1" → "8.2.1.0")
+            let normalized = normalize_platform_version(&pkg.version);
+            packages.insert(pkg.name, normalized);
         }
         Self { packages }
     }
@@ -472,6 +456,17 @@ impl PlatformConfig {
                 ComposerVersion::from_normalized(version_str).map(|v| (name.clone(), v))
             })
             .collect()
+    }
+}
+
+/// Pad a version string to four dot-separated components (e.g. "8.2.1" → "8.2.1.0").
+fn normalize_platform_version(version: &str) -> String {
+    let parts: Vec<&str> = version.split('.').collect();
+    match parts.len() {
+        1 => format!("{}.0.0.0", parts[0]),
+        2 => format!("{}.{}.0.0", parts[0], parts[1]),
+        3 => format!("{}.{}.{}.0", parts[0], parts[1], parts[2]),
+        _ => version.to_string(),
     }
 }
 
@@ -1447,11 +1442,13 @@ mod tests {
     fn test_platform_config_to_versions() {
         let config = PlatformConfig::new();
         let versions = config.to_versions();
-        assert!(versions.contains_key("php"));
-        assert!(versions.contains_key("ext-json"));
-        let php_v = versions["php"];
-        assert_eq!(php_v.major, 8);
-        assert_eq!(php_v.minor, 1);
+        // If PHP is available on the system, we should have detected it
+        if !config.packages.is_empty() {
+            assert!(
+                versions.contains_key("php"),
+                "detected packages should include php"
+            );
+        }
     }
 
     // ──────────── Integration tests (offline, using OfflineDependencyProvider) ────────────

@@ -121,38 +121,43 @@ mod tests {
 
     // ── composer_home_dir tests ───────────────────────────────────────────────
 
+    /// Guards env-var mutations so the three composer_home_dir tests
+    /// cannot race each other when `cargo test` runs them in parallel.
+    static ENV_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     #[test]
     fn test_composer_home_dir_from_env() {
-        // SAFETY: test-only; single-threaded env mutation
+        let _lock = ENV_MUTEX.lock().unwrap();
+        // SAFETY: test-only; protected by ENV_MUTEX
         unsafe {
             std::env::set_var("COMPOSER_HOME", "/tmp/test-composer-home");
         }
         let result = composer_home_dir().unwrap();
-        assert_eq!(result, PathBuf::from("/tmp/test-composer-home"));
-        // SAFETY: cleanup
         unsafe {
             std::env::remove_var("COMPOSER_HOME");
         }
+        assert_eq!(result, PathBuf::from("/tmp/test-composer-home"));
     }
 
     #[test]
     fn test_composer_home_dir_xdg() {
-        // SAFETY: test-only; single-threaded env mutation
+        let _lock = ENV_MUTEX.lock().unwrap();
+        // SAFETY: test-only; protected by ENV_MUTEX
         unsafe {
             std::env::remove_var("COMPOSER_HOME");
             std::env::set_var("XDG_CONFIG_HOME", "/tmp/test-xdg-config");
         }
         let result = composer_home_dir().unwrap();
-        assert_eq!(result, PathBuf::from("/tmp/test-xdg-config/composer"));
-        // SAFETY: cleanup
         unsafe {
             std::env::remove_var("XDG_CONFIG_HOME");
         }
+        assert_eq!(result, PathBuf::from("/tmp/test-xdg-config/composer"));
     }
 
     #[test]
     fn test_composer_home_dir_default() {
-        // SAFETY: test-only; single-threaded env mutation
+        let _lock = ENV_MUTEX.lock().unwrap();
+        // SAFETY: test-only; protected by ENV_MUTEX
         unsafe {
             std::env::remove_var("COMPOSER_HOME");
             std::env::remove_var("XDG_CONFIG_HOME");
