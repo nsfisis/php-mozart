@@ -7,6 +7,7 @@ edition.workspace = true
 anyhow.workspace = true
 colored.workspace = true
 dialoguer.workspace = true
+mozart-spdx-licenses.workspace = true
 regex.workspace = true
 serde.workspace = true
 serde_json.workspace = true

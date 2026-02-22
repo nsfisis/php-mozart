@@ -11,6 +11,7 @@ mozart-constraint = { path = "crates/mozart-constraint" }
 mozart-core = { path = "crates/mozart-core" }
 mozart-archiver = { path = "crates/mozart-archiver" }
 mozart-metadata-minifier = { path = "crates/mozart-metadata-minifier" }
+mozart-spdx-licenses = { path = "crates/mozart-spdx-licenses" }
 mozart-registry = { path = "crates/mozart-registry" }
 mozart-autoload = { path = "crates/mozart-autoload" }
 anyhow = "1.0.102"

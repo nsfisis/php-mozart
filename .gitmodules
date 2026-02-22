@@ -1,3 +1,6 @@
 [submodule "composer"]
 	path = composer
 	url = https://github.com/composer/composer
+[submodule "crates/mozart-spdx-licenses/composer-spdx-licenses"]
+	path = crates/mozart-spdx-licenses/composer-spdx-licenses
+	url = https://github.com/composer/spdx-licenses

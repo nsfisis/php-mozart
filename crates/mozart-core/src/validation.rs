@@ -52,8 +52,7 @@ pub fn validate_stability(s: &str) -> bool {
 }
 
 pub fn validate_license(s: &str) -> bool {
-    // TODO: check SPDX Identifier
-    !s.is_empty()
+    mozart_spdx_licenses::spdx().validate(s)
 }
 
 pub fn validate_autoload_path(s: &str) -> bool {

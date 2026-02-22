@@ -1,0 +1,10 @@
+[package]
+name = "mozart-spdx-licenses"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+
+[build-dependencies]
+serde.workspace = true
+serde_json.workspace = true
