@@ -467,14 +467,18 @@ pub async fn resolve(request: &ResolveRequest) -> Result<Vec<ResolvedPackage>, R
                 continue;
             }
 
-            let versions = handle
-                .block_on(packagist::fetch_package_versions(
-                    &name,
-                    repo_cache.as_ref(),
-                ))
-                .map_err(|e| {
-                    ResolveError::DependencyFetchError(format!("Failed to fetch {}: {}", name, e))
-                })?;
+            let versions = match handle.block_on(packagist::fetch_package_versions(
+                &name,
+                repo_cache.as_ref(),
+            )) {
+                Ok(v) => v,
+                Err(_) => {
+                    // Virtual/meta packages (e.g. "psr/http-client-implementation")
+                    // don't exist on Packagist. They are resolved via provides/replaces
+                    // from other packages already in the pool.
+                    continue;
+                }
+            };
 
             for pv in &versions {
                 let inputs =

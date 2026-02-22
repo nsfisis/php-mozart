@@ -13,6 +13,8 @@ pub struct PoolBuilder {
     added: HashSet<String>,
     /// Queue of package names that need to be explored.
     pending_names: VecDeque<String>,
+    /// Package names that have already been explored (returned by next_pending).
+    explored_names: HashSet<String>,
     /// Platform packages to ignore.
     ignore_platform_reqs: HashSet<String>,
 }
@@ -23,6 +25,7 @@ impl PoolBuilder {
             inputs: Vec::new(),
             added: HashSet::new(),
             pending_names: VecDeque::new(),
+            explored_names: HashSet::new(),
             ignore_platform_reqs: HashSet::new(),
         }
     }
@@ -56,10 +59,15 @@ impl PoolBuilder {
     /// and add them via `add_package`.
     pub fn next_pending(&mut self) -> Option<String> {
         while let Some(name) = self.pending_names.pop_front() {
-            // Check if we already have any versions for this name
-            if !self.inputs.iter().any(|p| p.name == name) {
-                return Some(name);
+            // Skip if already explored or already has versions in inputs
+            if self.explored_names.contains(&name) {
+                continue;
             }
+            if self.inputs.iter().any(|p| p.name == name) {
+                continue;
+            }
+            self.explored_names.insert(name.clone());
+            return Some(name);
         }
         None
     }
