@@ -134,9 +134,14 @@ pub async fn execute(
     let check_publish = !args.no_check_publish;
     output_result(&file, &result, check_publish, check_lock, &lock_errors);
 
-    // Stub for --with-dependencies
+    // Validate dependencies' composer.json files
     if args.with_dependencies {
-        console.info("The --with-dependencies option is not yet implemented");
+        let vendor_dir = file.parent().unwrap_or(Path::new(".")).join("vendor");
+        if vendor_dir.exists() {
+            validate_dependencies(&vendor_dir, args, console);
+        } else {
+            console.info("No vendor directory found. Run `mozart install` to install dependencies.");
+        }
     }
 
     let exit_code = compute_exit_code(
@@ -370,6 +375,108 @@ fn check_minimum_stability(
         result.errors.push(format!(
             "The minimum-stability \"{stability}\" is invalid. \
              Must be one of: dev, alpha, beta, rc, stable."
+        ));
+    }
+}
+
+// ─── Dependency validation ───────────────────────────────────────────────
+
+fn validate_dependencies(
+    vendor_dir: &Path,
+    args: &ValidateArgs,
+    console: &mozart_core::console::Console,
+) {
+    let mut dep_errors = 0u32;
+    let mut dep_warnings = 0u32;
+    let mut dep_count = 0u32;
+
+    // Walk vendor/<vendor>/<package>/composer.json
+    let Ok(vendors) = std::fs::read_dir(vendor_dir) else {
+        return;
+    };
+
+    for vendor_entry in vendors.flatten() {
+        if !vendor_entry.path().is_dir() {
+            continue;
+        }
+        // Skip non-package dirs (bin, composer, autoload files, etc.)
+        let vendor_name = vendor_entry.file_name();
+        let vendor_str = vendor_name.to_string_lossy();
+        if vendor_str.starts_with('.') || vendor_str == "bin" || vendor_str == "composer" {
+            continue;
+        }
+
+        let Ok(packages) = std::fs::read_dir(vendor_entry.path()) else {
+            continue;
+        };
+
+        for pkg_entry in packages.flatten() {
+            if !pkg_entry.path().is_dir() {
+                continue;
+            }
+
+            let dep_composer = pkg_entry.path().join("composer.json");
+            if !dep_composer.exists() {
+                continue;
+            }
+
+            let Ok(content) = std::fs::read_to_string(&dep_composer) else {
+                continue;
+            };
+
+            let Ok(json_value) = serde_json::from_str::<serde_json::Value>(&content) else {
+                dep_errors += 1;
+                let pkg_name = format!(
+                    "{}/{}",
+                    vendor_str,
+                    pkg_entry.file_name().to_string_lossy()
+                );
+                eprintln!(
+                    "{}",
+                    mozart_core::console::warning(&format!(
+                        "{pkg_name}: composer.json contains invalid JSON"
+                    ))
+                );
+                continue;
+            };
+
+            let mut result = ValidationResult::new();
+            validate_manifest(&json_value, args, &mut result);
+
+            dep_count += 1;
+
+            if result.has_errors() || result.has_warnings() {
+                let pkg_name = format!(
+                    "{}/{}",
+                    vendor_str,
+                    pkg_entry.file_name().to_string_lossy()
+                );
+
+                for e in &result.errors {
+                    eprintln!(
+                        "{}",
+                        mozart_core::console::error(&format!("{pkg_name}: {e}"))
+                    );
+                    dep_errors += 1;
+                }
+                for w in &result.warnings {
+                    eprintln!(
+                        "{}",
+                        mozart_core::console::warning(&format!("{pkg_name}: {w}"))
+                    );
+                    dep_warnings += 1;
+                }
+            }
+        }
+    }
+
+    if dep_count > 0 {
+        console.info(&format!(
+            "Validated {} dependenc{}: {} error(s), {} warning(s)",
+            dep_count,
+            if dep_count == 1 { "y" } else { "ies" },
+            dep_errors,
+            dep_warnings
         ));
     }
 }
