@@ -1,6 +1,30 @@
 use clap::Args;
 use mozart_core::console_format;
 use mozart_registry::packagist::SearchResult;
+use serde::Serialize;
+
+/// JSON output structure matching Composer's search result schema.
+///
+/// Composer outputs only `name`, `description`, `url`, and optionally `abandoned`.
+#[derive(Serialize)]
+struct SearchResultOutput {
+    name: String,
+    description: String,
+    url: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    abandoned: Option<serde_json::Value>,
+}
+
+impl From<&SearchResult> for SearchResultOutput {
+    fn from(r: &SearchResult) -> Self {
+        Self {
+            name: r.name.clone(),
+            description: r.description.clone(),
+            url: r.url.clone(),
+            abandoned: r.abandoned.clone(),
+        }
+    }
+}
 
 #[derive(Args)]
 pub struct SearchArgs {
@@ -111,13 +135,47 @@ pub async fn execute(
 
     if args.only_vendor {
         results.retain(|r| passes_only_vendor(r, &query));
+
+        // Deduplicate to unique vendor names (Composer returns vendor-only names
+        // for SEARCH_VENDOR mode).
+        let mut seen = std::collections::HashSet::new();
+        let mut vendor_names: Vec<String> = Vec::new();
+        for r in &results {
+            let vendor = r.name.split('/').next().unwrap_or("").to_string();
+            if seen.insert(vendor.clone()) {
+                vendor_names.push(vendor);
+            }
+        }
+
+        match format {
+            "json" => {
+                let json = serde_json::to_string_pretty(&vendor_names)?;
+                println!("{json}");
+            }
+            _ => {
+                if vendor_names.is_empty() {
+                    eprintln!(
+                        "{}",
+                        console_format!("<warning>No packages found for \"{query}\"</warning>")
+                    );
+                } else {
+                    for vendor in &vendor_names {
+                        println!("{}", console_format!("<info>{vendor}</info>"));
+                    }
+                }
+            }
+        }
+        return Ok(());
     }
 
     // Output
     match format {
         "json" => {
-            let owned: Vec<SearchResult> = results.into_iter().cloned().collect();
-            let json = serde_json::to_string_pretty(&owned)?;
+            let output: Vec<SearchResultOutput> = results
+                .iter()
+                .map(|r| SearchResultOutput::from(*r))
+                .collect();
+            let json = serde_json::to_string_pretty(&output)?;
             println!("{json}");
         }
         _ => {
@@ -406,7 +464,7 @@ mod tests {
     // ── serialization ────────────────────────────────────────────────────────
 
     #[test]
-    fn test_search_result_serializes_to_json() {
+    fn test_search_result_output_matches_composer_schema() {
         let result = SearchResult {
             name: "test/pkg".to_string(),
             description: "A test package".to_string(),
@@ -417,12 +475,61 @@ mod tests {
             abandoned: None,
         };
 
-        let json = serde_json::to_string(&result).unwrap();
+        let output = SearchResultOutput::from(&result);
+        let json = serde_json::to_string(&output).unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
 
         assert_eq!(parsed["name"], "test/pkg");
-        assert_eq!(parsed["downloads"], 1000);
-        assert_eq!(parsed["favers"], 50);
+        assert_eq!(parsed["description"], "A test package");
+        assert_eq!(parsed["url"], "https://packagist.org/packages/test/pkg");
+        // Composer schema does not include repository, downloads, or favers
+        assert!(parsed.get("repository").is_none());
+        assert!(parsed.get("downloads").is_none());
+        assert!(parsed.get("favers").is_none());
+        // abandoned is skipped when None
+        assert!(parsed.get("abandoned").is_none());
+    }
+
+    #[test]
+    fn test_search_result_output_with_abandoned() {
+        let result = SearchResult {
+            name: "old/pkg".to_string(),
+            description: "Old package".to_string(),
+            url: "https://packagist.org/packages/old/pkg".to_string(),
+            repository: None,
+            downloads: 0,
+            favers: 0,
+            abandoned: Some(serde_json::Value::String("new/pkg".to_string())),
+        };
+
+        let output = SearchResultOutput::from(&result);
+        let json = serde_json::to_string(&output).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(parsed["abandoned"], "new/pkg");
+    }
+
+    // ── only_vendor deduplication ───────────────────────────────────────────
+
+    #[test]
+    fn test_only_vendor_deduplicates_vendor_names() {
+        let results = vec![
+            make_result("monolog/monolog"),
+            make_result("monolog/handler"),
+            make_result("monolog/formatter"),
+        ];
+        let refs: Vec<&SearchResult> = results.iter().collect();
+
+        let mut seen = std::collections::HashSet::new();
+        let mut vendor_names: Vec<String> = Vec::new();
+        for r in &refs {
+            let vendor = r.name.split('/').next().unwrap_or("").to_string();
+            if seen.insert(vendor.clone()) {
+                vendor_names.push(vendor);
+            }
+        }
+
+        assert_eq!(vendor_names, vec!["monolog"]);
     }
 
     // ── helper ───────────────────────────────────────────────────────────────
