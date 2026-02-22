@@ -857,9 +857,10 @@ pub fn generate(config: &AutoloadConfig) -> anyhow::Result<GenerateResult> {
         );
         for (class, path_expr) in scanned {
             if let Some(existing) = data.classmap.get(&class)
-                && existing != &path_expr {
-                    ambiguous_found = true;
-                }
+                && existing != &path_expr
+            {
+                ambiguous_found = true;
+            }
             // Also generate the static expression
             // We store the dynamic expression in data.classmap; static_data.classmap
             // will be populated similarly. For now we insert into both.
@@ -884,9 +885,10 @@ pub fn generate(config: &AutoloadConfig) -> anyhow::Result<GenerateResult> {
         psr_violations = violations;
         for (class, path_expr) in opt_dyn {
             if let Some(existing) = data.classmap.get(&class)
-                && existing != &path_expr {
-                    ambiguous_found = true;
-                }
+                && existing != &path_expr
+            {
+                ambiguous_found = true;
+            }
             data.classmap.entry(class).or_insert(path_expr);
         }
         for (class, path_expr) in opt_static {

@@ -147,7 +147,7 @@ impl ComposerConfig {
             .unwrap_or("vendor")
             .to_string();
 
-        let home = composer_home();
+        let home = composer_home().to_string_lossy().into_owned();
 
         let cache_dir = self
             .values
@@ -466,7 +466,7 @@ fn resolve_config_file_path(args: &ConfigArgs, cli: &super::Cli) -> anyhow::Resu
         anyhow::bail!("Cannot combine --global and --file");
     }
     if args.global {
-        return Ok(PathBuf::from(composer_home()).join("config.json"));
+        return Ok(composer_home().join("config.json"));
     }
     if let Some(ref file) = args.file {
         return Ok(PathBuf::from(file));
@@ -900,7 +900,7 @@ fn execute_read(
     let mut config = ComposerConfig::defaults();
 
     if args.global {
-        let global_config_path = PathBuf::from(composer_home()).join("config.json");
+        let global_config_path = composer_home().join("config.json");
         let overrides = load_config_section(&global_config_path)?;
         config.merge(&overrides);
     } else {

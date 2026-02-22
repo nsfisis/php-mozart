@@ -1,10 +1,9 @@
 use clap::Args;
-use std::path::PathBuf;
 
 #[derive(Args)]
 pub struct GlobalArgs {
     /// The command name to run
-    pub command_name: String,
+    pub command_name: Option<String>,
 
     /// Arguments to pass to the command
     #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
@@ -21,7 +20,16 @@ pub async fn execute(
     use clap::Parser as _;
     use std::fs;
 
-    let home = composer_home_dir()?;
+    let command_name = match &args.command_name {
+        Some(name) => name.clone(),
+        None => {
+            anyhow::bail!(
+                "The global command requires a subcommand, e.g. `mozart global require package/name`"
+            );
+        }
+    };
+
+    let home = super::config_helpers::composer_home();
 
     fs::create_dir_all(&home)?;
 
@@ -36,7 +44,7 @@ pub async fn execute(
     argv.extend(append_global_options(cli));
     argv.push("--working-dir".to_string());
     argv.push(home.to_string_lossy().into_owned());
-    argv.push(args.command_name.clone());
+    argv.push(command_name);
     argv.extend(args.args.iter().cloned());
 
     let new_cli = super::Cli::try_parse_from(&argv)?;
@@ -44,26 +52,6 @@ pub async fn execute(
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
-
-fn composer_home_dir() -> anyhow::Result<PathBuf> {
-    if let Ok(val) = std::env::var("COMPOSER_HOME")
-        && !val.is_empty()
-    {
-        return Ok(PathBuf::from(val));
-    }
-
-    if let Ok(xdg) = std::env::var("XDG_CONFIG_HOME")
-        && !xdg.is_empty()
-    {
-        return Ok(PathBuf::from(xdg).join("composer"));
-    }
-
-    let home = std::env::var("HOME")
-        .map(PathBuf::from)
-        .map_err(|_| anyhow::anyhow!("Cannot determine home directory: $HOME is not set"))?;
-
-    Ok(home.join(".config").join("composer"))
-}
 
 fn append_global_options(cli: &super::Cli) -> Vec<String> {
     let mut opts: Vec<String> = Vec::new();
@@ -117,54 +105,6 @@ mod tests {
 
     fn default_cli() -> Cli {
         Cli::try_parse_from(["mozart", "about"]).unwrap()
-    }
-
-    // ── composer_home_dir tests ───────────────────────────────────────────────
-
-    /// Guards env-var mutations so the three composer_home_dir tests
-    /// cannot race each other when `cargo test` runs them in parallel.
-    static ENV_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
-    #[test]
-    fn test_composer_home_dir_from_env() {
-        let _lock = ENV_MUTEX.lock().unwrap();
-        // SAFETY: test-only; protected by ENV_MUTEX
-        unsafe {
-            std::env::set_var("COMPOSER_HOME", "/tmp/test-composer-home");
-        }
-        let result = composer_home_dir().unwrap();
-        unsafe {
-            std::env::remove_var("COMPOSER_HOME");
-        }
-        assert_eq!(result, PathBuf::from("/tmp/test-composer-home"));
-    }
-
-    #[test]
-    fn test_composer_home_dir_xdg() {
-        let _lock = ENV_MUTEX.lock().unwrap();
-        // SAFETY: test-only; protected by ENV_MUTEX
-        unsafe {
-            std::env::remove_var("COMPOSER_HOME");
-            std::env::set_var("XDG_CONFIG_HOME", "/tmp/test-xdg-config");
-        }
-        let result = composer_home_dir().unwrap();
-        unsafe {
-            std::env::remove_var("XDG_CONFIG_HOME");
-        }
-        assert_eq!(result, PathBuf::from("/tmp/test-xdg-config/composer"));
-    }
-
-    #[test]
-    fn test_composer_home_dir_default() {
-        let _lock = ENV_MUTEX.lock().unwrap();
-        // SAFETY: test-only; protected by ENV_MUTEX
-        unsafe {
-            std::env::remove_var("COMPOSER_HOME");
-            std::env::remove_var("XDG_CONFIG_HOME");
-        }
-        let result = composer_home_dir().unwrap();
-        let home = std::env::var("HOME").map(PathBuf::from).unwrap();
-        assert_eq!(result, home.join(".config").join("composer"));
     }
 
     // ── append_global_options tests ───────────────────────────────────────────
@@ -222,7 +162,7 @@ mod tests {
         // Verify GlobalArgs parses correctly through the CLI
         let cli = Cli::try_parse_from(["mozart", "global", "require", "vendor/package"]).unwrap();
         if let Some(Commands::Global(args)) = cli.command {
-            assert_eq!(args.command_name, "require");
+            assert_eq!(args.command_name, Some("require".to_string()));
             assert_eq!(args.args, vec!["vendor/package"]);
         } else {
             panic!("Expected Global command");
@@ -235,8 +175,19 @@ mod tests {
         let cli = Cli::try_parse_from(["mozart", "global", "require", "vendor/pkg", "--no-update"])
             .unwrap();
         if let Some(Commands::Global(args)) = cli.command {
-            assert_eq!(args.command_name, "require");
+            assert_eq!(args.command_name, Some("require".to_string()));
             assert!(args.args.contains(&"--no-update".to_string()));
+        } else {
+            panic!("Expected Global command");
+        }
+    }
+
+    #[test]
+    fn test_global_args_no_subcommand() {
+        // Verify that no subcommand parses to None
+        let cli = Cli::try_parse_from(["mozart", "global"]).unwrap();
+        if let Some(Commands::Global(args)) = cli.command {
+            assert_eq!(args.command_name, None);
         } else {
             panic!("Expected Global command");
         }

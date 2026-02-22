@@ -47,7 +47,7 @@ fn resolve_file_path(args: &RepositoryArgs, cli: &super::Cli) -> anyhow::Result<
         anyhow::bail!("Cannot combine --global and --file");
     }
     if args.global {
-        return Ok(PathBuf::from(composer_home()).join("config.json"));
+        return Ok(composer_home().join("config.json"));
     }
     if let Some(ref file) = args.file {
         return Ok(PathBuf::from(file));

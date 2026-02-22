@@ -2,30 +2,62 @@ use anyhow::anyhow;
 use std::path::{Path, PathBuf};
 
 /// Return the Composer home directory, respecting `COMPOSER_HOME` and
-/// falling back to the platform default (`~/.config/composer` on Unix,
-/// `%APPDATA%/Composer` on Windows).
-pub(crate) fn composer_home() -> String {
-    if let Ok(home) = std::env::var("COMPOSER_HOME") {
-        return home;
+/// falling back to the platform default using Composer-compatible logic.
+///
+/// On Unix:
+/// - If XDG is in use (any `XDG_*` env var exists, or `/etc/xdg` exists),
+///   prefer `$XDG_CONFIG_HOME/composer` (or `$HOME/.config/composer`).
+/// - Always include `$HOME/.composer` as a fallback candidate.
+/// - Return the first candidate directory that exists on disk;
+///   if none exist, return the first candidate.
+pub(crate) fn composer_home() -> PathBuf {
+    if let Ok(val) = std::env::var("COMPOSER_HOME")
+        && !val.is_empty()
+    {
+        return PathBuf::from(val);
     }
 
     #[cfg(target_os = "windows")]
     {
-        std::env::var("APPDATA")
-            .map(|p| format!("{p}/Composer"))
-            .unwrap_or_else(|_| "C:/ProgramData/ComposerSetup/bin".to_string())
+        if let Ok(appdata) = std::env::var("APPDATA")
+            && !appdata.is_empty()
+        {
+            return PathBuf::from(appdata).join("Composer");
+        }
+        return PathBuf::from("C:/ProgramData/ComposerSetup/bin");
     }
 
     #[cfg(not(target_os = "windows"))]
     {
-        if let Ok(xdg) = std::env::var("XDG_CONFIG_HOME") {
-            format!("{xdg}/composer")
-        } else {
-            std::env::var("HOME")
-                .map(|h| format!("{h}/.config/composer"))
-                .unwrap_or_else(|_| "/tmp/composer".to_string())
+        let home_dir = std::env::var("HOME")
+            .map(PathBuf::from)
+            .unwrap_or_else(|_| PathBuf::from("/tmp"));
+
+        let mut candidates: Vec<PathBuf> = Vec::new();
+
+        if use_xdg() {
+            let xdg_config = std::env::var("XDG_CONFIG_HOME")
+                .map(PathBuf::from)
+                .unwrap_or_else(|_| home_dir.join(".config"));
+            candidates.push(xdg_config.join("composer"));
         }
+
+        candidates.push(home_dir.join(".composer"));
+
+        // Return first candidate that exists; otherwise return the first
+        candidates
+            .iter()
+            .find(|p| p.is_dir())
+            .cloned()
+            .unwrap_or_else(|| candidates.into_iter().next().unwrap())
     }
+}
+
+/// Check whether XDG base directories are in use:
+/// any env var starting with `XDG_` exists, OR `/etc/xdg` directory exists.
+fn use_xdg() -> bool {
+    std::env::vars().any(|(k, _)| k.starts_with("XDG_"))
+        || std::path::Path::new("/etc/xdg").is_dir()
 }
 
 /// Build the working directory path, preferring `--working-dir` over `cwd`.

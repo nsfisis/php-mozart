@@ -71,14 +71,15 @@ pub async fn execute(
     let mut composer_config = super::config::ComposerConfig::defaults();
     if composer_json_path.exists()
         && let Ok(content) = std::fs::read_to_string(&composer_json_path)
-            && let Ok(value) = serde_json::from_str::<serde_json::Value>(&content)
-                && let Some(cfg_obj) = value.get("config").and_then(|v| v.as_object()) {
-                    let overrides: std::collections::BTreeMap<String, serde_json::Value> = cfg_obj
-                        .iter()
-                        .map(|(k, v)| (k.clone(), v.clone()))
-                        .collect();
-                    composer_config.merge(&overrides);
-                }
+        && let Ok(value) = serde_json::from_str::<serde_json::Value>(&content)
+        && let Some(cfg_obj) = value.get("config").and_then(|v| v.as_object())
+    {
+        let overrides: std::collections::BTreeMap<String, serde_json::Value> = cfg_obj
+            .iter()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect();
+        composer_config.merge(&overrides);
+    }
 
     let optimize = args.optimize
         || composer_config
