@@ -23,6 +23,13 @@ pub enum PlatformCheckMode {
     Disabled,
 }
 
+/// Result of autoload generation, reporting statistics and warnings.
+pub struct GenerateResult {
+    pub class_count: usize,
+    pub has_psr_violations: bool,
+    pub has_ambiguous_classes: bool,
+}
+
 /// Configuration for autoload generation.
 pub struct AutoloadConfig {
     /// Absolute path to the project root (where composer.json lives).
@@ -44,6 +51,8 @@ pub struct AutoloadConfig {
     pub apcu_prefix: Option<String>,
     /// When true, return an error on PSR mapping violations detected during classmap scan.
     pub strict_psr: bool,
+    /// When true, return exit code 2 if ambiguous class mappings are detected.
+    pub strict_ambiguous: bool,
     /// How to handle platform requirement checks.
     pub platform_check: PlatformCheckMode,
     /// When true, skip all platform requirement checks.
@@ -760,7 +769,7 @@ pub fn determine_suffix(working_dir: &Path, vendor_dir: &Path) -> anyhow::Result
 /// Generate all autoloader files for the given project.
 ///
 /// This is the main entry point called by `install` and `dump-autoload`.
-pub fn generate(config: &AutoloadConfig) -> anyhow::Result<()> {
+pub fn generate(config: &AutoloadConfig) -> anyhow::Result<GenerateResult> {
     // 1. Read installed.json
     let installed = InstalledPackages::read(&config.vendor_dir)?;
 
@@ -838,6 +847,7 @@ pub fn generate(config: &AutoloadConfig) -> anyhow::Result<()> {
     }
 
     // Scan classmap dirs
+    let mut ambiguous_found = false;
     if !classmap_dirs.is_empty() {
         let scanned = scan_classmap_dirs(
             &classmap_dirs,
@@ -846,6 +856,10 @@ pub fn generate(config: &AutoloadConfig) -> anyhow::Result<()> {
             &excluded,
         );
         for (class, path_expr) in scanned {
+            if let Some(existing) = data.classmap.get(&class)
+                && existing != &path_expr {
+                    ambiguous_found = true;
+                }
             // Also generate the static expression
             // We store the dynamic expression in data.classmap; static_data.classmap
             // will be populated similarly. For now we insert into both.
@@ -869,6 +883,10 @@ pub fn generate(config: &AutoloadConfig) -> anyhow::Result<()> {
         );
         psr_violations = violations;
         for (class, path_expr) in opt_dyn {
+            if let Some(existing) = data.classmap.get(&class)
+                && existing != &path_expr {
+                    ambiguous_found = true;
+                }
             data.classmap.entry(class).or_insert(path_expr);
         }
         for (class, path_expr) in opt_static {
@@ -1021,7 +1039,11 @@ pub fn generate(config: &AutoloadConfig) -> anyhow::Result<()> {
         generate_installed_php(&root_name, &root_type, &installed, config.dev_mode),
     )?;
 
-    Ok(())
+    Ok(GenerateResult {
+        class_count: data.classmap.len(),
+        has_psr_violations: !psr_violations.is_empty(),
+        has_ambiguous_classes: ambiguous_found,
+    })
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1443,6 +1465,7 @@ mod tests {
             apcu: false,
             apcu_prefix: None,
             strict_psr: false,
+            strict_ambiguous: false,
             platform_check: PlatformCheckMode::Disabled,
             ignore_platform_reqs: false,
         };
@@ -1545,6 +1568,7 @@ mod tests {
             apcu: false,
             apcu_prefix: None,
             strict_psr: false,
+            strict_ambiguous: false,
             platform_check: PlatformCheckMode::Disabled,
             ignore_platform_reqs: false,
         };

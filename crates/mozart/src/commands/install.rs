@@ -476,19 +476,21 @@ pub async fn install_from_lock(
 
             let suffix = lock.content_hash.clone();
 
-            mozart_autoload::autoload::generate(&mozart_autoload::autoload::AutoloadConfig {
-                project_dir: working_dir.to_path_buf(),
-                vendor_dir: vendor_dir.to_path_buf(),
-                dev_mode,
-                suffix,
-                classmap_authoritative: config.classmap_authoritative,
-                optimize: config.optimize_autoloader,
-                apcu: config.apcu_autoloader,
-                apcu_prefix: config.apcu_autoloader_prefix.clone(),
-                strict_psr: false,
-                platform_check: mozart_autoload::autoload::PlatformCheckMode::Full,
-                ignore_platform_reqs: config.ignore_platform_reqs,
-            })?;
+            let _result =
+                mozart_autoload::autoload::generate(&mozart_autoload::autoload::AutoloadConfig {
+                    project_dir: working_dir.to_path_buf(),
+                    vendor_dir: vendor_dir.to_path_buf(),
+                    dev_mode,
+                    suffix,
+                    classmap_authoritative: config.classmap_authoritative,
+                    optimize: config.optimize_autoloader,
+                    apcu: config.apcu_autoloader,
+                    apcu_prefix: config.apcu_autoloader_prefix.clone(),
+                    strict_psr: false,
+                    strict_ambiguous: false,
+                    platform_check: mozart_autoload::autoload::PlatformCheckMode::Full,
+                    ignore_platform_reqs: config.ignore_platform_reqs,
+                })?;
 
             eprintln!("Generated autoload files");
         }

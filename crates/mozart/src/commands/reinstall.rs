@@ -234,19 +234,21 @@ pub async fn execute(
         let dev_mode = !args.no_dev && installed.dev;
         let suffix = lock.content_hash.clone();
 
-        mozart_autoload::autoload::generate(&mozart_autoload::autoload::AutoloadConfig {
-            project_dir: working_dir.to_path_buf(),
-            vendor_dir: vendor_dir.to_path_buf(),
-            dev_mode,
-            suffix,
-            classmap_authoritative: args.classmap_authoritative,
-            optimize: args.optimize_autoloader,
-            apcu: args.apcu_autoloader,
-            apcu_prefix: args.apcu_autoloader_prefix.clone(),
-            strict_psr: false,
-            platform_check: mozart_autoload::autoload::PlatformCheckMode::Full,
-            ignore_platform_reqs: args.ignore_platform_reqs,
-        })?;
+        let _result =
+            mozart_autoload::autoload::generate(&mozart_autoload::autoload::AutoloadConfig {
+                project_dir: working_dir.to_path_buf(),
+                vendor_dir: vendor_dir.to_path_buf(),
+                dev_mode,
+                suffix,
+                classmap_authoritative: args.classmap_authoritative,
+                optimize: args.optimize_autoloader,
+                apcu: args.apcu_autoloader,
+                apcu_prefix: args.apcu_autoloader_prefix.clone(),
+                strict_psr: false,
+                strict_ambiguous: false,
+                platform_check: mozart_autoload::autoload::PlatformCheckMode::Full,
+                ignore_platform_reqs: args.ignore_platform_reqs,
+            })?;
 
         console.info("Generated autoload files");
     }
