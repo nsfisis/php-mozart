@@ -103,7 +103,7 @@ pub async fn execute(
     let packages = load_packages(&working_dir, args.locked, args.no_dev)?;
 
     if packages.is_empty() {
-        println!("No packages - skipping audit.");
+        eprintln!("No packages - skipping audit.");
         return Ok(());
     }
 
@@ -386,7 +386,7 @@ fn detect_abandoned(packages: &[PackageEntry]) -> Vec<AbandonedPackage> {
 
 fn render_table(result: &AuditResult) {
     if result.total_advisory_count == 0 && result.abandoned.is_empty() {
-        println!(
+        eprintln!(
             "{}",
             mozart_core::console::info("No security vulnerability advisories found.")
         );
@@ -403,8 +403,8 @@ fn render_table(result: &AuditResult) {
             "Found {} security vulnerability {} affecting {} package(s):",
             result.total_advisory_count, advisory_word, result.affected_package_count
         );
-        println!("{}", mozart_core::console::highlight(&header));
-        println!();
+        eprintln!("{}", mozart_core::console::highlight(&header));
+        eprintln!();
 
         for advisories in result.advisories.values() {
             for matched in advisories {
@@ -436,9 +436,9 @@ fn render_table(result: &AuditResult) {
                     vw = value_width
                 );
 
-                println!("{}", separator);
+                eprintln!("{}", separator);
                 for (label, value) in &rows {
-                    println!(
+                    eprintln!(
                         "| {:<lw$} | {:<vw$} |",
                         label,
                         value,
@@ -446,16 +446,16 @@ fn render_table(result: &AuditResult) {
                         vw = value_width
                     );
                 }
-                println!("{}", separator);
-                println!();
+                eprintln!("{}", separator);
+                eprintln!();
             }
         }
     }
 
     if !result.abandoned.is_empty() {
         let header = format!("Found {} abandoned package(s):", result.abandoned.len());
-        println!("{}", mozart_core::console::highlight(&header));
-        println!();
+        eprintln!("{}", mozart_core::console::highlight(&header));
+        eprintln!();
 
         let name_width = 20usize;
         let ver_width = result
@@ -478,7 +478,7 @@ fn render_table(result: &AuditResult) {
             .unwrap_or(0)
             .max("Suggested Replacement".len());
 
-        println!(
+        eprintln!(
             "| {:<nw$} | {:<vw$} | {:<rw$} |",
             "Abandoned Package",
             "Version",
@@ -487,7 +487,7 @@ fn render_table(result: &AuditResult) {
             vw = ver_width,
             rw = repl_width
         );
-        println!(
+        eprintln!(
             "+-{:-<nw$}-+-{:-<vw$}-+-{:-<rw$}-+",
             "",
             "",
@@ -501,7 +501,7 @@ fn render_table(result: &AuditResult) {
                 .replacement
                 .as_deref()
                 .unwrap_or("No replacement suggested");
-            println!(
+            eprintln!(
                 "| {:<nw$} | {:<vw$} | {:<rw$} |",
                 pkg.name,
                 pkg.version,
@@ -511,13 +511,13 @@ fn render_table(result: &AuditResult) {
                 rw = repl_width
             );
         }
-        println!();
+        eprintln!();
     }
 }
 
 fn render_plain(result: &AuditResult) {
     if result.total_advisory_count == 0 && result.abandoned.is_empty() {
-        println!("No security vulnerability advisories found.");
+        eprintln!("No security vulnerability advisories found.");
         return;
     }
 
@@ -527,36 +527,36 @@ fn render_plain(result: &AuditResult) {
         } else {
             "advisories"
         };
-        println!(
+        eprintln!(
             "Found {} security vulnerability {} affecting {} package(s):",
             result.total_advisory_count, advisory_word, result.affected_package_count
         );
-        println!();
+        eprintln!();
 
         for advisories in result.advisories.values() {
             for matched in advisories {
                 let adv = &matched.advisory;
-                println!("Package: {}", adv.package_name);
-                println!("Version: {}", matched.installed_version);
-                println!("Severity: {}", adv.severity.as_deref().unwrap_or(""));
-                println!("Advisory ID: {}", adv.advisory_id);
-                println!("CVE: {}", adv.cve.as_deref().unwrap_or("NO CVE"));
-                println!("Title: {}", adv.title);
-                println!("URL: {}", adv.link.as_deref().unwrap_or(""));
-                println!("Affected versions: {}", adv.affected_versions);
-                println!("Reported at: {}", adv.reported_at);
-                println!("--------");
+                eprintln!("Package: {}", adv.package_name);
+                eprintln!("Version: {}", matched.installed_version);
+                eprintln!("Severity: {}", adv.severity.as_deref().unwrap_or(""));
+                eprintln!("Advisory ID: {}", adv.advisory_id);
+                eprintln!("CVE: {}", adv.cve.as_deref().unwrap_or("NO CVE"));
+                eprintln!("Title: {}", adv.title);
+                eprintln!("URL: {}", adv.link.as_deref().unwrap_or(""));
+                eprintln!("Affected versions: {}", adv.affected_versions);
+                eprintln!("Reported at: {}", adv.reported_at);
+                eprintln!("--------");
             }
         }
     }
 
     for pkg in &result.abandoned {
         match &pkg.replacement {
-            Some(repl) => println!(
+            Some(repl) => eprintln!(
                 "{} ({}) is abandoned. Use {} instead.",
                 pkg.name, pkg.version, repl
             ),
-            None => println!(
+            None => eprintln!(
                 "{} ({}) is abandoned. No replacement was suggested.",
                 pkg.name, pkg.version
             ),
@@ -600,27 +600,27 @@ fn render_json(result: &AuditResult) -> anyhow::Result<()> {
 
 fn render_summary(result: &AuditResult) {
     if result.total_advisory_count == 0 {
-        println!("No security vulnerability advisories found.");
+        eprintln!("No security vulnerability advisories found.");
     } else {
         let advisory_word = if result.total_advisory_count == 1 {
             "advisory"
         } else {
             "advisories"
         };
-        println!(
+        eprintln!(
             "Found {} security vulnerability {} affecting {} package(s).",
             result.total_advisory_count, advisory_word, result.affected_package_count
         );
-        println!("Run \"mozart audit\" for a full list of advisories.");
+        eprintln!("Run \"mozart audit\" for a full list of advisories.");
     }
 
     for pkg in &result.abandoned {
         match &pkg.replacement {
-            Some(repl) => println!(
+            Some(repl) => eprintln!(
                 "{} ({}) is abandoned. Use {} instead.",
                 pkg.name, pkg.version, repl
             ),
-            None => println!(
+            None => eprintln!(
                 "{} ({}) is abandoned. No replacement was suggested.",
                 pkg.name, pkg.version
             ),
