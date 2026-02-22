@@ -197,6 +197,47 @@ pub enum Commands {
     Validate(validate::ValidateArgs),
 }
 
+impl Commands {
+    pub fn name(&self) -> &'static str {
+        match self {
+            Commands::About(_) => "about",
+            Commands::Archive(_) => "archive",
+            Commands::Audit(_) => "audit",
+            Commands::Browse(_) => "browse",
+            Commands::Bump(_) => "bump",
+            Commands::CheckPlatformReqs(_) => "check-platform-reqs",
+            Commands::ClearCache(_) => "clear-cache",
+            Commands::Completion(_) => "completion",
+            Commands::Config(_) => "config",
+            Commands::CreateProject(_) => "create-project",
+            Commands::Depends(_) => "depends",
+            Commands::Diagnose(_) => "diagnose",
+            Commands::DumpAutoload(_) => "dump-autoload",
+            Commands::Exec(_) => "exec",
+            Commands::Fund(_) => "fund",
+            Commands::Global(_) => "global",
+            Commands::Init(_) => "init",
+            Commands::Install(_) => "install",
+            Commands::Licenses(_) => "licenses",
+            Commands::Outdated(_) => "outdated",
+            Commands::Prohibits(_) => "prohibits",
+            Commands::Reinstall(_) => "reinstall",
+            Commands::Remove(_) => "remove",
+            Commands::Repository(_) => "repository",
+            Commands::Require(_) => "require",
+            Commands::RunScript(_) => "run-script",
+            Commands::Search(_) => "search",
+            Commands::SelfUpdate(_) => "self-update",
+            Commands::Show(_) => "show",
+            Commands::Status(_) => "status",
+            Commands::Suggests(_) => "suggests",
+            Commands::Update(_) => "update",
+            Commands::Validate(_) => "validate",
+        }
+    }
+}
+
+#[tracing::instrument(skip(cli), fields(command = cli.command.name()))]
 pub fn execute(cli: &Cli) -> anyhow::Result<()> {
     let console = mozart_core::console::Console::new(
         cli.verbose,

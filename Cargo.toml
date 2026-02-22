@@ -31,6 +31,8 @@ sha1 = "0.10"
 tar = "0.4"
 tempfile = "3.25.0"
 tokio = { version = "1.49.0", features = ["full"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 zip = { version = "2", default-features = false, features = ["deflate"] }
 assert_cmd = "2"
 predicates = "3"
