@@ -21,7 +21,7 @@ pub struct InstallArgs {
     pub prefer_dist: bool,
 
     /// Forces usage of a specific install method (dist, source, auto)
-    #[arg(long)]
+    #[arg(long, value_parser = ["source", "dist", "auto"])]
     pub prefer_install: Option<String>,
 
     /// Only output what would be changed, do not modify files
@@ -65,7 +65,7 @@ pub struct InstallArgs {
     pub audit: bool,
 
     /// Audit output format
-    #[arg(long)]
+    #[arg(long, value_parser = ["table", "plain", "json", "summary"])]
     pub audit_format: Option<String>,
 
     /// Optimizes PSR-0 and PSR-4 packages to be loaded with classmaps
@@ -115,6 +115,8 @@ pub struct InstallConfig {
     pub apcu_autoloader: bool,
     /// Custom prefix for APCu autoloader cache.
     pub apcu_autoloader_prefix: Option<String>,
+    /// Only download packages, skip autoloader generation and installed.json write.
+    pub download_only: bool,
 }
 
 impl Default for InstallConfig {
@@ -130,6 +132,7 @@ impl Default for InstallConfig {
             classmap_authoritative: false,
             apcu_autoloader: false,
             apcu_autoloader_prefix: None,
+            download_only: false,
         }
     }
 }
@@ -439,23 +442,25 @@ pub async fn install_from_lock(
             cleanup_empty_vendor_dirs(vendor_dir)?;
         }
 
-        // Step 8: Write updated vendor/composer/installed.json
-        let mut new_installed = installed::InstalledPackages::new();
-        new_installed.dev = dev_mode;
+        // Step 8: Write updated vendor/composer/installed.json (unless download_only)
+        if !config.download_only {
+            let mut new_installed = installed::InstalledPackages::new();
+            new_installed.dev = dev_mode;
 
-        // Collect dev package names from lock
-        if dev_mode && let Some(ref dev_pkgs) = lock.packages_dev {
-            new_installed.dev_package_names = dev_pkgs.iter().map(|p| p.name.clone()).collect();
+            // Collect dev package names from lock
+            if dev_mode && let Some(ref dev_pkgs) = lock.packages_dev {
+                new_installed.dev_package_names = dev_pkgs.iter().map(|p| p.name.clone()).collect();
+            }
+
+            for pkg in &packages_to_install {
+                new_installed.upsert(locked_to_installed_entry(pkg, vendor_dir));
+            }
+
+            new_installed.write(vendor_dir)?;
         }
 
-        for pkg in &packages_to_install {
-            new_installed.upsert(locked_to_installed_entry(pkg, vendor_dir));
-        }
-
-        new_installed.write(vendor_dir)?;
-
-        // Step 9: Generate autoloader (unless no_autoloader)
-        if !config.no_autoloader {
+        // Step 9: Generate autoloader (unless no_autoloader or download_only)
+        if !config.no_autoloader && !config.download_only {
             eprintln!("Generating autoload files");
 
             if config.classmap_authoritative {
@@ -508,6 +513,13 @@ pub async fn execute(
     let working_dir = resolve_working_dir(cli);
 
     // Step 2: Validate arguments
+    if args.prefer_install.is_some() && (args.prefer_source || args.prefer_dist) {
+        return Err(mozart_core::exit_code::bail(
+            mozart_core::exit_code::GENERAL_ERROR,
+            "The --prefer-install option cannot be used together with --prefer-source or --prefer-dist.",
+        ));
+    }
+
     if !args.packages.is_empty() {
         let pkgs = args.packages.join(" ");
         return Err(mozart_core::exit_code::bail(
@@ -623,8 +635,9 @@ pub async fn execute(
             ignore_platform_req: args.ignore_platform_req.clone(),
             optimize_autoloader: args.optimize_autoloader,
             classmap_authoritative: args.classmap_authoritative,
-            apcu_autoloader: args.apcu_autoloader,
+            apcu_autoloader: args.apcu_autoloader || args.apcu_autoloader_prefix.is_some(),
             apcu_autoloader_prefix: args.apcu_autoloader_prefix.clone(),
+            download_only: args.download_only,
         },
     )
     .await

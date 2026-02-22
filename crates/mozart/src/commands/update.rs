@@ -24,7 +24,7 @@ pub struct UpdateArgs {
     pub prefer_dist: bool,
 
     /// Forces usage of a specific install method (dist, source, auto)
-    #[arg(long)]
+    #[arg(long, value_parser = ["source", "dist", "auto"])]
     pub prefer_install: Option<String>,
 
     /// Only output what would be changed, do not modify files
@@ -52,7 +52,7 @@ pub struct UpdateArgs {
     pub no_audit: bool,
 
     /// Audit output format
-    #[arg(long)]
+    #[arg(long, value_parser = ["table", "plain", "json", "summary"])]
     pub audit_format: Option<String>,
 
     /// Do not block on security advisories
@@ -1142,6 +1142,7 @@ pub async fn execute(
                 classmap_authoritative: args.classmap_authoritative,
                 apcu_autoloader: false,
                 apcu_autoloader_prefix: None,
+                download_only: false,
             },
         )
         .await?;
