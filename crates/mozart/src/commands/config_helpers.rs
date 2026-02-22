@@ -140,12 +140,12 @@ pub(crate) fn insert_repository(
 /// single-line display (matching Composer's behaviour).
 pub(crate) fn render_value(v: &serde_json::Value) -> String {
     match v {
-        serde_json::Value::Null => "NULL".to_string(),
+        serde_json::Value::Null => "null".to_string(),
         serde_json::Value::Bool(b) => if *b { "true" } else { "false" }.to_string(),
         serde_json::Value::Number(n) => n.to_string(),
         serde_json::Value::String(s) => s.clone(),
-        serde_json::Value::Array(arr) => {
-            arr.iter().map(render_value).collect::<Vec<_>>().join(", ")
+        serde_json::Value::Array(_) => {
+            serde_json::to_string(v).unwrap_or_else(|_| "[]".to_string())
         }
         serde_json::Value::Object(obj) => {
             if obj.is_empty() {

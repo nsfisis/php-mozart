@@ -221,6 +221,8 @@ fn config_value_type(key: &str) -> Option<ConfigValueType> {
         "cache-vcs-dir" => Some(ConfigValueType::Str),
         "cache-files-ttl" => Some(ConfigValueType::Integer),
         "cache-files-maxsize" => Some(ConfigValueType::Str),
+        "cache-read-only" => Some(ConfigValueType::Bool),
+        "cache-ttl" => Some(ConfigValueType::Integer),
         "bin-compat" => Some(ConfigValueType::Enum(&["auto", "full", "proxy", "symlink"])),
         "discard-changes" => Some(ConfigValueType::BoolOrEnum(&["stash"])),
         "autoloader-suffix" => Some(ConfigValueType::Str),
@@ -237,6 +239,27 @@ fn config_value_type(key: &str) -> Option<ConfigValueType> {
         "github-protocols" => Some(ConfigValueType::EnumArray(&["git", "https", "ssh"])),
         "github-domains" => Some(ConfigValueType::StringArray),
         "gitlab-domains" => Some(ConfigValueType::StringArray),
+        "use-github-api" => Some(ConfigValueType::Bool),
+        "update-with-minimal-changes" => Some(ConfigValueType::Bool),
+        "disable-tls" => Some(ConfigValueType::Bool),
+        "github-expose-hostname" => Some(ConfigValueType::Bool),
+        "data-dir" => Some(ConfigValueType::Str),
+        "cafile" => Some(ConfigValueType::Str),
+        "capath" => Some(ConfigValueType::Str),
+        "gitlab-protocol" => Some(ConfigValueType::Enum(&["git", "http", "https"])),
+        // store-auths accepts true/false/prompt
+        "store-auths" => Some(ConfigValueType::BoolOrEnum(&["prompt"])),
+        // bump-after-update accepts true/false/dev/no-dev
+        "bump-after-update" => Some(ConfigValueType::BoolOrEnum(&["dev", "no-dev"])),
+        // use-parent-dir accepts true/false/prompt
+        "use-parent-dir" => Some(ConfigValueType::BoolOrEnum(&["prompt"])),
+        "audit.abandoned" => Some(ConfigValueType::Enum(&["ignore", "report", "fail"])),
+        "audit.ignore-unreachable" => Some(ConfigValueType::Bool),
+        "audit.block-insecure" => Some(ConfigValueType::Bool),
+        "audit.block-abandoned" => Some(ConfigValueType::Bool),
+        "audit.ignore-severity" => Some(ConfigValueType::EnumArray(&[
+            "low", "medium", "high", "critical",
+        ])),
         _ => None,
     }
 }
@@ -889,6 +912,26 @@ fn execute_read(
 
     config.resolve_references();
 
+    // If --absolute is requested, resolve *-dir values to absolute paths.
+    if args.absolute {
+        let wd = working_dir(cli)?;
+        let keys: Vec<String> = config.values.keys().cloned().collect();
+        for key in keys {
+            if key.ends_with("-dir")
+                && let Some(serde_json::Value::String(s)) = config.values.get(&key).cloned()
+            {
+                let p = std::path::Path::new(&s);
+                if p.is_relative() {
+                    let abs = wd.join(p);
+                    config.values.insert(
+                        key,
+                        serde_json::Value::String(abs.to_string_lossy().into_owned()),
+                    );
+                }
+            }
+        }
+    }
+
     if args.list {
         for (key, value) in &config.values {
             println!("[{}] {}", key, render_value(value));
@@ -1153,13 +1196,13 @@ mod tests {
 
     #[test]
     fn test_render_value_null() {
-        assert_eq!(render_value(&serde_json::Value::Null), "NULL");
+        assert_eq!(render_value(&serde_json::Value::Null), "null");
     }
 
     #[test]
     fn test_render_value_array() {
         let v = serde_json::json!(["https", "ssh", "git"]);
-        assert_eq!(render_value(&v), "https, ssh, git");
+        assert_eq!(render_value(&v), r#"["https","ssh","git"]"#);
     }
 
     #[test]
