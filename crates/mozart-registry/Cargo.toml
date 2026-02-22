@@ -6,12 +6,12 @@ edition.workspace = true
 [dependencies]
 mozart-core.workspace = true
 mozart-metadata-minifier.workspace = true
+mozart-sat-resolver.workspace = true
 mozart-semver.workspace = true
 anyhow.workspace = true
 filetime.workspace = true
 flate2.workspace = true
 md5.workspace = true
-pubgrub.workspace = true
 reqwest.workspace = true
 serde.workspace = true
 serde_json.workspace = true

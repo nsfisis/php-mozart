@@ -115,9 +115,17 @@ impl fmt::Display for Version {
                 return write!(f, "dev-{}", name);
             }
             // Numeric dev branch (e.g. "2.x-dev")
-            return write!(f, "{}.{}.{}.{}-dev", self.major, self.minor, self.patch, self.build);
+            return write!(
+                f,
+                "{}.{}.{}.{}-dev",
+                self.major, self.minor, self.patch, self.build
+            );
         }
-        write!(f, "{}.{}.{}.{}", self.major, self.minor, self.patch, self.build)?;
+        write!(
+            f,
+            "{}.{}.{}.{}",
+            self.major, self.minor, self.patch, self.build
+        )?;
         if let Some(ref pre) = self.pre_release {
             write!(f, "-{}", pre)?;
         }
@@ -1792,10 +1800,7 @@ mod tests {
         // patch1 > stable for the same numeric version.
         let patch_ver = Version::parse("1.0.0-patch1").unwrap();
         let stable = Version::parse("1.0.0").unwrap();
-        assert!(
-            patch_ver > stable,
-            "patch pre-release ranks above stable"
-        );
+        assert!(patch_ver > stable, "patch pre-release ranks above stable");
     }
 
     // normalize_pre_release() — tested via Version::parse pre_release field

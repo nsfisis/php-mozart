@@ -1,0 +1,10 @@
+[package]
+name = "mozart-sat-resolver"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+mozart-semver.workspace = true
+mozart-core.workspace = true
+
+[dev-dependencies]
