@@ -60,10 +60,7 @@ pub async fn execute(
     cli: &super::Cli,
     _console: &mozart_core::console::Console,
 ) -> anyhow::Result<()> {
-    let action = args
-        .action
-        .as_deref()
-        .unwrap_or("list");
+    let action = args.action.as_deref().unwrap_or("list");
 
     match action {
         "list" | "ls" | "show" => execute_list(args, cli),
@@ -108,10 +105,7 @@ fn execute_list(args: &RepositoryArgs, cli: &super::Cli) -> anyhow::Result<()> {
                 .get("type")
                 .and_then(|t| t.as_str())
                 .unwrap_or("unknown");
-            let url = entry
-                .get("url")
-                .and_then(|u| u.as_str())
-                .unwrap_or("");
+            let url = entry.get("url").and_then(|u| u.as_str()).unwrap_or("");
 
             println!("[{name}] {repo_type} {url}");
         }
@@ -235,13 +229,11 @@ fn execute_set_url(args: &RepositoryArgs, cli: &super::Cli) -> anyhow::Result<()
     let file_path = resolve_file_path(args, cli)?;
     let mut json = read_json_file(&file_path, args.global)?;
 
-    let found = json["repositories"]
-        .as_array_mut()
-        .and_then(|repos| {
-            repos.iter_mut().find(|entry| {
-                entry.get("name").and_then(|n| n.as_str()) == Some(name)
-            })
-        });
+    let found = json["repositories"].as_array_mut().and_then(|repos| {
+        repos
+            .iter_mut()
+            .find(|entry| entry.get("name").and_then(|n| n.as_str()) == Some(name))
+    });
 
     match found {
         Some(entry) => {
@@ -264,20 +256,15 @@ fn execute_get_url(args: &RepositoryArgs, cli: &super::Cli) -> anyhow::Result<()
     let file_path = resolve_file_path(args, cli)?;
     let json = read_json_file(&file_path, args.global)?;
 
-    let found = json["repositories"]
-        .as_array()
-        .and_then(|repos| {
-            repos.iter().find(|entry| {
-                entry.get("name").and_then(|n| n.as_str()) == Some(name)
-            })
-        });
+    let found = json["repositories"].as_array().and_then(|repos| {
+        repos
+            .iter()
+            .find(|entry| entry.get("name").and_then(|n| n.as_str()) == Some(name))
+    });
 
     match found {
         Some(entry) => {
-            let url = entry
-                .get("url")
-                .map(render_value)
-                .unwrap_or_default();
+            let url = entry.get("url").map(render_value).unwrap_or_default();
             println!("{url}");
             Ok(())
         }
@@ -288,10 +275,7 @@ fn execute_get_url(args: &RepositoryArgs, cli: &super::Cli) -> anyhow::Result<()
 // ─── disable ──────────────────────────────────────────────────────────────────
 
 fn execute_disable(args: &RepositoryArgs, cli: &super::Cli) -> anyhow::Result<()> {
-    let name = args
-        .name
-        .as_deref()
-        .unwrap_or("packagist.org");
+    let name = args.name.as_deref().unwrap_or("packagist.org");
 
     if name != "packagist.org" && name != "packagist" {
         anyhow::bail!("Only \"packagist.org\" can be disabled with this action");
@@ -313,10 +297,7 @@ fn execute_disable(args: &RepositoryArgs, cli: &super::Cli) -> anyhow::Result<()
 // ─── enable ───────────────────────────────────────────────────────────────────
 
 fn execute_enable(args: &RepositoryArgs, cli: &super::Cli) -> anyhow::Result<()> {
-    let name = args
-        .name
-        .as_deref()
-        .unwrap_or("packagist.org");
+    let name = args.name.as_deref().unwrap_or("packagist.org");
 
     if name != "packagist.org" && name != "packagist" {
         anyhow::bail!("Only \"packagist.org\" can be enabled with this action");
@@ -347,7 +328,12 @@ fn execute_enable(args: &RepositoryArgs, cli: &super::Cli) -> anyhow::Result<()>
 mod tests {
     use super::*;
 
-    fn make_args(action: Option<&str>, name: Option<&str>, arg1: Option<&str>, arg2: Option<&str>) -> RepositoryArgs {
+    fn make_args(
+        action: Option<&str>,
+        name: Option<&str>,
+        arg1: Option<&str>,
+        arg2: Option<&str>,
+    ) -> RepositoryArgs {
         RepositoryArgs {
             action: action.map(|s| s.to_string()),
             name: name.map(|s| s.to_string()),
@@ -406,10 +392,7 @@ mod tests {
     async fn test_list_with_disabled_packagist() {
         let dir = tempfile::TempDir::new().unwrap();
         let file = dir.path().join("composer.json");
-        std::fs::write(
-            &file,
-            r#"{"repositories": [{"packagist.org": false}]}"#,
-        ).unwrap();
+        std::fs::write(&file, r#"{"repositories": [{"packagist.org": false}]}"#).unwrap();
 
         let mut args = make_args(Some("list"), None, None, None);
         args.file = Some(file.to_str().unwrap().to_string());
@@ -428,14 +411,20 @@ mod tests {
         let file = dir.path().join("composer.json");
         std::fs::write(&file, "{}").unwrap();
 
-        let mut args = make_args(Some("add"), Some("my-repo"), Some("vcs"), Some("https://example.com"));
+        let mut args = make_args(
+            Some("add"),
+            Some("my-repo"),
+            Some("vcs"),
+            Some("https://example.com"),
+        );
         args.file = Some(file.to_str().unwrap().to_string());
 
         let cli = make_cli();
         let console = mozart_core::console::Console::new(0, false, false, false, false);
         execute(&args, &cli, &console).await.unwrap();
 
-        let json: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
+        let json: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
         let repos = json["repositories"].as_array().unwrap();
         assert_eq!(repos.len(), 1);
         assert_eq!(repos[0]["name"], "my-repo");
@@ -461,7 +450,8 @@ mod tests {
         let console = mozart_core::console::Console::new(0, false, false, false, false);
         execute(&args, &cli, &console).await.unwrap();
 
-        let json: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
+        let json: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
         let repos = json["repositories"].as_array().unwrap();
         assert_eq!(repos[0]["type"], "path");
         assert_eq!(repos[0]["name"], "my-repo");
@@ -476,14 +466,20 @@ mod tests {
             r#"{"repositories": [{"name": "existing", "type": "vcs", "url": "https://existing.com"}]}"#,
         ).unwrap();
 
-        let mut args = make_args(Some("add"), Some("new-repo"), Some("vcs"), Some("https://new.com"));
+        let mut args = make_args(
+            Some("add"),
+            Some("new-repo"),
+            Some("vcs"),
+            Some("https://new.com"),
+        );
         args.file = Some(file.to_str().unwrap().to_string());
 
         let cli = make_cli();
         let console = mozart_core::console::Console::new(0, false, false, false, false);
         execute(&args, &cli, &console).await.unwrap();
 
-        let json: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
+        let json: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
         let repos = json["repositories"].as_array().unwrap();
         assert_eq!(repos[0]["name"], "new-repo");
         assert_eq!(repos[1]["name"], "existing");
@@ -498,7 +494,12 @@ mod tests {
             r#"{"repositories": [{"name": "existing", "type": "vcs", "url": "https://existing.com"}]}"#,
         ).unwrap();
 
-        let mut args = make_args(Some("add"), Some("new-repo"), Some("vcs"), Some("https://new.com"));
+        let mut args = make_args(
+            Some("add"),
+            Some("new-repo"),
+            Some("vcs"),
+            Some("https://new.com"),
+        );
         args.file = Some(file.to_str().unwrap().to_string());
         args.append = true;
 
@@ -506,7 +507,8 @@ mod tests {
         let console = mozart_core::console::Console::new(0, false, false, false, false);
         execute(&args, &cli, &console).await.unwrap();
 
-        let json: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
+        let json: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
         let repos = json["repositories"].as_array().unwrap();
         assert_eq!(repos[0]["name"], "existing");
         assert_eq!(repos[1]["name"], "new-repo");
@@ -521,7 +523,12 @@ mod tests {
             r#"{"repositories": [{"name": "a", "type": "vcs", "url": "https://a.com"}, {"name": "b", "type": "vcs", "url": "https://b.com"}]}"#,
         ).unwrap();
 
-        let mut args = make_args(Some("add"), Some("new"), Some("vcs"), Some("https://new.com"));
+        let mut args = make_args(
+            Some("add"),
+            Some("new"),
+            Some("vcs"),
+            Some("https://new.com"),
+        );
         args.file = Some(file.to_str().unwrap().to_string());
         args.before = Some("b".to_string());
 
@@ -529,7 +536,8 @@ mod tests {
         let console = mozart_core::console::Console::new(0, false, false, false, false);
         execute(&args, &cli, &console).await.unwrap();
 
-        let json: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
+        let json: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
         let repos = json["repositories"].as_array().unwrap();
         assert_eq!(repos[0]["name"], "a");
         assert_eq!(repos[1]["name"], "new");
@@ -545,7 +553,12 @@ mod tests {
             r#"{"repositories": [{"name": "a", "type": "vcs", "url": "https://a.com"}, {"name": "b", "type": "vcs", "url": "https://b.com"}]}"#,
         ).unwrap();
 
-        let mut args = make_args(Some("add"), Some("new"), Some("vcs"), Some("https://new.com"));
+        let mut args = make_args(
+            Some("add"),
+            Some("new"),
+            Some("vcs"),
+            Some("https://new.com"),
+        );
         args.file = Some(file.to_str().unwrap().to_string());
         args.after = Some("a".to_string());
 
@@ -553,7 +566,8 @@ mod tests {
         let console = mozart_core::console::Console::new(0, false, false, false, false);
         execute(&args, &cli, &console).await.unwrap();
 
-        let json: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
+        let json: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
         let repos = json["repositories"].as_array().unwrap();
         assert_eq!(repos[0]["name"], "a");
         assert_eq!(repos[1]["name"], "new");
@@ -566,7 +580,12 @@ mod tests {
         let file = dir.path().join("composer.json");
         std::fs::write(&file, "{}").unwrap();
 
-        let mut args = make_args(Some("add"), Some("new"), Some("vcs"), Some("https://new.com"));
+        let mut args = make_args(
+            Some("add"),
+            Some("new"),
+            Some("vcs"),
+            Some("https://new.com"),
+        );
         args.file = Some(file.to_str().unwrap().to_string());
         args.before = Some("a".to_string());
         args.after = Some("b".to_string());
@@ -625,7 +644,8 @@ mod tests {
         let console = mozart_core::console::Console::new(0, false, false, false, false);
         execute(&args, &cli, &console).await.unwrap();
 
-        let json: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
+        let json: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
         assert!(json.get("repositories").is_none());
     }
 
@@ -642,7 +662,8 @@ mod tests {
         let console = mozart_core::console::Console::new(0, false, false, false, false);
         execute(&args, &cli, &console).await.unwrap();
 
-        let json: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
+        let json: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
         let repos = json["repositories"].as_array().unwrap();
         assert_eq!(repos[0]["packagist.org"], false);
     }
@@ -663,7 +684,8 @@ mod tests {
         let console = mozart_core::console::Console::new(0, false, false, false, false);
         execute(&args, &cli, &console).await.unwrap();
 
-        let json: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
+        let json: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
         assert!(json.get("repositories").is_none());
     }
 
@@ -691,16 +713,23 @@ mod tests {
         std::fs::write(
             &file,
             r#"{"repositories": [{"name": "my-repo", "type": "vcs", "url": "https://old.com"}]}"#,
-        ).unwrap();
+        )
+        .unwrap();
 
-        let mut args = make_args(Some("set-url"), Some("my-repo"), Some("https://new.com"), None);
+        let mut args = make_args(
+            Some("set-url"),
+            Some("my-repo"),
+            Some("https://new.com"),
+            None,
+        );
         args.file = Some(file.to_str().unwrap().to_string());
 
         let cli = make_cli();
         let console = mozart_core::console::Console::new(0, false, false, false, false);
         execute(&args, &cli, &console).await.unwrap();
 
-        let json: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
+        let json: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
         assert_eq!(json["repositories"][0]["url"], "https://new.com");
     }
 
@@ -710,7 +739,12 @@ mod tests {
         let file = dir.path().join("composer.json");
         std::fs::write(&file, r#"{"repositories": []}"#).unwrap();
 
-        let mut args = make_args(Some("set-url"), Some("missing"), Some("https://new.com"), None);
+        let mut args = make_args(
+            Some("set-url"),
+            Some("missing"),
+            Some("https://new.com"),
+            None,
+        );
         args.file = Some(file.to_str().unwrap().to_string());
 
         let cli = make_cli();
@@ -726,16 +760,23 @@ mod tests {
         std::fs::write(
             &file,
             r#"{"repositories": [{"name": "my-repo", "type": "vcs", "url": "https://old.com"}]}"#,
-        ).unwrap();
+        )
+        .unwrap();
 
-        let mut args = make_args(Some("seturl"), Some("my-repo"), Some("https://new.com"), None);
+        let mut args = make_args(
+            Some("seturl"),
+            Some("my-repo"),
+            Some("https://new.com"),
+            None,
+        );
         args.file = Some(file.to_str().unwrap().to_string());
 
         let cli = make_cli();
         let console = mozart_core::console::Console::new(0, false, false, false, false);
         execute(&args, &cli, &console).await.unwrap();
 
-        let json: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
+        let json: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
         assert_eq!(json["repositories"][0]["url"], "https://new.com");
     }
 
@@ -789,7 +830,8 @@ mod tests {
         let console = mozart_core::console::Console::new(0, false, false, false, false);
         execute(&args, &cli, &console).await.unwrap();
 
-        let json: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
+        let json: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
         let repos = json["repositories"].as_array().unwrap();
         assert_eq!(repos[0]["packagist.org"], false);
     }
@@ -807,7 +849,8 @@ mod tests {
         let console = mozart_core::console::Console::new(0, false, false, false, false);
         execute(&args, &cli, &console).await.unwrap();
 
-        let json: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
+        let json: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
         let repos = json["repositories"].as_array().unwrap();
         assert_eq!(repos[0]["packagist.org"], false);
     }
@@ -833,10 +876,7 @@ mod tests {
     async fn test_enable_packagist() {
         let dir = tempfile::TempDir::new().unwrap();
         let file = dir.path().join("composer.json");
-        std::fs::write(
-            &file,
-            r#"{"repositories": [{"packagist.org": false}]}"#,
-        ).unwrap();
+        std::fs::write(&file, r#"{"repositories": [{"packagist.org": false}]}"#).unwrap();
 
         let mut args = make_args(Some("enable"), Some("packagist.org"), None, None);
         args.file = Some(file.to_str().unwrap().to_string());
@@ -845,7 +885,8 @@ mod tests {
         let console = mozart_core::console::Console::new(0, false, false, false, false);
         execute(&args, &cli, &console).await.unwrap();
 
-        let json: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
+        let json: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
         assert!(json.get("repositories").is_none());
     }
 

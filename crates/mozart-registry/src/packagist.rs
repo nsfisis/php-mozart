@@ -67,19 +67,31 @@ pub struct PackagistVersion {
     #[serde(default, deserialize_with = "deserialize_unset_as_none")]
     pub source: Option<PackagistSource>,
 
-    #[serde(rename = "require-dev", default, deserialize_with = "deserialize_unset_as_default")]
+    #[serde(
+        rename = "require-dev",
+        default,
+        deserialize_with = "deserialize_unset_as_default"
+    )]
     pub require_dev: BTreeMap<String, String>,
 
     #[serde(default, deserialize_with = "deserialize_unset_as_none")]
     pub suggest: Option<BTreeMap<String, String>>,
 
-    #[serde(rename = "type", default, deserialize_with = "deserialize_unset_as_none")]
+    #[serde(
+        rename = "type",
+        default,
+        deserialize_with = "deserialize_unset_as_none"
+    )]
     pub package_type: Option<String>,
 
     #[serde(default, deserialize_with = "deserialize_unset_as_none")]
     pub autoload: Option<serde_json::Value>,
 
-    #[serde(rename = "autoload-dev", default, deserialize_with = "deserialize_unset_as_none")]
+    #[serde(
+        rename = "autoload-dev",
+        default,
+        deserialize_with = "deserialize_unset_as_none"
+    )]
     pub autoload_dev: Option<serde_json::Value>,
 
     #[serde(default, deserialize_with = "deserialize_unset_as_none")]
@@ -109,7 +121,11 @@ pub struct PackagistVersion {
     #[serde(default, deserialize_with = "deserialize_unset_as_none")]
     pub extra: Option<serde_json::Value>,
 
-    #[serde(rename = "notification-url", default, deserialize_with = "deserialize_unset_as_none")]
+    #[serde(
+        rename = "notification-url",
+        default,
+        deserialize_with = "deserialize_unset_as_none"
+    )]
     pub notification_url: Option<String>,
 }
 

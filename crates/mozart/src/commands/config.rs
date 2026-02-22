@@ -386,7 +386,6 @@ fn match_repository_key(key: &str) -> Option<&str> {
     None
 }
 
-
 // ─── JSON path helpers ────────────────────────────────────────────────────────
 
 /// Set a value at a dot-separated path within a JSON Value.
@@ -452,9 +451,7 @@ fn resolve_config_file_path(args: &ConfigArgs, cli: &super::Cli) -> anyhow::Resu
     Ok(working_dir(cli)?.join("composer.json"))
 }
 
-
 // ─── Helpers ──────────────────────────────────────────────────────────────────
-
 
 /// Load the `config` section from a JSON file (global `config.json` or local
 /// `composer.json`).  Returns an empty map when the file is absent or has no
@@ -477,9 +474,7 @@ fn load_config_section(
     }
 }
 
-
 // ─── Value rendering ─────────────────────────────────────────────────────────
-
 
 // ─── execute() ───────────────────────────────────────────────────────────────
 

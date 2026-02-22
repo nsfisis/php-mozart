@@ -2,7 +2,9 @@ use anyhow::{Context, bail};
 use clap::Args;
 use colored::Colorize;
 use mozart_core::console;
-use mozart_core::package::{self, RawAuthor, RawAutoload, RawPackageData, RawRepository, Stability};
+use mozart_core::package::{
+    self, RawAuthor, RawAutoload, RawPackageData, RawRepository, Stability,
+};
 use mozart_core::validation;
 use mozart_registry::{packagist, version};
 use std::collections::BTreeMap;
@@ -351,8 +353,11 @@ async fn build_interactive(
     console.info("");
 
     let mut require_dev = parse_requirements(&args.require_dev)?;
-    let all_required: BTreeMap<String, String> =
-        require.iter().chain(require_dev.iter()).map(|(k, v)| (k.clone(), v.clone())).collect();
+    let all_required: BTreeMap<String, String> = require
+        .iter()
+        .chain(require_dev.iter())
+        .map(|(k, v)| (k.clone(), v.clone()))
+        .collect();
     let interactive_dev =
         interactive_search_packages("require-dev", &all_required, preferred_stability).await?;
     for (name, constraint) in interactive_dev {

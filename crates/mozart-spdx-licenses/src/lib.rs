@@ -164,11 +164,7 @@ struct Parser<'a> {
 impl<'a> Parser<'a> {
     fn new(input: &'a str, db: &'a SpdxLicenses) -> Self {
         let tokens = Self::tokenize(input);
-        Self {
-            tokens,
-            pos: 0,
-            db,
-        }
+        Self { tokens, pos: 0, db }
     }
 
     fn tokenize(input: &str) -> Vec<&str> {
@@ -332,7 +328,9 @@ impl<'a> Parser<'a> {
 
 /// Check that a string matches `[a-zA-Z0-9.-]+`.
 fn is_valid_idstring(s: &str) -> bool {
-    !s.is_empty() && s.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'.' || b == b'-')
+    !s.is_empty()
+        && s.bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'.' || b == b'-')
 }
 
 #[cfg(test)]
@@ -451,10 +449,7 @@ mod tests {
     #[test]
     fn name_lookup() {
         let db = spdx();
-        assert_eq!(
-            db.get_identifier_by_name("MIT License"),
-            Some("MIT")
-        );
+        assert_eq!(db.get_identifier_by_name("MIT License"), Some("MIT"));
     }
 
     #[test]
