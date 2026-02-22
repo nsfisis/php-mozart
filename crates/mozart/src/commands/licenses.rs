@@ -1,4 +1,5 @@
 use clap::Args;
+use serde::Serialize;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
@@ -276,7 +277,11 @@ fn render_json(
         "dependencies": dependencies,
     });
 
-    println!("{}", serde_json::to_string_pretty(&output)?);
+    let buf = Vec::new();
+    let formatter = serde_json::ser::PrettyFormatter::with_indent(b"    ");
+    let mut ser = serde_json::Serializer::with_formatter(buf, formatter);
+    output.serialize(&mut ser)?;
+    println!("{}", String::from_utf8(ser.into_inner())?);
     Ok(())
 }
 
