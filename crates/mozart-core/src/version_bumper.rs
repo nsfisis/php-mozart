@@ -97,11 +97,8 @@ fn bump_single(
     installed_version: &str,
     stability_flag: Option<&str>,
 ) -> Option<String> {
-    // AND constraints (space-separated multiple operators like ">=1.0 <2.0" or
-    // comma-separated like ">=1.0,<2.0") are not supported for bumping — leave unchanged.
-    // We detect them by checking for a space or comma after the version spec begins.
-    // Quick check: if the constraint contains a space (ignoring leading operators),
-    // it's likely a multi-part AND constraint.
+    // AND constraints (space-separated like ">=1.0 <2.0" or comma-separated
+    // like ">=1.0,<2.0"): split into parts and bump only the lower-bound part.
     let after_op = constraint
         .trim_start_matches('^')
         .trim_start_matches('~')
@@ -112,7 +109,7 @@ fn bump_single(
         .trim_start_matches('<')
         .trim_start_matches('=');
     if after_op.contains(' ') || after_op.contains(',') {
-        return None;
+        return bump_and_constraint(constraint, installed_version, stability_flag);
     }
 
     // Caret: ^X.Y.Z
@@ -343,6 +340,87 @@ fn bump_gte(rest: &str, installed_version: &str, stability_flag: Option<&str>) -
     let new_constraint = format!(">={version_str}");
     let result = append_stability_flag(&new_constraint, stability_flag);
     Some(result)
+}
+
+// ─── AND constraint bump ──────────────────────────────────────────────────
+
+/// Bump AND constraints like `>=1.0 <2.0` or `>=1.0,<2.0`.
+///
+/// Only the lower-bound part (>=, ^, ~) is bumped; upper-bound parts
+/// (<, <=, !=) are preserved as-is.
+fn bump_and_constraint(
+    constraint: &str,
+    installed_version: &str,
+    stability_flag: Option<&str>,
+) -> Option<String> {
+    // Split on space or comma, preserving the separator style
+    let (parts, separator) = split_and_parts(constraint);
+
+    let mut changed = false;
+    let mut new_parts: Vec<String> = Vec::new();
+
+    for part in &parts {
+        let trimmed = part.trim();
+        if is_lower_bound(trimmed) {
+            if let Some(bumped) = bump_single(trimmed, installed_version, None) {
+                new_parts.push(bumped);
+                changed = true;
+            } else {
+                new_parts.push(trimmed.to_string());
+            }
+        } else {
+            new_parts.push(trimmed.to_string());
+        }
+    }
+
+    if !changed {
+        return None;
+    }
+
+    let joined = new_parts.join(separator);
+    Some(append_stability_flag(&joined, stability_flag))
+}
+
+/// Split an AND constraint into parts, returning the parts and the separator.
+fn split_and_parts(constraint: &str) -> (Vec<&str>, &str) {
+    if constraint.contains(',') {
+        (constraint.split(',').collect(), ",")
+    } else {
+        // Space-separated: split on spaces that precede an operator character
+        let mut parts = Vec::new();
+        let mut current_start = 0;
+        let bytes = constraint.as_bytes();
+        let mut i = 0;
+
+        while i < bytes.len() {
+            if bytes[i] == b' ' {
+                // Find next non-space
+                let space_start = i;
+                while i < bytes.len() && bytes[i] == b' ' {
+                    i += 1;
+                }
+                // If what follows starts with an operator, split here
+                if i < bytes.len()
+                    && (bytes[i] == b'>' || bytes[i] == b'<' || bytes[i] == b'!'
+                        || bytes[i] == b'=' || bytes[i] == b'^' || bytes[i] == b'~')
+                {
+                    parts.push(&constraint[current_start..space_start]);
+                    current_start = i;
+                }
+            } else {
+                i += 1;
+            }
+        }
+        parts.push(&constraint[current_start..]);
+        (parts, " ")
+    }
+}
+
+/// Check if a constraint part is a lower bound (can be bumped).
+fn is_lower_bound(part: &str) -> bool {
+    part.starts_with(">=")
+        || part.starts_with('^')
+        || part.starts_with('~')
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -636,10 +714,31 @@ mod tests {
     }
 
     #[test]
-    fn test_complex_range_no_bump() {
-        // >=1.0 <2.0 → None (complex range, not bumped)
+    fn test_and_constraint_gte_lt_space() {
+        // >=1.0 <2.0 + 1.5.0 → >=1.5 <2.0
         let result = bump_requirement(">=1.0 <2.0", "1.5.0", Some("1.5.0.0"));
+        assert_eq!(result, Some(">=1.5 <2.0".to_string()));
+    }
+
+    #[test]
+    fn test_and_constraint_gte_lt_comma() {
+        // >=1.0,<2.0 + 1.5.0 → >=1.5,<2.0
+        let result = bump_requirement(">=1.0,<2.0", "1.5.0", Some("1.5.0.0"));
+        assert_eq!(result, Some(">=1.5,<2.0".to_string()));
+    }
+
+    #[test]
+    fn test_and_constraint_no_change() {
+        // >=1.5 <2.0 + 1.5.0 → None (already at lower bound)
+        let result = bump_requirement(">=1.5 <2.0", "1.5.0", Some("1.5.0.0"));
         assert_eq!(result, None);
+    }
+
+    #[test]
+    fn test_and_constraint_with_stability() {
+        // >=1.0 <2.0@dev + 1.5.0 → >=1.5 <2.0@dev
+        let result = bump_requirement(">=1.0 <2.0@dev", "1.5.0", Some("1.5.0.0"));
+        assert_eq!(result, Some(">=1.5 <2.0@dev".to_string()));
     }
 
     #[test]
