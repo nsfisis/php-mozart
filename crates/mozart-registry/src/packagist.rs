@@ -266,6 +266,10 @@ pub struct SearchResult {
     pub repository: Option<String>,
     pub downloads: u64,
     pub favers: u64,
+    /// Abandonment status: absent/false means active, a string indicates the
+    /// replacement package name, `true` means abandoned with no replacement.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub abandoned: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Deserialize)]

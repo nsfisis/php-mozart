@@ -47,6 +47,22 @@ fn format_count(n: u64) -> String {
     }
 }
 
+/// Returns true if the search result represents an abandoned package.
+///
+/// The `abandoned` field from the Packagist API can be:
+/// - absent (`None`) — not abandoned
+/// - a non-empty string — abandoned, with a replacement package name
+/// - `true` — abandoned, no replacement
+/// - an empty string or `false` — not abandoned
+fn is_abandoned(result: &SearchResult) -> bool {
+    match &result.abandoned {
+        None => false,
+        Some(serde_json::Value::Bool(b)) => *b,
+        Some(serde_json::Value::String(s)) => !s.is_empty(),
+        Some(_) => true,
+    }
+}
+
 /// Returns true if the result passes the `--only-name` filter: the package name must contain
 /// the query string (case-insensitive).
 fn passes_only_name(result: &SearchResult, query: &str) -> bool {
@@ -129,11 +145,18 @@ pub async fn execute(
                 let dl_str = format!("Downloads: {}", format_count(result.downloads));
                 let fav_str = format!("Favers: {}", format_count(result.favers));
 
+                let abandoned_warning = if is_abandoned(result) {
+                    console_format!(" <warning>! Abandoned !</warning>")
+                } else {
+                    String::new()
+                };
+
                 println!(
-                    "{} {}  {}",
+                    "{} {}  {}{}",
                     console_format!("<info>{:<width$}</info>", result.name, width = name_width),
                     console_format!("<comment>{}</comment>", dl_str),
                     console_format!("<comment>{}</comment>", fav_str),
+                    abandoned_warning,
                 );
                 if !result.description.is_empty() {
                     println!("  {}", result.description);
@@ -224,6 +247,49 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_search_response_with_abandoned() {
+        use mozart_registry::packagist::SearchResponse;
+
+        let json = r#"{
+            "results": [
+                {
+                    "name": "old/abandoned-pkg",
+                    "description": "An abandoned package",
+                    "url": "https://packagist.org/packages/old/abandoned-pkg",
+                    "repository": "https://github.com/old/abandoned-pkg",
+                    "downloads": 1000,
+                    "favers": 10,
+                    "abandoned": "new/replacement-pkg"
+                },
+                {
+                    "name": "active/pkg",
+                    "description": "An active package",
+                    "url": "https://packagist.org/packages/active/pkg",
+                    "repository": null,
+                    "downloads": 5000,
+                    "favers": 100
+                }
+            ],
+            "total": 2,
+            "next": null
+        }"#;
+
+        let response: SearchResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(response.results.len(), 2);
+
+        let first = &response.results[0];
+        assert_eq!(first.name, "old/abandoned-pkg");
+        assert_eq!(
+            first.abandoned.as_ref().and_then(|v| v.as_str()),
+            Some("new/replacement-pkg")
+        );
+
+        let second = &response.results[1];
+        assert_eq!(second.name, "active/pkg");
+        assert!(second.abandoned.is_none());
+    }
+
+    #[test]
     fn test_parse_search_response_with_next() {
         use mozart_registry::packagist::SearchResponse;
 
@@ -301,6 +367,42 @@ mod tests {
         assert!(!passes_only_vendor(&result, "mono"));
     }
 
+    // ── is_abandoned ─────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_is_abandoned_none() {
+        let result = make_result("vendor/pkg");
+        assert!(!is_abandoned(&result));
+    }
+
+    #[test]
+    fn test_is_abandoned_true() {
+        let mut result = make_result("vendor/pkg");
+        result.abandoned = Some(serde_json::Value::Bool(true));
+        assert!(is_abandoned(&result));
+    }
+
+    #[test]
+    fn test_is_abandoned_false() {
+        let mut result = make_result("vendor/pkg");
+        result.abandoned = Some(serde_json::Value::Bool(false));
+        assert!(!is_abandoned(&result));
+    }
+
+    #[test]
+    fn test_is_abandoned_replacement_string() {
+        let mut result = make_result("vendor/pkg");
+        result.abandoned = Some(serde_json::Value::String("other/pkg".to_string()));
+        assert!(is_abandoned(&result));
+    }
+
+    #[test]
+    fn test_is_abandoned_empty_string() {
+        let mut result = make_result("vendor/pkg");
+        result.abandoned = Some(serde_json::Value::String(String::new()));
+        assert!(!is_abandoned(&result));
+    }
+
     // ── serialization ────────────────────────────────────────────────────────
 
     #[test]
@@ -312,6 +414,7 @@ mod tests {
             repository: Some("https://github.com/test/pkg".to_string()),
             downloads: 1000,
             favers: 50,
+            abandoned: None,
         };
 
         let json = serde_json::to_string(&result).unwrap();
@@ -332,6 +435,7 @@ mod tests {
             repository: None,
             downloads: 0,
             favers: 0,
+            abandoned: None,
         }
     }
 }
