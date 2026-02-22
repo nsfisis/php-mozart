@@ -159,31 +159,36 @@ pub async fn execute(
     let total_changes = require_changes.len() + require_dev_changes.len();
 
     if total_changes == 0 {
-        println!("Nothing to bump.");
+        println!(
+            "{}",
+            mozart_core::console::info(&format!(
+                "No requirements to update in {}.",
+                composer_json_path.display()
+            ))
+        );
         return Ok(());
     }
 
-    // Print what would change
-    for (name, old, new) in require_changes.iter().chain(require_dev_changes.iter()) {
-        if args.dry_run {
+    if args.dry_run {
+        println!(
+            "{}",
+            mozart_core::console::info(&format!(
+                "{} would be updated with:",
+                composer_json_path.display()
+            ))
+        );
+        for (name, _old, new) in &require_changes {
             println!(
-                "{}: {} → {}",
-                mozart_core::console::info(name),
-                old,
-                mozart_core::console::comment(new)
-            );
-        } else {
-            println!(
-                "Bumping {} from {} to {}",
-                mozart_core::console::info(name),
-                old,
-                mozart_core::console::comment(new)
+                "{}",
+                mozart_core::console::info(&format!(" - require.{name}: {new}"))
             );
         }
-    }
-
-    if args.dry_run {
-        println!("\n{} constraint(s) would be bumped.", total_changes);
+        for (name, _old, new) in &require_dev_changes {
+            println!(
+                "{}",
+                mozart_core::console::info(&format!(" - require-dev.{name}: {new}"))
+            );
+        }
         // Return exit code 1 when dry-run detects changes (useful for CI to detect un-bumped constraints)
         return Err(mozart_core::exit_code::bail_silent(
             mozart_core::exit_code::GENERAL_ERROR,
@@ -210,10 +215,10 @@ pub async fn execute(
     updated_lock.write_to_file(&lock_path)?;
 
     println!(
-        "\n{}",
+        "{}",
         mozart_core::console::info(&format!(
-            "{} constraint(s) bumped successfully.",
-            total_changes
+            "{} has been updated ({total_changes} changes).",
+            composer_json_path.display()
         ))
     );
 

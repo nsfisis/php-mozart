@@ -1104,7 +1104,10 @@ pub async fn execute(
             updated_lock.content_hash = new_hash;
             updated_lock.write_to_file(&lock_path)?;
 
-            console.info(&format!("{} constraint(s) bumped.", bumped));
+            console.info(&format!(
+                "{} has been updated ({bumped} changes).",
+                composer_json_path.display()
+            ));
         }
     }
 
