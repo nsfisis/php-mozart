@@ -1,4 +1,11 @@
+use anyhow::anyhow;
 use clap::Args;
+use std::path::PathBuf;
+
+use super::config_helpers::{
+    add_repository, composer_home, insert_repository, read_json_file, remove_repository,
+    render_value, working_dir, write_json_file,
+};
 
 #[derive(Args)]
 pub struct RepositoryArgs {
@@ -35,10 +42,888 @@ pub struct RepositoryArgs {
     pub after: Option<String>,
 }
 
+fn resolve_file_path(args: &RepositoryArgs, cli: &super::Cli) -> anyhow::Result<PathBuf> {
+    if args.global && args.file.is_some() {
+        anyhow::bail!("Cannot combine --global and --file");
+    }
+    if args.global {
+        return Ok(PathBuf::from(composer_home()).join("config.json"));
+    }
+    if let Some(ref file) = args.file {
+        return Ok(PathBuf::from(file));
+    }
+    Ok(working_dir(cli)?.join("composer.json"))
+}
+
 pub async fn execute(
-    _args: &RepositoryArgs,
-    _cli: &super::Cli,
+    args: &RepositoryArgs,
+    cli: &super::Cli,
     _console: &mozart_core::console::Console,
 ) -> anyhow::Result<()> {
-    todo!()
+    let action = args
+        .action
+        .as_deref()
+        .unwrap_or("list");
+
+    match action {
+        "list" | "ls" | "show" => execute_list(args, cli),
+        "add" => execute_add(args, cli),
+        "remove" | "rm" | "delete" => execute_remove(args, cli),
+        "set-url" | "seturl" => execute_set_url(args, cli),
+        "get-url" | "geturl" => execute_get_url(args, cli),
+        "disable" => execute_disable(args, cli),
+        "enable" => execute_enable(args, cli),
+        _ => Err(anyhow!(
+            "Unknown action \"{action}\". Expected one of: list, add, remove, set-url, get-url, enable, disable"
+        )),
+    }
+}
+
+// ─── list ─────────────────────────────────────────────────────────────────────
+
+fn execute_list(args: &RepositoryArgs, cli: &super::Cli) -> anyhow::Result<()> {
+    let file_path = resolve_file_path(args, cli)?;
+    let json = read_json_file(&file_path, args.global)?;
+
+    let mut has_packagist_disable = false;
+
+    if let Some(repos) = json["repositories"].as_array() {
+        for entry in repos {
+            if let Some(obj) = entry.as_object() {
+                // Check for disabled repo entry like {"packagist.org": false}
+                if let Some((key, _)) = obj.iter().find(|(_, v)| v == &&serde_json::json!(false)) {
+                    println!("[{key}] disabled");
+                    if key == "packagist.org" {
+                        has_packagist_disable = true;
+                    }
+                    continue;
+                }
+            }
+
+            let name = entry
+                .get("name")
+                .and_then(|n| n.as_str())
+                .unwrap_or("unnamed");
+            let repo_type = entry
+                .get("type")
+                .and_then(|t| t.as_str())
+                .unwrap_or("unknown");
+            let url = entry
+                .get("url")
+                .and_then(|u| u.as_str())
+                .unwrap_or("");
+
+            println!("[{name}] {repo_type} {url}");
+        }
+    }
+
+    if !has_packagist_disable {
+        println!("[packagist.org] composer https://repo.packagist.org");
+    }
+
+    Ok(())
+}
+
+// ─── add ──────────────────────────────────────────────────────────────────────
+
+fn execute_add(args: &RepositoryArgs, cli: &super::Cli) -> anyhow::Result<()> {
+    let name = args
+        .name
+        .as_deref()
+        .ok_or_else(|| anyhow!("Repository name is required for \"add\""))?;
+
+    if args.before.is_some() && args.after.is_some() {
+        anyhow::bail!("Cannot combine --before and --after");
+    }
+
+    let entry = match (&args.arg1, &args.arg2) {
+        (Some(type_or_json), Some(url)) => {
+            // type + url
+            serde_json::json!({
+                "name": name,
+                "type": type_or_json,
+                "url": url,
+            })
+        }
+        (Some(json_str), None) => {
+            // Try to parse as JSON
+            match serde_json::from_str::<serde_json::Value>(json_str) {
+                Ok(mut parsed) => {
+                    // Inject the name if not already present
+                    if let Some(obj) = parsed.as_object_mut()
+                        && !obj.contains_key("name")
+                    {
+                        obj.insert("name".to_string(), serde_json::json!(name));
+                    }
+                    parsed
+                }
+                Err(_) => {
+                    anyhow::bail!(
+                        "Invalid JSON for repository config. Expected: <type> <url> or a JSON string"
+                    );
+                }
+            }
+        }
+        _ => {
+            anyhow::bail!(
+                "Missing arguments for \"add\". Expected: <name> <type> <url> or <name> <json>"
+            );
+        }
+    };
+
+    let file_path = resolve_file_path(args, cli)?;
+    let mut json = read_json_file(&file_path, args.global)?;
+
+    if let Some(ref target) = args.before {
+        insert_repository(&mut json, name, entry, target, true)?;
+    } else if let Some(ref target) = args.after {
+        insert_repository(&mut json, name, entry, target, false)?;
+    } else {
+        add_repository(&mut json, name, entry, args.append);
+    }
+
+    write_json_file(&file_path, &json)?;
+    Ok(())
+}
+
+// ─── remove ───────────────────────────────────────────────────────────────────
+
+fn execute_remove(args: &RepositoryArgs, cli: &super::Cli) -> anyhow::Result<()> {
+    let name = args
+        .name
+        .as_deref()
+        .ok_or_else(|| anyhow!("Repository name is required for \"remove\""))?;
+
+    let file_path = resolve_file_path(args, cli)?;
+    let mut json = read_json_file(&file_path, args.global)?;
+
+    if name == "packagist.org" || name == "packagist" {
+        // Removing packagist.org means disabling it
+        remove_repository(&mut json, "packagist.org");
+        let disable_entry = serde_json::json!({"packagist.org": false});
+        add_repository(&mut json, "packagist.org", disable_entry, args.append);
+    } else {
+        remove_repository(&mut json, name);
+    }
+
+    // Clean up empty repositories array
+    if json["repositories"]
+        .as_array()
+        .map(|a| a.is_empty())
+        .unwrap_or(false)
+        && let Some(obj) = json.as_object_mut()
+    {
+        obj.remove("repositories");
+    }
+
+    write_json_file(&file_path, &json)?;
+    Ok(())
+}
+
+// ─── set-url ──────────────────────────────────────────────────────────────────
+
+fn execute_set_url(args: &RepositoryArgs, cli: &super::Cli) -> anyhow::Result<()> {
+    let name = args
+        .name
+        .as_deref()
+        .ok_or_else(|| anyhow!("Repository name is required for \"set-url\""))?;
+    let new_url = args
+        .arg1
+        .as_deref()
+        .ok_or_else(|| anyhow!("New URL is required for \"set-url\""))?;
+
+    let file_path = resolve_file_path(args, cli)?;
+    let mut json = read_json_file(&file_path, args.global)?;
+
+    let found = json["repositories"]
+        .as_array_mut()
+        .and_then(|repos| {
+            repos.iter_mut().find(|entry| {
+                entry.get("name").and_then(|n| n.as_str()) == Some(name)
+            })
+        });
+
+    match found {
+        Some(entry) => {
+            entry["url"] = serde_json::json!(new_url);
+            write_json_file(&file_path, &json)?;
+            Ok(())
+        }
+        None => Err(anyhow!("Repository \"{name}\" not found")),
+    }
+}
+
+// ─── get-url ──────────────────────────────────────────────────────────────────
+
+fn execute_get_url(args: &RepositoryArgs, cli: &super::Cli) -> anyhow::Result<()> {
+    let name = args
+        .name
+        .as_deref()
+        .ok_or_else(|| anyhow!("Repository name is required for \"get-url\""))?;
+
+    let file_path = resolve_file_path(args, cli)?;
+    let json = read_json_file(&file_path, args.global)?;
+
+    let found = json["repositories"]
+        .as_array()
+        .and_then(|repos| {
+            repos.iter().find(|entry| {
+                entry.get("name").and_then(|n| n.as_str()) == Some(name)
+            })
+        });
+
+    match found {
+        Some(entry) => {
+            let url = entry
+                .get("url")
+                .map(render_value)
+                .unwrap_or_default();
+            println!("{url}");
+            Ok(())
+        }
+        None => Err(anyhow!("Repository \"{name}\" not found")),
+    }
+}
+
+// ─── disable ──────────────────────────────────────────────────────────────────
+
+fn execute_disable(args: &RepositoryArgs, cli: &super::Cli) -> anyhow::Result<()> {
+    let name = args
+        .name
+        .as_deref()
+        .unwrap_or("packagist.org");
+
+    if name != "packagist.org" && name != "packagist" {
+        anyhow::bail!("Only \"packagist.org\" can be disabled with this action");
+    }
+
+    let file_path = resolve_file_path(args, cli)?;
+    let mut json = read_json_file(&file_path, args.global)?;
+
+    // Remove any existing packagist.org disable entry first
+    remove_repository(&mut json, "packagist.org");
+
+    let disable_entry = serde_json::json!({"packagist.org": false});
+    add_repository(&mut json, "packagist.org", disable_entry, args.append);
+
+    write_json_file(&file_path, &json)?;
+    Ok(())
+}
+
+// ─── enable ───────────────────────────────────────────────────────────────────
+
+fn execute_enable(args: &RepositoryArgs, cli: &super::Cli) -> anyhow::Result<()> {
+    let name = args
+        .name
+        .as_deref()
+        .unwrap_or("packagist.org");
+
+    if name != "packagist.org" && name != "packagist" {
+        anyhow::bail!("Only \"packagist.org\" can be enabled with this action");
+    }
+
+    let file_path = resolve_file_path(args, cli)?;
+    let mut json = read_json_file(&file_path, args.global)?;
+
+    remove_repository(&mut json, "packagist.org");
+
+    // Clean up empty repositories array
+    if json["repositories"]
+        .as_array()
+        .map(|a| a.is_empty())
+        .unwrap_or(false)
+        && let Some(obj) = json.as_object_mut()
+    {
+        obj.remove("repositories");
+    }
+
+    write_json_file(&file_path, &json)?;
+    Ok(())
+}
+
+// ─── Tests ────────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_args(action: Option<&str>, name: Option<&str>, arg1: Option<&str>, arg2: Option<&str>) -> RepositoryArgs {
+        RepositoryArgs {
+            action: action.map(|s| s.to_string()),
+            name: name.map(|s| s.to_string()),
+            arg1: arg1.map(|s| s.to_string()),
+            arg2: arg2.map(|s| s.to_string()),
+            global: false,
+            file: None,
+            append: false,
+            before: None,
+            after: None,
+        }
+    }
+
+    fn make_cli() -> super::super::Cli {
+        use clap::Parser;
+        super::super::Cli::parse_from(["mozart", "repository", "list"])
+    }
+
+    // ── list ────────────────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_list_empty() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let file = dir.path().join("composer.json");
+        std::fs::write(&file, "{}").unwrap();
+
+        let mut args = make_args(Some("list"), None, None, None);
+        args.file = Some(file.to_str().unwrap().to_string());
+
+        let cli = make_cli();
+        let console = mozart_core::console::Console::new(0, false, false, false, false);
+        // Should succeed and print packagist.org
+        let result = execute(&args, &cli, &console).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_list_with_repos() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let file = dir.path().join("composer.json");
+        std::fs::write(
+            &file,
+            r#"{"repositories": [{"name": "my-repo", "type": "vcs", "url": "https://example.com"}]}"#,
+        ).unwrap();
+
+        let mut args = make_args(Some("list"), None, None, None);
+        args.file = Some(file.to_str().unwrap().to_string());
+
+        let cli = make_cli();
+        let console = mozart_core::console::Console::new(0, false, false, false, false);
+        let result = execute(&args, &cli, &console).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_list_with_disabled_packagist() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let file = dir.path().join("composer.json");
+        std::fs::write(
+            &file,
+            r#"{"repositories": [{"packagist.org": false}]}"#,
+        ).unwrap();
+
+        let mut args = make_args(Some("list"), None, None, None);
+        args.file = Some(file.to_str().unwrap().to_string());
+
+        let cli = make_cli();
+        let console = mozart_core::console::Console::new(0, false, false, false, false);
+        let result = execute(&args, &cli, &console).await;
+        assert!(result.is_ok());
+    }
+
+    // ── add ─────────────────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_add_type_url() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let file = dir.path().join("composer.json");
+        std::fs::write(&file, "{}").unwrap();
+
+        let mut args = make_args(Some("add"), Some("my-repo"), Some("vcs"), Some("https://example.com"));
+        args.file = Some(file.to_str().unwrap().to_string());
+
+        let cli = make_cli();
+        let console = mozart_core::console::Console::new(0, false, false, false, false);
+        execute(&args, &cli, &console).await.unwrap();
+
+        let json: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
+        let repos = json["repositories"].as_array().unwrap();
+        assert_eq!(repos.len(), 1);
+        assert_eq!(repos[0]["name"], "my-repo");
+        assert_eq!(repos[0]["type"], "vcs");
+        assert_eq!(repos[0]["url"], "https://example.com");
+    }
+
+    #[tokio::test]
+    async fn test_add_json() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let file = dir.path().join("composer.json");
+        std::fs::write(&file, "{}").unwrap();
+
+        let mut args = make_args(
+            Some("add"),
+            Some("my-repo"),
+            Some(r#"{"type":"path","url":"../local-pkg"}"#),
+            None,
+        );
+        args.file = Some(file.to_str().unwrap().to_string());
+
+        let cli = make_cli();
+        let console = mozart_core::console::Console::new(0, false, false, false, false);
+        execute(&args, &cli, &console).await.unwrap();
+
+        let json: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
+        let repos = json["repositories"].as_array().unwrap();
+        assert_eq!(repos[0]["type"], "path");
+        assert_eq!(repos[0]["name"], "my-repo");
+    }
+
+    #[tokio::test]
+    async fn test_add_prepend_default() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let file = dir.path().join("composer.json");
+        std::fs::write(
+            &file,
+            r#"{"repositories": [{"name": "existing", "type": "vcs", "url": "https://existing.com"}]}"#,
+        ).unwrap();
+
+        let mut args = make_args(Some("add"), Some("new-repo"), Some("vcs"), Some("https://new.com"));
+        args.file = Some(file.to_str().unwrap().to_string());
+
+        let cli = make_cli();
+        let console = mozart_core::console::Console::new(0, false, false, false, false);
+        execute(&args, &cli, &console).await.unwrap();
+
+        let json: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
+        let repos = json["repositories"].as_array().unwrap();
+        assert_eq!(repos[0]["name"], "new-repo");
+        assert_eq!(repos[1]["name"], "existing");
+    }
+
+    #[tokio::test]
+    async fn test_add_append() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let file = dir.path().join("composer.json");
+        std::fs::write(
+            &file,
+            r#"{"repositories": [{"name": "existing", "type": "vcs", "url": "https://existing.com"}]}"#,
+        ).unwrap();
+
+        let mut args = make_args(Some("add"), Some("new-repo"), Some("vcs"), Some("https://new.com"));
+        args.file = Some(file.to_str().unwrap().to_string());
+        args.append = true;
+
+        let cli = make_cli();
+        let console = mozart_core::console::Console::new(0, false, false, false, false);
+        execute(&args, &cli, &console).await.unwrap();
+
+        let json: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
+        let repos = json["repositories"].as_array().unwrap();
+        assert_eq!(repos[0]["name"], "existing");
+        assert_eq!(repos[1]["name"], "new-repo");
+    }
+
+    #[tokio::test]
+    async fn test_add_before() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let file = dir.path().join("composer.json");
+        std::fs::write(
+            &file,
+            r#"{"repositories": [{"name": "a", "type": "vcs", "url": "https://a.com"}, {"name": "b", "type": "vcs", "url": "https://b.com"}]}"#,
+        ).unwrap();
+
+        let mut args = make_args(Some("add"), Some("new"), Some("vcs"), Some("https://new.com"));
+        args.file = Some(file.to_str().unwrap().to_string());
+        args.before = Some("b".to_string());
+
+        let cli = make_cli();
+        let console = mozart_core::console::Console::new(0, false, false, false, false);
+        execute(&args, &cli, &console).await.unwrap();
+
+        let json: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
+        let repos = json["repositories"].as_array().unwrap();
+        assert_eq!(repos[0]["name"], "a");
+        assert_eq!(repos[1]["name"], "new");
+        assert_eq!(repos[2]["name"], "b");
+    }
+
+    #[tokio::test]
+    async fn test_add_after() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let file = dir.path().join("composer.json");
+        std::fs::write(
+            &file,
+            r#"{"repositories": [{"name": "a", "type": "vcs", "url": "https://a.com"}, {"name": "b", "type": "vcs", "url": "https://b.com"}]}"#,
+        ).unwrap();
+
+        let mut args = make_args(Some("add"), Some("new"), Some("vcs"), Some("https://new.com"));
+        args.file = Some(file.to_str().unwrap().to_string());
+        args.after = Some("a".to_string());
+
+        let cli = make_cli();
+        let console = mozart_core::console::Console::new(0, false, false, false, false);
+        execute(&args, &cli, &console).await.unwrap();
+
+        let json: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
+        let repos = json["repositories"].as_array().unwrap();
+        assert_eq!(repos[0]["name"], "a");
+        assert_eq!(repos[1]["name"], "new");
+        assert_eq!(repos[2]["name"], "b");
+    }
+
+    #[tokio::test]
+    async fn test_add_before_and_after_error() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let file = dir.path().join("composer.json");
+        std::fs::write(&file, "{}").unwrap();
+
+        let mut args = make_args(Some("add"), Some("new"), Some("vcs"), Some("https://new.com"));
+        args.file = Some(file.to_str().unwrap().to_string());
+        args.before = Some("a".to_string());
+        args.after = Some("b".to_string());
+
+        let cli = make_cli();
+        let console = mozart_core::console::Console::new(0, false, false, false, false);
+        let result = execute(&args, &cli, &console).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_add_missing_args() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let file = dir.path().join("composer.json");
+        std::fs::write(&file, "{}").unwrap();
+
+        let mut args = make_args(Some("add"), Some("my-repo"), None, None);
+        args.file = Some(file.to_str().unwrap().to_string());
+
+        let cli = make_cli();
+        let console = mozart_core::console::Console::new(0, false, false, false, false);
+        let result = execute(&args, &cli, &console).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_add_missing_name() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let file = dir.path().join("composer.json");
+        std::fs::write(&file, "{}").unwrap();
+
+        let mut args = make_args(Some("add"), None, Some("vcs"), Some("https://url.com"));
+        args.file = Some(file.to_str().unwrap().to_string());
+
+        let cli = make_cli();
+        let console = mozart_core::console::Console::new(0, false, false, false, false);
+        let result = execute(&args, &cli, &console).await;
+        assert!(result.is_err());
+    }
+
+    // ── remove ──────────────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_remove() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let file = dir.path().join("composer.json");
+        std::fs::write(
+            &file,
+            r#"{"repositories": [{"name": "my-repo", "type": "vcs", "url": "https://example.com"}]}"#,
+        ).unwrap();
+
+        let mut args = make_args(Some("remove"), Some("my-repo"), None, None);
+        args.file = Some(file.to_str().unwrap().to_string());
+
+        let cli = make_cli();
+        let console = mozart_core::console::Console::new(0, false, false, false, false);
+        execute(&args, &cli, &console).await.unwrap();
+
+        let json: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
+        assert!(json.get("repositories").is_none());
+    }
+
+    #[tokio::test]
+    async fn test_remove_packagist_disables() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let file = dir.path().join("composer.json");
+        std::fs::write(&file, "{}").unwrap();
+
+        let mut args = make_args(Some("remove"), Some("packagist.org"), None, None);
+        args.file = Some(file.to_str().unwrap().to_string());
+
+        let cli = make_cli();
+        let console = mozart_core::console::Console::new(0, false, false, false, false);
+        execute(&args, &cli, &console).await.unwrap();
+
+        let json: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
+        let repos = json["repositories"].as_array().unwrap();
+        assert_eq!(repos[0]["packagist.org"], false);
+    }
+
+    #[tokio::test]
+    async fn test_remove_alias_rm() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let file = dir.path().join("composer.json");
+        std::fs::write(
+            &file,
+            r#"{"repositories": [{"name": "my-repo", "type": "vcs", "url": "https://example.com"}]}"#,
+        ).unwrap();
+
+        let mut args = make_args(Some("rm"), Some("my-repo"), None, None);
+        args.file = Some(file.to_str().unwrap().to_string());
+
+        let cli = make_cli();
+        let console = mozart_core::console::Console::new(0, false, false, false, false);
+        execute(&args, &cli, &console).await.unwrap();
+
+        let json: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
+        assert!(json.get("repositories").is_none());
+    }
+
+    #[tokio::test]
+    async fn test_remove_missing_name() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let file = dir.path().join("composer.json");
+        std::fs::write(&file, "{}").unwrap();
+
+        let mut args = make_args(Some("remove"), None, None, None);
+        args.file = Some(file.to_str().unwrap().to_string());
+
+        let cli = make_cli();
+        let console = mozart_core::console::Console::new(0, false, false, false, false);
+        let result = execute(&args, &cli, &console).await;
+        assert!(result.is_err());
+    }
+
+    // ── set-url ─────────────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_set_url() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let file = dir.path().join("composer.json");
+        std::fs::write(
+            &file,
+            r#"{"repositories": [{"name": "my-repo", "type": "vcs", "url": "https://old.com"}]}"#,
+        ).unwrap();
+
+        let mut args = make_args(Some("set-url"), Some("my-repo"), Some("https://new.com"), None);
+        args.file = Some(file.to_str().unwrap().to_string());
+
+        let cli = make_cli();
+        let console = mozart_core::console::Console::new(0, false, false, false, false);
+        execute(&args, &cli, &console).await.unwrap();
+
+        let json: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
+        assert_eq!(json["repositories"][0]["url"], "https://new.com");
+    }
+
+    #[tokio::test]
+    async fn test_set_url_not_found() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let file = dir.path().join("composer.json");
+        std::fs::write(&file, r#"{"repositories": []}"#).unwrap();
+
+        let mut args = make_args(Some("set-url"), Some("missing"), Some("https://new.com"), None);
+        args.file = Some(file.to_str().unwrap().to_string());
+
+        let cli = make_cli();
+        let console = mozart_core::console::Console::new(0, false, false, false, false);
+        let result = execute(&args, &cli, &console).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_set_url_alias() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let file = dir.path().join("composer.json");
+        std::fs::write(
+            &file,
+            r#"{"repositories": [{"name": "my-repo", "type": "vcs", "url": "https://old.com"}]}"#,
+        ).unwrap();
+
+        let mut args = make_args(Some("seturl"), Some("my-repo"), Some("https://new.com"), None);
+        args.file = Some(file.to_str().unwrap().to_string());
+
+        let cli = make_cli();
+        let console = mozart_core::console::Console::new(0, false, false, false, false);
+        execute(&args, &cli, &console).await.unwrap();
+
+        let json: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
+        assert_eq!(json["repositories"][0]["url"], "https://new.com");
+    }
+
+    // ── get-url ─────────────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_get_url() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let file = dir.path().join("composer.json");
+        std::fs::write(
+            &file,
+            r#"{"repositories": [{"name": "my-repo", "type": "vcs", "url": "https://example.com"}]}"#,
+        ).unwrap();
+
+        let mut args = make_args(Some("get-url"), Some("my-repo"), None, None);
+        args.file = Some(file.to_str().unwrap().to_string());
+
+        let cli = make_cli();
+        let console = mozart_core::console::Console::new(0, false, false, false, false);
+        let result = execute(&args, &cli, &console).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_get_url_not_found() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let file = dir.path().join("composer.json");
+        std::fs::write(&file, r#"{"repositories": []}"#).unwrap();
+
+        let mut args = make_args(Some("get-url"), Some("missing"), None, None);
+        args.file = Some(file.to_str().unwrap().to_string());
+
+        let cli = make_cli();
+        let console = mozart_core::console::Console::new(0, false, false, false, false);
+        let result = execute(&args, &cli, &console).await;
+        assert!(result.is_err());
+    }
+
+    // ── disable ─────────────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_disable_packagist() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let file = dir.path().join("composer.json");
+        std::fs::write(&file, "{}").unwrap();
+
+        let mut args = make_args(Some("disable"), Some("packagist.org"), None, None);
+        args.file = Some(file.to_str().unwrap().to_string());
+
+        let cli = make_cli();
+        let console = mozart_core::console::Console::new(0, false, false, false, false);
+        execute(&args, &cli, &console).await.unwrap();
+
+        let json: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
+        let repos = json["repositories"].as_array().unwrap();
+        assert_eq!(repos[0]["packagist.org"], false);
+    }
+
+    #[tokio::test]
+    async fn test_disable_without_name_defaults_to_packagist() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let file = dir.path().join("composer.json");
+        std::fs::write(&file, "{}").unwrap();
+
+        let mut args = make_args(Some("disable"), None, None, None);
+        args.file = Some(file.to_str().unwrap().to_string());
+
+        let cli = make_cli();
+        let console = mozart_core::console::Console::new(0, false, false, false, false);
+        execute(&args, &cli, &console).await.unwrap();
+
+        let json: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
+        let repos = json["repositories"].as_array().unwrap();
+        assert_eq!(repos[0]["packagist.org"], false);
+    }
+
+    #[tokio::test]
+    async fn test_disable_non_packagist_error() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let file = dir.path().join("composer.json");
+        std::fs::write(&file, "{}").unwrap();
+
+        let mut args = make_args(Some("disable"), Some("my-repo"), None, None);
+        args.file = Some(file.to_str().unwrap().to_string());
+
+        let cli = make_cli();
+        let console = mozart_core::console::Console::new(0, false, false, false, false);
+        let result = execute(&args, &cli, &console).await;
+        assert!(result.is_err());
+    }
+
+    // ── enable ──────────────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_enable_packagist() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let file = dir.path().join("composer.json");
+        std::fs::write(
+            &file,
+            r#"{"repositories": [{"packagist.org": false}]}"#,
+        ).unwrap();
+
+        let mut args = make_args(Some("enable"), Some("packagist.org"), None, None);
+        args.file = Some(file.to_str().unwrap().to_string());
+
+        let cli = make_cli();
+        let console = mozart_core::console::Console::new(0, false, false, false, false);
+        execute(&args, &cli, &console).await.unwrap();
+
+        let json: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
+        assert!(json.get("repositories").is_none());
+    }
+
+    #[tokio::test]
+    async fn test_enable_non_packagist_error() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let file = dir.path().join("composer.json");
+        std::fs::write(&file, "{}").unwrap();
+
+        let mut args = make_args(Some("enable"), Some("my-repo"), None, None);
+        args.file = Some(file.to_str().unwrap().to_string());
+
+        let cli = make_cli();
+        let console = mozart_core::console::Console::new(0, false, false, false, false);
+        let result = execute(&args, &cli, &console).await;
+        assert!(result.is_err());
+    }
+
+    // ── unknown action ──────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_unknown_action() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let file = dir.path().join("composer.json");
+        std::fs::write(&file, "{}").unwrap();
+
+        let mut args = make_args(Some("invalid"), None, None, None);
+        args.file = Some(file.to_str().unwrap().to_string());
+
+        let cli = make_cli();
+        let console = mozart_core::console::Console::new(0, false, false, false, false);
+        let result = execute(&args, &cli, &console).await;
+        assert!(result.is_err());
+    }
+
+    // ── insert_repository helper ────────────────────────────────────────────
+
+    #[test]
+    fn test_insert_before() {
+        let mut json = serde_json::json!({
+            "repositories": [
+                {"name": "a", "type": "vcs", "url": "https://a.com"},
+                {"name": "b", "type": "vcs", "url": "https://b.com"},
+            ]
+        });
+
+        let entry = serde_json::json!({"name": "new", "type": "vcs", "url": "https://new.com"});
+        insert_repository(&mut json, "new", entry, "b", true).unwrap();
+
+        let repos = json["repositories"].as_array().unwrap();
+        assert_eq!(repos[0]["name"], "a");
+        assert_eq!(repos[1]["name"], "new");
+        assert_eq!(repos[2]["name"], "b");
+    }
+
+    #[test]
+    fn test_insert_after() {
+        let mut json = serde_json::json!({
+            "repositories": [
+                {"name": "a", "type": "vcs", "url": "https://a.com"},
+                {"name": "b", "type": "vcs", "url": "https://b.com"},
+            ]
+        });
+
+        let entry = serde_json::json!({"name": "new", "type": "vcs", "url": "https://new.com"});
+        insert_repository(&mut json, "new", entry, "a", false).unwrap();
+
+        let repos = json["repositories"].as_array().unwrap();
+        assert_eq!(repos[0]["name"], "a");
+        assert_eq!(repos[1]["name"], "new");
+        assert_eq!(repos[2]["name"], "b");
+    }
+
+    #[test]
+    fn test_insert_target_not_found() {
+        let mut json = serde_json::json!({"repositories": []});
+        let entry = serde_json::json!({"name": "new", "type": "vcs", "url": "https://new.com"});
+        let result = insert_repository(&mut json, "new", entry, "nonexistent", true);
+        assert!(result.is_err());
+    }
 }

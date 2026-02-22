@@ -3,6 +3,11 @@ use clap::Args;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
+use super::config_helpers::{
+    add_repository, composer_home, read_json_file, remove_repository, render_value, working_dir,
+    write_json_file,
+};
+
 #[derive(Args)]
 pub struct ConfigArgs {
     /// Setting key
@@ -381,49 +386,6 @@ fn match_repository_key(key: &str) -> Option<&str> {
     None
 }
 
-/// Add a repository entry to the `repositories` array in json.
-/// If `append` is true, push to end; otherwise insert at beginning.
-/// Removes any existing entry with the same name first.
-fn add_repository(
-    json: &mut serde_json::Value,
-    name: &str,
-    config: serde_json::Value,
-    append: bool,
-) {
-    // Ensure repositories is an array
-    if !json["repositories"].is_array() {
-        json["repositories"] = serde_json::json!([]);
-    }
-
-    // Remove any existing entry with the same name
-    remove_repository(json, name);
-
-    let repos = json["repositories"].as_array_mut().unwrap();
-    if append {
-        repos.push(config);
-    } else {
-        repos.insert(0, config);
-    }
-}
-
-/// Remove a repository entry by name from the `repositories` array.
-fn remove_repository(json: &mut serde_json::Value, name: &str) {
-    if let Some(repos) = json["repositories"].as_array_mut() {
-        repos.retain(|entry| {
-            // Match by name field or {name: false} disabled entry
-            if let Some(entry_name) = entry.get("name").and_then(|n| n.as_str()) {
-                entry_name != name
-            } else {
-                // Check for disabled repo: {"packagist.org": false}
-                let disabled_key_matches = entry
-                    .as_object()
-                    .map(|obj| obj.contains_key(name))
-                    .unwrap_or(false);
-                !disabled_key_matches
-            }
-        });
-    }
-}
 
 // ─── JSON path helpers ────────────────────────────────────────────────────────
 
@@ -490,64 +452,9 @@ fn resolve_config_file_path(args: &ConfigArgs, cli: &super::Cli) -> anyhow::Resu
     Ok(working_dir(cli)?.join("composer.json"))
 }
 
-/// Read a JSON file as `serde_json::Value`.
-/// If the file does not exist, return a default skeleton:
-/// `{"config": {}}` for global files, `{}` for local.
-fn read_json_file(path: &Path, is_global: bool) -> anyhow::Result<serde_json::Value> {
-    if !path.exists() {
-        if is_global {
-            return Ok(serde_json::json!({"config": {}}));
-        }
-        return Ok(serde_json::json!({}));
-    }
-    let content = std::fs::read_to_string(path)?;
-    let value: serde_json::Value = serde_json::from_str(&content)
-        .map_err(|e| anyhow!("Failed to parse JSON from {}: {}", path.display(), e))?;
-    Ok(value)
-}
-
-/// Write a `serde_json::Value` back to a file with 4-space indentation + trailing newline.
-fn write_json_file(path: &Path, value: &serde_json::Value) -> anyhow::Result<()> {
-    // Create parent directories if needed
-    if let Some(parent) = path.parent()
-        && !parent.as_os_str().is_empty()
-    {
-        std::fs::create_dir_all(parent)?;
-    }
-    mozart_core::package::write_to_file(value, path)?;
-    Ok(())
-}
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-/// Return the Composer home directory, respecting `COMPOSER_HOME` and
-/// falling back to the platform default (`~/.config/composer` on Unix,
-/// `%APPDATA%/Composer` on Windows).
-fn composer_home() -> String {
-    if let Ok(home) = std::env::var("COMPOSER_HOME") {
-        return home;
-    }
-
-    // Platform-specific defaults
-    #[cfg(target_os = "windows")]
-    {
-        std::env::var("APPDATA")
-            .map(|p| format!("{p}/Composer"))
-            .unwrap_or_else(|_| "C:/ProgramData/ComposerSetup/bin".to_string())
-    }
-
-    #[cfg(not(target_os = "windows"))]
-    {
-        // Prefer XDG_CONFIG_HOME if set, otherwise fall back to ~/.config/composer
-        if let Ok(xdg) = std::env::var("XDG_CONFIG_HOME") {
-            format!("{xdg}/composer")
-        } else {
-            std::env::var("HOME")
-                .map(|h| format!("{h}/.config/composer"))
-                .unwrap_or_else(|_| "/tmp/composer".to_string())
-        }
-    }
-}
 
 /// Load the `config` section from a JSON file (global `config.json` or local
 /// `composer.json`).  Returns an empty map when the file is absent or has no
@@ -570,36 +477,9 @@ fn load_config_section(
     }
 }
 
-/// Build the working directory path, preferring `--working-dir` over `cwd`.
-fn working_dir(cli: &super::Cli) -> anyhow::Result<PathBuf> {
-    match &cli.working_dir {
-        Some(d) => Ok(PathBuf::from(d)),
-        None => Ok(std::env::current_dir()?),
-    }
-}
 
 // ─── Value rendering ─────────────────────────────────────────────────────────
 
-/// Render a `serde_json::Value` as a human-readable string suitable for
-/// single-line display (matching Composer's behaviour).
-fn render_value(v: &serde_json::Value) -> String {
-    match v {
-        serde_json::Value::Null => "NULL".to_string(),
-        serde_json::Value::Bool(b) => if *b { "true" } else { "false" }.to_string(),
-        serde_json::Value::Number(n) => n.to_string(),
-        serde_json::Value::String(s) => s.clone(),
-        serde_json::Value::Array(arr) => {
-            arr.iter().map(render_value).collect::<Vec<_>>().join(", ")
-        }
-        serde_json::Value::Object(obj) => {
-            if obj.is_empty() {
-                "{}".to_string()
-            } else {
-                serde_json::to_string(v).unwrap_or_else(|_| "{}".to_string())
-            }
-        }
-    }
-}
 
 // ─── execute() ───────────────────────────────────────────────────────────────
 
