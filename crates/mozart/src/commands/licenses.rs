@@ -222,9 +222,28 @@ fn render_text(
         return;
     }
 
-    // Compute column widths
-    let name_width = entries.iter().map(|e| e.name.len()).max().unwrap_or(0);
-    let version_width = entries.iter().map(|e| e.version.len()).max().unwrap_or(0);
+    // Compute column widths (factor in header strings for minimum width)
+    let name_width = entries
+        .iter()
+        .map(|e| e.name.len())
+        .max()
+        .unwrap_or(0)
+        .max("Name".len());
+    let version_width = entries
+        .iter()
+        .map(|e| e.version.len())
+        .max()
+        .unwrap_or(0)
+        .max("Version".len());
+
+    // Print header row
+    println!(
+        "{:<nw$}  {:<vw$}  Licenses",
+        "Name",
+        "Version",
+        nw = name_width,
+        vw = version_width
+    );
 
     for entry in entries {
         let license_str = if entry.licenses.is_empty() {
@@ -293,23 +312,50 @@ fn render_summary(entries: &[LicenseEntry]) {
         return;
     }
 
+    const COL2_HEADER: &str = "Number of dependencies";
+
+    // Compute column widths (at least as wide as the header strings)
     let license_width = counts
         .iter()
         .map(|(l, _)| l.len())
         .max()
         .unwrap_or(0)
         .max("License".len());
+    let count_width = counts
+        .iter()
+        .map(|(_, c)| c.to_string().len())
+        .max()
+        .unwrap_or(0)
+        .max(COL2_HEADER.len());
 
+    // Each column is padded with 1 space on each side, so the border dash count = width + 2
+    let border_col1 = "-".repeat(license_width + 2);
+    let border_col2 = "-".repeat(count_width + 2);
+
+    // Top border
+    println!(" {} {}", border_col1, border_col2);
+    // Header row (two leading spaces = one space indent + one space left-padding)
     println!(
-        "{:<lw$}  Number of dependencies",
+        "  {:<lw$}   {:<cw$}",
         "License",
-        lw = license_width
+        COL2_HEADER,
+        lw = license_width,
+        cw = count_width
     );
-    println!("{:-<lw$}  ----------------------", "", lw = license_width);
-
+    // Mid border
+    println!(" {} {}", border_col1, border_col2);
+    // Data rows
     for (license, count) in &counts {
-        println!("{:<lw$}  {}", license, count, lw = license_width);
+        println!(
+            "  {:<lw$}   {:<cw$}",
+            license,
+            count,
+            lw = license_width,
+            cw = count_width
+        );
     }
+    // Bottom border
+    println!(" {} {}", border_col1, border_col2);
 }
 
 // ─── Tests ───────────────────────────────────────────────────────────────────
