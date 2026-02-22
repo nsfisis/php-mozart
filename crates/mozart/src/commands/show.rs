@@ -105,6 +105,12 @@ pub async fn execute(
     cli: &super::Cli,
     _console: &mozart_core::console::Console,
 ) -> anyhow::Result<()> {
+    // Validate mutually exclusive level filters
+    let level_count = args.major_only as u8 + args.minor_only as u8 + args.patch_only as u8;
+    if level_count > 1 {
+        anyhow::bail!("Only one of --major-only, --minor-only or --patch-only can be used at once");
+    }
+
     let working_dir = match &cli.working_dir {
         Some(dir) => PathBuf::from(dir),
         None => std::env::current_dir()?,
