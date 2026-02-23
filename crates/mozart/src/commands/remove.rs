@@ -135,7 +135,7 @@ pub async fn execute(
     // When --unused is set with no explicit packages, we re-resolve to detect
     // packages in the lock file that are no longer reachable from root requirements.
     if args.unused && args.packages.is_empty() {
-        return remove_unused(&raw, &working_dir, args, &repo_cache, console).await;
+        return remove_unused(&raw, &working_dir, args, &repo_cache, cli.no_cache, console).await;
     }
 
     // Step 5: Determine which packages to remove and remove them
@@ -444,6 +444,7 @@ pub async fn execute(
                 apcu_autoloader_prefix: args.apcu_autoloader_prefix.clone(),
                 download_only: false,
                 prefer_source: false,
+                no_cache: cli.no_cache,
             },
             console,
         )
@@ -459,6 +460,7 @@ async fn remove_unused(
     working_dir: &std::path::Path,
     args: &RemoveArgs,
     repo_cache: &mozart_registry::cache::Cache,
+    no_cache: bool,
     console: &mozart_core::console::Console,
 ) -> anyhow::Result<()> {
     let lock_path = working_dir.join("composer.lock");
@@ -587,6 +589,7 @@ async fn remove_unused(
                 apcu_autoloader_prefix: args.apcu_autoloader_prefix.clone(),
                 download_only: false,
                 prefer_source: false,
+                no_cache,
             },
             console,
         )

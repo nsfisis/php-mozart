@@ -96,6 +96,7 @@ pub async fn execute(
 
     let cache_config = mozart_registry::cache::build_cache_config(cli.no_cache);
     let repo_cache = mozart_registry::cache::Cache::repo(&cache_config);
+    let files_cache = mozart_registry::cache::Cache::files(&cache_config);
 
     // 1. Determine working directory
     let working_dir = match &cli.working_dir {
@@ -153,7 +154,14 @@ pub async fn execute(
     let meta: PackageMeta = if let Some(ref pkg_name) = args.package {
         // Remote package mode
         console.info("Searching for the specified package.");
-        resolve_remote_package(pkg_name, args.version.as_deref(), &repo_cache, console).await?
+        resolve_remote_package(
+            pkg_name,
+            args.version.as_deref(),
+            &repo_cache,
+            &files_cache,
+            console,
+        )
+        .await?
     } else {
         // Root package mode
         if !composer_json_path.exists() {
@@ -248,6 +256,7 @@ async fn resolve_remote_package(
     package_name: &str,
     version_constraint: Option<&str>,
     repo_cache: &mozart_registry::cache::Cache,
+    files_cache: &mozart_registry::cache::Cache,
     console: &mozart_core::console::Console,
 ) -> anyhow::Result<PackageMeta> {
     use mozart_core::package::Stability;
@@ -334,9 +343,13 @@ async fn resolve_remote_package(
     let temp_dir = temp_base.join(&unique);
     std::fs::create_dir_all(&temp_dir)?;
 
-    let bytes =
-        mozart_registry::downloader::download_dist(&dist.url, dist.shasum.as_deref(), None, None)
-            .await?;
+    let bytes = mozart_registry::downloader::download_dist(
+        &dist.url,
+        dist.shasum.as_deref(),
+        None,
+        files_cache,
+    )
+    .await?;
 
     match dist.dist_type.as_str() {
         "zip" => mozart_registry::downloader::extract_zip(&bytes, &temp_dir)?,

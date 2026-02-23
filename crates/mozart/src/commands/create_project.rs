@@ -274,6 +274,7 @@ pub async fn execute(
 
     let cache_config = mozart_registry::cache::build_cache_config(cli.no_cache);
     let repo_cache = mozart_registry::cache::Cache::repo(&cache_config);
+    let files_cache = mozart_registry::cache::Cache::files(&cache_config);
 
     let versions = packagist::fetch_package_versions(&package_name, &repo_cache).await?;
 
@@ -326,9 +327,13 @@ pub async fn execute(
         format!("{package_name} ({concrete_version})"),
     );
 
-    let bytes =
-        downloader::download_dist(&dist.url, dist.shasum.as_deref(), Some(&mut progress), None)
-            .await?;
+    let bytes = downloader::download_dist(
+        &dist.url,
+        dist.shasum.as_deref(),
+        Some(&mut progress),
+        &files_cache,
+    )
+    .await?;
 
     progress.finish();
 
@@ -509,6 +514,7 @@ pub async fn execute(
             apcu_autoloader_prefix: None,
             download_only: false,
             prefer_source: args.prefer_source,
+            no_cache: cli.no_cache,
         },
         console,
     )

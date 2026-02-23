@@ -77,22 +77,20 @@ impl DownloadProgress {
 /// If `expected_shasum` is provided and non-empty, verifies SHA-1 of the downloaded bytes.
 /// If `progress` is provided, increments it as bytes are received and sets the total from
 /// the `Content-Length` response header.
-/// If `files_cache` is provided, the downloaded bytes are cached by URL; cache hits skip
-/// the network request entirely.
+/// Downloaded bytes are cached by URL in `files_cache`; cache hits skip the network request
+/// entirely.
 #[tracing::instrument(skip(expected_shasum, progress, files_cache))]
 pub async fn download_dist(
     url: &str,
     expected_shasum: Option<&str>,
     progress: Option<&mut DownloadProgress>,
-    files_cache: Option<&Cache>,
+    files_cache: &Cache,
 ) -> anyhow::Result<Vec<u8>> {
     // Build a cache key from the URL
     let cache_key = Cache::sanitize_key(url);
 
     // Check cache first
-    if let Some(cache) = files_cache
-        && let Some(cached_bytes) = cache.read_bytes(&cache_key)
-    {
+    if let Some(cached_bytes) = files_cache.read_bytes(&cache_key) {
         // Verify checksum against cache hit if provided
         if let Some(shasum) = expected_shasum
             && !shasum.is_empty()
@@ -158,9 +156,7 @@ pub async fn download_dist(
     }
 
     // Write to cache
-    if let Some(cache) = files_cache {
-        let _ = cache.write_bytes(&cache_key, &bytes);
-    }
+    let _ = files_cache.write_bytes(&cache_key, &bytes);
 
     Ok(bytes)
 }
@@ -328,7 +324,7 @@ pub fn extract_tar_gz(data: &[u8], target_dir: &Path) -> anyhow::Result<()> {
 /// - `vendor_dir`: path to `vendor/` directory
 /// - `package_name`: e.g. `"monolog/monolog"`
 /// - `progress`: optional mutable progress tracker to update during download
-/// - `files_cache`: optional files cache; if provided, the archive bytes are cached by URL
+/// - `files_cache`: files cache; archive bytes are cached by URL
 pub async fn install_package(
     dist_url: &str,
     dist_type: &str,
@@ -336,7 +332,7 @@ pub async fn install_package(
     vendor_dir: &Path,
     package_name: &str,
     progress: Option<&mut DownloadProgress>,
-    files_cache: Option<&Cache>,
+    files_cache: &Cache,
 ) -> anyhow::Result<()> {
     let target = vendor_dir.join(package_name);
 

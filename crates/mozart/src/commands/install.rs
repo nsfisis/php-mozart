@@ -119,6 +119,8 @@ pub struct InstallConfig {
     pub download_only: bool,
     /// Prefer installing from VCS source rather than dist archives.
     pub prefer_source: bool,
+    /// Disable the files cache entirely.
+    pub no_cache: bool,
 }
 
 impl Default for InstallConfig {
@@ -136,6 +138,7 @@ impl Default for InstallConfig {
             apcu_autoloader_prefix: None,
             download_only: false,
             prefer_source: false,
+            no_cache: false,
         }
     }
 }
@@ -356,6 +359,9 @@ pub async fn install_from_lock(
     config: &InstallConfig,
     console: &mozart_core::console::Console,
 ) -> anyhow::Result<()> {
+    let cache_config = mozart_registry::cache::build_cache_config(config.no_cache);
+    let files_cache = mozart_registry::cache::Cache::files(&cache_config);
+
     let dev_mode = config.dev_mode;
 
     // Step 1: Determine which packages to install
@@ -492,7 +498,7 @@ pub async fn install_from_lock(
                 vendor_dir,
                 &pkg.name,
                 Some(&mut progress),
-                None,
+                &files_cache,
             )
             .await?;
 
@@ -697,6 +703,7 @@ pub async fn execute(
             apcu_autoloader_prefix: args.apcu_autoloader_prefix.clone(),
             download_only: args.download_only,
             prefer_source,
+            no_cache: cli.no_cache,
         },
         console,
     )

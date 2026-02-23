@@ -116,7 +116,7 @@ pub async fn execute(
             &dist.url,
             dist.shasum.as_deref(),
             None,
-            Some(&files_cache),
+            &files_cache,
         )
         .await;
 

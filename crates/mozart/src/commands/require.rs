@@ -864,6 +864,7 @@ pub async fn execute(
                 apcu_autoloader_prefix: args.apcu_autoloader_prefix.clone(),
                 download_only: false,
                 prefer_source: args.prefer_source,
+                no_cache: cli.no_cache,
             },
             console,
         )

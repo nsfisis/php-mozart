@@ -239,7 +239,7 @@ pub async fn execute(
             &vendor_dir,
             &locked.name,
             Some(&mut progress),
-            Some(&files_cache),
+            &files_cache,
         )
         .await?;
 
