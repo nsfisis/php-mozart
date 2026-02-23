@@ -9,7 +9,8 @@ use std::fmt;
 
 use crate::cache::Cache;
 use crate::packagist;
-use mozart_core::package::Stability;
+use crate::vcs_bridge;
+use mozart_core::package::{RawRepository, Stability};
 use mozart_sat_resolver::{
     DefaultPolicy, PoolBuilder, PoolPackageInput, RuleSetGenerator, Solver, make_pool_links,
 };
@@ -20,7 +21,7 @@ use mozart_semver::Version;
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Determine the `Stability` of a `Version` from its pre_release string.
-fn version_stability(v: &Version) -> Stability {
+pub(crate) fn version_stability(v: &Version) -> Stability {
     match &v.pre_release {
         None => Stability::Stable,
         Some(pre) => {
@@ -43,7 +44,7 @@ fn version_stability(v: &Version) -> Stability {
 
 /// Parse a Packagist normalized version string like "1.2.3.0", "1.0.0.0-beta1".
 /// Returns `None` for dev branches (dev-master, dev-*, *.x-dev).
-fn parse_normalized(normalized: &str) -> Option<Version> {
+pub(crate) fn parse_normalized(normalized: &str) -> Option<Version> {
     let s = normalized.trim();
 
     // Reject dev branches
@@ -348,6 +349,9 @@ pub struct ResolveRequest {
     /// Temporary version constraint overrides (from --with flag).
     /// Maps package name (lowercase) to constraint string.
     pub temporary_constraints: HashMap<String, String>,
+    /// VCS repositories from composer.json "repositories" section.
+    /// Used to fetch packages from VCS before falling back to Packagist.
+    pub repositories: Vec<RawRepository>,
 }
 
 /// A single package in the resolution output.
@@ -413,6 +417,7 @@ pub async fn resolve(request: &ResolveRequest) -> Result<Vec<ResolvedPackage>, R
     let prefer_lowest = request.prefer_lowest;
     let ignore_platform_reqs = request.ignore_platform_reqs;
     let ignore_platform_req_list = request.ignore_platform_req_list.clone();
+    let vcs_repositories = request.repositories.clone();
 
     // 2. Build pool, generate rules, and solve on a blocking thread
     tokio::task::spawn_blocking(move || -> Result<Vec<ResolvedPackage>, ResolveError> {
@@ -447,10 +452,31 @@ pub async fn resolve(request: &ResolveRequest) -> Result<Vec<ResolvedPackage>, R
             builder.add_package(input);
         }
 
+        // Scan VCS repositories and collect packages from them
+        let vcs_repos = &vcs_repositories;
+        let vcs_packages = vcs_bridge::scan_vcs_repositories(vcs_repos);
+        let mut vcs_package_names: HashSet<String> = HashSet::new();
+        for vpkg in &vcs_packages {
+            vcs_package_names.insert(vpkg.name.clone());
+        }
+
+        // Add VCS packages to the pool
+        for vpkg in &vcs_packages {
+            let inputs = vcs_bridge::vcs_to_pool_inputs(vpkg, minimum_stability, &stability_flags);
+            for input in inputs {
+                builder.add_package(input);
+            }
+        }
+
         // Seed the builder with packages for root requirements
         for name in root_requires.keys() {
             if PackageName(name.clone()).is_platform() {
                 continue; // platform packages already added
+            }
+
+            // Skip packages already provided by VCS repositories
+            if vcs_package_names.contains(name) {
+                continue;
             }
 
             // Fetch available versions from Packagist
@@ -473,6 +499,11 @@ pub async fn resolve(request: &ResolveRequest) -> Result<Vec<ResolvedPackage>, R
         while let Some(name) = builder.next_pending() {
             if PackageName(name.clone()).is_platform() {
                 // Platform package: already added if available, skip fetching
+                continue;
+            }
+
+            // Skip packages already provided by VCS repositories
+            if vcs_package_names.contains(&name) {
                 continue;
             }
 
@@ -938,6 +969,7 @@ mod tests {
             ignore_platform_req_list: vec![],
             repo_cache: None,
             temporary_constraints: HashMap::new(),
+            repositories: vec![],
         };
 
         let result = resolve(&request).await;

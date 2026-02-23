@@ -411,6 +411,7 @@ pub async fn execute(
         ignore_platform_req_list: args.ignore_platform_req.clone(),
         repo_cache: None,
         temporary_constraints: HashMap::new(),
+        repositories: raw.repositories.clone(),
     };
 
     console.info("Resolving dependencies...");
@@ -502,6 +503,7 @@ pub async fn execute(
             apcu_autoloader,
             apcu_autoloader_prefix: None,
             download_only: false,
+            prefer_source: args.prefer_source,
         },
     )
     .await?;

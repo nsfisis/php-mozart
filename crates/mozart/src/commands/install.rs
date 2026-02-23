@@ -117,6 +117,8 @@ pub struct InstallConfig {
     pub apcu_autoloader_prefix: Option<String>,
     /// Only download packages, skip autoloader generation and installed.json write.
     pub download_only: bool,
+    /// Prefer installing from VCS source rather than dist archives.
+    pub prefer_source: bool,
 }
 
 impl Default for InstallConfig {
@@ -133,6 +135,7 @@ impl Default for InstallConfig {
             apcu_autoloader: false,
             apcu_autoloader_prefix: None,
             download_only: false,
+            prefer_source: false,
         }
     }
 }
@@ -300,20 +303,51 @@ fn make_progress(show: bool, pkg_name: &str, version: &str) -> downloader::Downl
     downloader::DownloadProgress::new(show, format!("{pkg_name} ({version})"))
 }
 
-/// Install packages from a lock file into vendor/.
-///
-/// Used by both the `install` and `update` commands.
-///
-/// This function:
-/// 1. Determines which packages to install (prod + optionally dev)
-/// 2. Warns about platform requirements (unless ignored)
-/// 3. Reads currently installed packages
-/// 4. Computes install/update/skip/removal operations
-/// 5. Prints a summary
-/// 6. Executes downloads with optional progress bars (unless dry_run)
-/// 7. Writes vendor/composer/installed.json
-/// 8. Cleans up empty vendor directories
-/// 9. Generates the autoloader (unless no_autoloader)
+/// Install a package from VCS source (git/svn/hg).
+fn install_from_source(
+    source_type: &str,
+    url: &str,
+    reference: &str,
+    vendor_dir: &Path,
+    package_name: &str,
+) -> anyhow::Result<()> {
+    let target = vendor_dir.join(package_name);
+    if target.exists() {
+        std::fs::remove_dir_all(&target)?;
+    }
+
+    match source_type {
+        "git" => {
+            let process = mozart_vcs::process::ProcessExecutor::new();
+            let git_util =
+                mozart_vcs::util::git::GitUtil::new(process, vendor_dir.join(".cache").join("git"));
+            let downloader = mozart_vcs::downloader::git::GitDownloader::new(git_util);
+            use mozart_vcs::downloader::VcsDownloader;
+            downloader.download(url, reference, &target)?;
+            downloader.install(url, reference, &target)?;
+        }
+        "svn" => {
+            let process = mozart_vcs::process::ProcessExecutor::new();
+            let svn_util = mozart_vcs::util::svn::SvnUtil::new(process);
+            let downloader = mozart_vcs::downloader::svn::SvnDownloader::new(svn_util);
+            use mozart_vcs::downloader::VcsDownloader;
+            downloader.install(url, reference, &target)?;
+        }
+        "hg" => {
+            let process = mozart_vcs::process::ProcessExecutor::new();
+            let hg_util = mozart_vcs::util::hg::HgUtil::new(process);
+            let downloader = mozart_vcs::downloader::hg::HgDownloader::new(hg_util);
+            use mozart_vcs::downloader::VcsDownloader;
+            downloader.install(url, reference, &target)?;
+        }
+        _ => {
+            anyhow::bail!("Unsupported source type for VCS install: {}", source_type);
+        }
+    }
+
+    Ok(())
+}
+
 pub async fn install_from_lock(
     lock: &lockfile::LockFile,
     working_dir: &Path,
@@ -405,11 +439,32 @@ pub async fn install_from_lock(
                 }
             }
 
+            // Try source install if --prefer-source and source info is available
+            if config.prefer_source
+                && let Some(source) = &pkg.source
+            {
+                install_from_source(
+                    &source.source_type,
+                    &source.url,
+                    source.reference.as_deref().unwrap_or("HEAD"),
+                    vendor_dir,
+                    &pkg.name,
+                )?;
+                continue;
+            }
+
             let dist = pkg.dist.as_ref().ok_or_else(|| {
-                anyhow::anyhow!(
-                    "Package {} has no dist information — source installs are not yet supported",
-                    pkg.name
-                )
+                if pkg.source.is_some() {
+                    anyhow::anyhow!(
+                        "Package {} has no dist information. Use --prefer-source to install from VCS.",
+                        pkg.name,
+                    )
+                } else {
+                    anyhow::anyhow!(
+                        "Package {} has no dist or source information",
+                        pkg.name,
+                    )
+                }
             })?;
 
             let mut progress = make_progress(!config.no_progress, &pkg.name, &pkg.version);
@@ -604,18 +659,13 @@ pub async fn execute(
         }
     }
 
-    // Step 5: Warn about prefer-source (not yet supported)
+    // Step 5: Determine if prefer-source is enabled
     let prefer_source = args.prefer_source
         || args
             .prefer_install
             .as_deref()
             .map(|s| s.eq_ignore_ascii_case("source"))
             .unwrap_or(false);
-    if prefer_source {
-        console.info(&console_format!(
-            "<warning>Warning: Source installs are not yet supported. Falling back to dist.</warning>"
-        ));
-    }
 
     // Step 6: Determine dev mode and vendor directory
     let dev_mode = !args.no_dev;
@@ -638,6 +688,7 @@ pub async fn execute(
             apcu_autoloader: args.apcu_autoloader || args.apcu_autoloader_prefix.is_some(),
             apcu_autoloader_prefix: args.apcu_autoloader_prefix.clone(),
             download_only: args.download_only,
+            prefer_source,
         },
     )
     .await

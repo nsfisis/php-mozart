@@ -656,6 +656,7 @@ pub async fn execute(
         ignore_platform_req_list: args.ignore_platform_req.clone(),
         repo_cache: None,
         temporary_constraints: HashMap::new(),
+        repositories: raw.repositories.clone(),
     };
 
     // Print header messages
@@ -870,6 +871,7 @@ pub async fn execute(
                     || config_apcu,
                 apcu_autoloader_prefix: args.apcu_autoloader_prefix.clone(),
                 download_only: false,
+                prefer_source: args.prefer_source,
             },
         )
         .await?;
@@ -1028,6 +1030,7 @@ mod tests {
             ignore_platform_req_list: vec![],
             repo_cache: None,
             temporary_constraints: HashMap::new(),
+            repositories: vec![],
         };
 
         let resolved = resolver::resolve(&request)
@@ -1081,6 +1084,7 @@ mod tests {
             ignore_platform_req_list: vec![],
             repo_cache: None,
             temporary_constraints: HashMap::new(),
+            repositories: vec![],
         };
 
         let resolved = resolver::resolve(&request)

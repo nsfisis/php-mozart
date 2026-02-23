@@ -4,4 +4,5 @@ pub mod installed;
 pub mod lockfile;
 pub mod packagist;
 pub mod resolver;
+pub mod vcs_bridge;
 pub mod version;

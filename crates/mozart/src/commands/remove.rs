@@ -251,6 +251,7 @@ pub async fn execute(
         ignore_platform_req_list: args.ignore_platform_req.clone(),
         repo_cache: None,
         temporary_constraints: HashMap::new(),
+        repositories: raw.repositories.clone(),
     };
 
     // Print header messages
@@ -438,6 +439,7 @@ pub async fn execute(
                 apcu_autoloader: args.apcu_autoloader || args.apcu_autoloader_prefix.is_some(),
                 apcu_autoloader_prefix: args.apcu_autoloader_prefix.clone(),
                 download_only: false,
+                prefer_source: false,
             },
         )
         .await?;
@@ -497,6 +499,7 @@ async fn remove_unused(
         ignore_platform_req_list: args.ignore_platform_req.clone(),
         repo_cache: None,
         temporary_constraints: HashMap::new(),
+        repositories: raw.repositories.clone(),
     };
 
     console.info("Resolving dependencies to detect unused packages...");
@@ -577,6 +580,7 @@ async fn remove_unused(
                 apcu_autoloader: args.apcu_autoloader || args.apcu_autoloader_prefix.is_some(),
                 apcu_autoloader_prefix: args.apcu_autoloader_prefix.clone(),
                 download_only: false,
+                prefer_source: false,
             },
         )
         .await?;
@@ -826,6 +830,7 @@ mod tests {
             ignore_platform_req_list: vec![],
             repo_cache: None,
             temporary_constraints: HashMap::new(),
+            repositories: vec![],
         };
         let resolved = resolve(&request)
             .await
@@ -862,6 +867,7 @@ mod tests {
             ignore_platform_req_list: vec![],
             repo_cache: None,
             temporary_constraints: HashMap::new(),
+            repositories: vec![],
         };
         let resolved2 = resolve(&request2)
             .await

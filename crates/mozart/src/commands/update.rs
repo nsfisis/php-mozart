@@ -835,6 +835,7 @@ pub async fn execute(
         ignore_platform_req_list: args.ignore_platform_req.clone(),
         repo_cache: None,
         temporary_constraints,
+        repositories: composer_json.repositories.clone(),
     };
 
     // Step 6: Print header and run resolver
@@ -1164,18 +1165,13 @@ pub async fn execute(
 
     // Step 12: Install packages (unless --no-install or --dry-run)
     if !args.no_install && !args.dry_run {
-        // Warn about prefer-source (not yet supported)
+        // Determine if prefer-source is enabled
         let prefer_source = args.prefer_source
             || args
                 .prefer_install
                 .as_deref()
                 .map(|s| s.eq_ignore_ascii_case("source"))
                 .unwrap_or(false);
-        if prefer_source {
-            console.info(&console_format!(
-                "<warning>Warning: Source installs are not yet supported. Falling back to dist.</warning>"
-            ));
-        }
 
         super::install::install_from_lock(
             &new_lock,
@@ -1193,6 +1189,7 @@ pub async fn execute(
                 apcu_autoloader: args.apcu_autoloader || args.apcu_autoloader_prefix.is_some(),
                 apcu_autoloader_prefix: args.apcu_autoloader_prefix.clone(),
                 download_only: false,
+                prefer_source,
             },
         )
         .await?;
@@ -1909,6 +1906,7 @@ mod tests {
             ignore_platform_req_list: vec![],
             repo_cache: None,
             temporary_constraints: HashMap::new(),
+            repositories: vec![],
         };
 
         let resolved = resolve(&request).await.expect("Resolution should succeed");

@@ -1081,6 +1081,7 @@ dependencies = [
  "mozart-core",
  "mozart-registry",
  "mozart-semver",
+ "mozart-vcs",
  "predicates",
  "regex",
  "reqwest",
@@ -1175,6 +1176,7 @@ dependencies = [
  "mozart-metadata-minifier",
  "mozart-sat-resolver",
  "mozart-semver",
+ "mozart-vcs",
  "reqwest",
  "serde",
  "serde_json",
@@ -1203,6 +1205,24 @@ version = "0.1.0"
 dependencies = [
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "mozart-vcs"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "base64",
+ "mozart-core",
+ "mozart-semver",
+ "regex",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "sha1",
+ "tempfile",
+ "tokio",
+ "url",
 ]
 
 [[package]]

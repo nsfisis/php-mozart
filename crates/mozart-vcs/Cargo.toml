@@ -1,23 +1,20 @@
 [package]
-name = "mozart-registry"
+name = "mozart-vcs"
 version.workspace = true
 edition.workspace = true
 
 [dependencies]
 mozart-core.workspace = true
-mozart-metadata-minifier.workspace = true
-mozart-sat-resolver.workspace = true
 mozart-semver.workspace = true
-mozart-vcs.workspace = true
 anyhow.workspace = true
-filetime.workspace = true
-flate2.workspace = true
-md5.workspace = true
+base64.workspace = true
+regex.workspace = true
 reqwest.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sha1.workspace = true
-tar.workspace = true
-tempfile.workspace = true
 tokio.workspace = true
-zip.workspace = true
+url.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

@@ -9,6 +9,7 @@ mozart-autoload.workspace = true
 mozart-core.workspace = true
 mozart-registry.workspace = true
 mozart-semver.workspace = true
+mozart-vcs.workspace = true
 anyhow.workspace = true
 clap.workspace = true
 clap_complete.workspace = true
