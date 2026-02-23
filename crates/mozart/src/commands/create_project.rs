@@ -272,7 +272,10 @@ pub async fn execute(
     ));
     console.info("Loading composer repositories with package information");
 
-    let versions = packagist::fetch_package_versions(&package_name, None).await?;
+    let cache_config = mozart_registry::cache::build_cache_config(cli.no_cache);
+    let repo_cache = mozart_registry::cache::Cache::repo(&cache_config);
+
+    let versions = packagist::fetch_package_versions(&package_name, &repo_cache).await?;
 
     // Find the best candidate matching the version constraint and stability
     let best = if let Some(ref constraint) = version_constraint {
@@ -411,7 +414,7 @@ pub async fn execute(
         platform: PlatformConfig::new(),
         ignore_platform_reqs: args.ignore_platform_reqs,
         ignore_platform_req_list: args.ignore_platform_req.clone(),
-        repo_cache: None,
+        repo_cache: repo_cache.clone(),
         temporary_constraints: HashMap::new(),
         repositories: raw.repositories.clone(),
     };
@@ -432,7 +435,7 @@ pub async fn execute(
         composer_json_content: composer_json_content.clone(),
         composer_json: raw.clone(),
         include_dev: dev_mode,
-        repo_cache: None,
+        repo_cache: repo_cache.clone(),
     })
     .await?;
 

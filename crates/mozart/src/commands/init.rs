@@ -65,6 +65,9 @@ pub async fn execute(
     cli: &super::Cli,
     console: &console::Console,
 ) -> anyhow::Result<()> {
+    let cache_config = mozart_registry::cache::build_cache_config(cli.no_cache);
+    let repo_cache = mozart_registry::cache::Cache::repo(&cache_config);
+
     let working_dir = match &cli.working_dir {
         Some(dir) => PathBuf::from(dir),
         None => std::env::current_dir().context("Failed to get current directory")?,
@@ -85,7 +88,7 @@ pub async fn execute(
     }
 
     let composer = if console.interactive {
-        build_interactive(args, console, &working_dir).await?
+        build_interactive(args, console, &working_dir, &repo_cache).await?
     } else {
         build_non_interactive(args, &working_dir)?
     };
@@ -206,6 +209,7 @@ async fn build_interactive(
     args: &InitArgs,
     console: &console::Console,
     working_dir: &Path,
+    repo_cache: &mozart_registry::cache::Cache,
 ) -> anyhow::Result<RawPackageData> {
     console.info("");
     console.info(&format!(
@@ -347,8 +351,14 @@ async fn build_interactive(
     console.info("");
 
     let mut require = parse_requirements(&args.require)?;
-    let interactive_require =
-        interactive_search_packages("require", &require, preferred_stability, console).await?;
+    let interactive_require = interactive_search_packages(
+        "require",
+        &require,
+        preferred_stability,
+        repo_cache,
+        console,
+    )
+    .await?;
     for (name, constraint) in interactive_require {
         require.insert(name, constraint);
     }
@@ -366,9 +376,14 @@ async fn build_interactive(
         .chain(require_dev.iter())
         .map(|(k, v)| (k.clone(), v.clone()))
         .collect();
-    let interactive_dev =
-        interactive_search_packages("require-dev", &all_required, preferred_stability, console)
-            .await?;
+    let interactive_dev = interactive_search_packages(
+        "require-dev",
+        &all_required,
+        preferred_stability,
+        repo_cache,
+        console,
+    )
+    .await?;
     for (name, constraint) in interactive_dev {
         require_dev.insert(name, constraint);
     }
@@ -418,6 +433,7 @@ async fn interactive_search_packages(
     label: &str,
     already_required: &BTreeMap<String, String>,
     preferred_stability: Stability,
+    repo_cache: &mozart_registry::cache::Cache,
     console: &console::Console,
 ) -> anyhow::Result<BTreeMap<String, String>> {
     let stdin = std::io::stdin();
@@ -546,7 +562,7 @@ async fn interactive_search_packages(
                 "<info>Using version constraint for {package_name} from Packagist...</info>"
             ));
 
-            match packagist::fetch_package_versions(&package_name, None).await {
+            match packagist::fetch_package_versions(&package_name, repo_cache).await {
                 Ok(versions) => {
                     match version::find_best_candidate(&versions, preferred_stability) {
                         Some(best) => {

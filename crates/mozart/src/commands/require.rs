@@ -136,6 +136,7 @@ async fn interactive_search_packages(
     already_required: &std::collections::HashSet<String>,
     preferred_stability: Stability,
     fixed: bool,
+    repo_cache: &mozart_registry::cache::Cache,
     console: &mozart_core::console::Console,
 ) -> anyhow::Result<Vec<String>> {
     let stdin = std::io::stdin();
@@ -272,7 +273,7 @@ async fn interactive_search_packages(
                 "<info>Using version constraint for {package_name} from Packagist...</info>"
             ));
 
-            match packagist::fetch_package_versions(&package_name, None).await {
+            match packagist::fetch_package_versions(&package_name, repo_cache).await {
                 Ok(versions) => {
                     match version::find_best_candidate(&versions, preferred_stability) {
                         Some(best) => {
@@ -336,6 +337,9 @@ pub async fn execute(
     cli: &super::Cli,
     console: &mozart_core::console::Console,
 ) -> anyhow::Result<()> {
+    let cache_config = mozart_registry::cache::build_cache_config(cli.no_cache);
+    let repo_cache = mozart_registry::cache::Cache::repo(&cache_config);
+
     // Collect the effective list of packages to add.
     // If none were provided on the CLI, try interactive search (unless --no-interaction).
     let cli_packages: Vec<String> = if args.packages.is_empty() {
@@ -380,6 +384,7 @@ pub async fn execute(
             &already_required,
             preferred_stability,
             args.fixed,
+            &repo_cache,
             console,
         )
         .await?;
@@ -466,7 +471,7 @@ pub async fn execute(
                     Verbosity::Normal,
                 );
 
-                let versions = packagist::fetch_package_versions(&name, None).await?;
+                let versions = packagist::fetch_package_versions(&name, &repo_cache).await?;
                 let best = version::find_best_candidate(&versions, preferred_stability)
                     .ok_or_else(|| {
                         anyhow::anyhow!(
@@ -637,7 +642,7 @@ pub async fn execute(
         platform: PlatformConfig::new(),
         ignore_platform_reqs: args.ignore_platform_reqs,
         ignore_platform_req_list: args.ignore_platform_req.clone(),
-        repo_cache: None,
+        repo_cache: repo_cache.clone(),
         temporary_constraints: HashMap::new(),
         repositories: raw.repositories.clone(),
     };
@@ -731,7 +736,7 @@ pub async fn execute(
         composer_json_content: composer_json_content.clone(),
         composer_json: raw.clone(),
         include_dev: dev_mode,
-        repo_cache: None,
+        repo_cache: repo_cache.clone(),
     })
     .await?;
 
@@ -1016,7 +1021,10 @@ mod tests {
             platform: PlatformConfig::new(),
             ignore_platform_reqs: false,
             ignore_platform_req_list: vec![],
-            repo_cache: None,
+            repo_cache: mozart_registry::cache::Cache::new(
+                std::env::temp_dir().join("mozart-test-cache"),
+                false,
+            ),
             temporary_constraints: HashMap::new(),
             repositories: vec![],
         };
@@ -1032,7 +1040,10 @@ mod tests {
             composer_json_content: composer_json_content.to_string(),
             composer_json,
             include_dev: false,
-            repo_cache: None,
+            repo_cache: mozart_registry::cache::Cache::new(
+                std::env::temp_dir().join("mozart-test-cache"),
+                false,
+            ),
         })
         .await
         .expect("Lock file generation should succeed");
@@ -1070,7 +1081,10 @@ mod tests {
             platform: PlatformConfig::new(),
             ignore_platform_reqs: false,
             ignore_platform_req_list: vec![],
-            repo_cache: None,
+            repo_cache: mozart_registry::cache::Cache::new(
+                std::env::temp_dir().join("mozart-test-cache"),
+                false,
+            ),
             temporary_constraints: HashMap::new(),
             repositories: vec![],
         };
@@ -1083,7 +1097,10 @@ mod tests {
             composer_json_content: content.to_string(),
             composer_json: raw,
             include_dev: false,
-            repo_cache: None,
+            repo_cache: mozart_registry::cache::Cache::new(
+                std::env::temp_dir().join("mozart-test-cache"),
+                false,
+            ),
         })
         .await
         .expect("Lock file generation should succeed");

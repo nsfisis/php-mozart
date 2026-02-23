@@ -712,6 +712,9 @@ pub async fn execute(
     cli: &super::Cli,
     console: &mozart_core::console::Console,
 ) -> anyhow::Result<()> {
+    let cache_config = mozart_registry::cache::build_cache_config(cli.no_cache);
+    let repo_cache = mozart_registry::cache::Cache::repo(&cache_config);
+
     // Step 1: Resolve the working directory
     let working_dir = super::install::resolve_working_dir(cli);
 
@@ -846,7 +849,7 @@ pub async fn execute(
         platform: PlatformConfig::new(),
         ignore_platform_reqs: args.ignore_platform_reqs,
         ignore_platform_req_list: args.ignore_platform_req.clone(),
-        repo_cache: None,
+        repo_cache: repo_cache.clone(),
         temporary_constraints,
         repositories: composer_json.repositories.clone(),
     };
@@ -1004,7 +1007,7 @@ pub async fn execute(
         composer_json_content: composer_json_content.clone(),
         composer_json: composer_json.clone(),
         include_dev: dev_mode,
-        repo_cache: None,
+        repo_cache: repo_cache.clone(),
     })
     .await?;
 
@@ -1942,7 +1945,10 @@ mod tests {
             platform: PlatformConfig::new(),
             ignore_platform_reqs: false,
             ignore_platform_req_list: vec![],
-            repo_cache: None,
+            repo_cache: mozart_registry::cache::Cache::new(
+                std::env::temp_dir().join("mozart-test-cache"),
+                false,
+            ),
             temporary_constraints: HashMap::new(),
             repositories: vec![],
         };
@@ -1956,7 +1962,10 @@ mod tests {
             composer_json_content: composer_json_content.to_string(),
             composer_json,
             include_dev: false,
-            repo_cache: None,
+            repo_cache: mozart_registry::cache::Cache::new(
+                std::env::temp_dir().join("mozart-test-cache"),
+                false,
+            ),
         })
         .await
         .expect("Lock file generation should succeed");

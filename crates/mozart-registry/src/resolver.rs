@@ -344,8 +344,8 @@ pub struct ResolveRequest {
     pub ignore_platform_reqs: bool,
     /// Specific platform requirements to ignore.
     pub ignore_platform_req_list: Vec<String>,
-    /// Optional on-disk repo cache for Packagist API responses.
-    pub repo_cache: Option<Cache>,
+    /// On-disk repo cache for Packagist API responses.
+    pub repo_cache: Cache,
     /// Temporary version constraint overrides (from --with flag).
     /// Maps package name (lowercase) to constraint string.
     pub temporary_constraints: HashMap<String, String>,
@@ -475,7 +475,7 @@ pub async fn resolve(request: &ResolveRequest) -> Result<Vec<ResolvedPackage>, R
         }
 
         // Fetch available versions from Packagist
-        let versions = packagist::fetch_package_versions(name, request.repo_cache.as_ref())
+        let versions = packagist::fetch_package_versions(name, &request.repo_cache)
             .await
             .map_err(|e| {
                 ResolveError::DependencyFetchError(format!("Failed to fetch {}: {}", name, e))
@@ -506,16 +506,15 @@ pub async fn resolve(request: &ResolveRequest) -> Result<Vec<ResolvedPackage>, R
             continue;
         }
 
-        let versions =
-            match packagist::fetch_package_versions(&name, request.repo_cache.as_ref()).await {
-                Ok(v) => v,
-                Err(_) => {
-                    // Virtual/meta packages (e.g. "psr/http-client-implementation")
-                    // don't exist on Packagist. They are resolved via provides/replaces
-                    // from other packages already in the pool.
-                    continue;
-                }
-            };
+        let versions = match packagist::fetch_package_versions(&name, &request.repo_cache).await {
+            Ok(v) => v,
+            Err(_) => {
+                // Virtual/meta packages (e.g. "psr/http-client-implementation")
+                // don't exist on Packagist. They are resolved via provides/replaces
+                // from other packages already in the pool.
+                continue;
+            }
+        };
 
         for pv in &versions {
             let inputs = packagist_to_pool_inputs(
@@ -965,7 +964,7 @@ mod tests {
             platform: PlatformConfig::new(),
             ignore_platform_reqs: false,
             ignore_platform_req_list: vec![],
-            repo_cache: None,
+            repo_cache: Cache::new(std::env::temp_dir().join("mozart-test-cache"), false),
             temporary_constraints: HashMap::new(),
             repositories: vec![],
         };

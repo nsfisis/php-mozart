@@ -25,6 +25,9 @@ pub async fn execute(
     cli: &super::Cli,
     console: &mozart_core::console::Console,
 ) -> anyhow::Result<()> {
+    let cache_config = mozart_registry::cache::build_cache_config(cli.no_cache);
+    let repo_cache = mozart_registry::cache::Cache::repo(&cache_config);
+
     let working_dir = match &cli.working_dir {
         Some(dir) => PathBuf::from(dir),
         None => std::env::current_dir()?,
@@ -48,7 +51,7 @@ pub async fn execute(
     let mut exit_code = 0i32;
 
     for package_name in &packages {
-        match resolve_url(package_name, &working_dir, args.homepage).await? {
+        match resolve_url(package_name, &working_dir, args.homepage, &repo_cache).await? {
             ResolveResult::Found(url) => {
                 if args.show {
                     console.write_stdout(
@@ -100,6 +103,7 @@ async fn resolve_url(
     package_name: &str,
     working_dir: &Path,
     prefer_homepage: bool,
+    repo_cache: &mozart_registry::cache::Cache,
 ) -> anyhow::Result<ResolveResult> {
     // 1. Check root package (composer.json)
     let composer_json = working_dir.join("composer.json");
@@ -134,7 +138,7 @@ async fn resolve_url(
     }
 
     // 3. Fall back to Packagist API
-    match mozart_registry::packagist::fetch_package_versions(package_name, None).await {
+    match mozart_registry::packagist::fetch_package_versions(package_name, repo_cache).await {
         Ok(versions) if !versions.is_empty() => {
             // Find the latest stable version (first non-dev, or fallback to first)
             let best = versions

@@ -212,21 +212,20 @@ pub fn parse_p2_response(json: &str, package_name: &str) -> anyhow::Result<Vec<P
 
 /// Fetch package version metadata from the Packagist p2 API.
 ///
-/// If `repo_cache` is provided, the JSON response is cached on disk under the
-/// key `"provider-{vendor}~{package}.json"`. Subsequent calls for the same
-/// package are served from cache without a network request.
+/// The JSON response is cached on disk under the key
+/// `"provider-{vendor}~{package}.json"`. Subsequent calls for the same
+/// package are served from cache without a network request (unless the
+/// cache is disabled).
 #[tracing::instrument(skip(repo_cache))]
 pub async fn fetch_package_versions(
     package_name: &str,
-    repo_cache: Option<&Cache>,
+    repo_cache: &Cache,
 ) -> anyhow::Result<Vec<PackagistVersion>> {
     // Build cache key: replace `/` with `~` per cache key convention
     let cache_key = format!("provider-{}.json", package_name.replace('/', "~"));
 
     // Check cache first
-    if let Some(cache) = repo_cache
-        && let Some(cached) = cache.read(&cache_key)
-    {
+    if let Some(cached) = repo_cache.read(&cache_key) {
         tracing::debug!("cache hit");
         return parse_p2_response(&cached, package_name);
     }
@@ -250,9 +249,7 @@ pub async fn fetch_package_versions(
     let body = response.text().await?;
 
     // Write to cache
-    if let Some(cache) = repo_cache {
-        let _ = cache.write(&cache_key, &body);
-    }
+    let _ = repo_cache.write(&cache_key, &body);
 
     parse_p2_response(&body, package_name)
 }

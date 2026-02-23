@@ -102,6 +102,9 @@ pub async fn execute(
     cli: &super::Cli,
     console: &mozart_core::console::Console,
 ) -> anyhow::Result<()> {
+    let cache_config = mozart_registry::cache::build_cache_config(cli.no_cache);
+    let repo_cache = mozart_registry::cache::Cache::repo(&cache_config);
+
     // Validate mutually exclusive level filters
     let level_count = args.major_only as u8 + args.minor_only as u8 + args.patch_only as u8;
     if level_count > 1 {
@@ -172,7 +175,7 @@ pub async fn execute(
         }
 
         // Fetch latest version from Packagist
-        let latest = match fetch_latest_version(&pkg.name).await {
+        let latest = match fetch_latest_version(&pkg.name, &repo_cache).await {
             Ok(v) => v,
             Err(_) => {
                 // Skip packages we can't fetch (platform packages, private, etc.)
@@ -323,11 +326,14 @@ fn load_locked_packages(working_dir: &Path, no_dev: bool) -> anyhow::Result<Vec<
 
 // ─── Version fetching ────────────────────────────────────────────────────────
 
-async fn fetch_latest_version(name: &str) -> anyhow::Result<PackageInfo> {
+async fn fetch_latest_version(
+    name: &str,
+    repo_cache: &mozart_registry::cache::Cache,
+) -> anyhow::Result<PackageInfo> {
     use mozart_core::package::Stability;
     use mozart_registry::version::find_best_candidate;
 
-    let versions = mozart_registry::packagist::fetch_package_versions(name, None).await?;
+    let versions = mozart_registry::packagist::fetch_package_versions(name, repo_cache).await?;
     let best = find_best_candidate(&versions, Stability::Stable)
         .ok_or_else(|| anyhow::anyhow!("No stable version found for {name}"))?;
 

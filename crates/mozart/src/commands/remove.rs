@@ -102,6 +102,9 @@ pub async fn execute(
     cli: &super::Cli,
     console: &mozart_core::console::Console,
 ) -> anyhow::Result<()> {
+    let cache_config = mozart_registry::cache::build_cache_config(cli.no_cache);
+    let repo_cache = mozart_registry::cache::Cache::repo(&cache_config);
+
     // Step 1: Validate inputs
     if args.packages.is_empty() && !args.unused {
         anyhow::bail!("Not enough arguments (missing: \"packages\").");
@@ -132,7 +135,7 @@ pub async fn execute(
     // When --unused is set with no explicit packages, we re-resolve to detect
     // packages in the lock file that are no longer reachable from root requirements.
     if args.unused && args.packages.is_empty() {
-        return remove_unused(&raw, &working_dir, args, console).await;
+        return remove_unused(&raw, &working_dir, args, &repo_cache, console).await;
     }
 
     // Step 5: Determine which packages to remove and remove them
@@ -250,7 +253,7 @@ pub async fn execute(
         platform: PlatformConfig::new(),
         ignore_platform_reqs: args.ignore_platform_reqs,
         ignore_platform_req_list: args.ignore_platform_req.clone(),
-        repo_cache: None,
+        repo_cache: repo_cache.clone(),
         temporary_constraints: HashMap::new(),
         repositories: raw.repositories.clone(),
     };
@@ -343,7 +346,7 @@ pub async fn execute(
         composer_json_content: composer_json_content.clone(),
         composer_json: raw.clone(),
         include_dev: dev_mode,
-        repo_cache: None,
+        repo_cache: repo_cache.clone(),
     })
     .await?;
 
@@ -455,6 +458,7 @@ async fn remove_unused(
     raw: &package::RawPackageData,
     working_dir: &std::path::Path,
     args: &RemoveArgs,
+    repo_cache: &mozart_registry::cache::Cache,
     console: &mozart_core::console::Console,
 ) -> anyhow::Result<()> {
     let lock_path = working_dir.join("composer.lock");
@@ -499,7 +503,7 @@ async fn remove_unused(
         platform: PlatformConfig::new(),
         ignore_platform_reqs: args.ignore_platform_reqs,
         ignore_platform_req_list: args.ignore_platform_req.clone(),
-        repo_cache: None,
+        repo_cache: repo_cache.clone(),
         temporary_constraints: HashMap::new(),
         repositories: raw.repositories.clone(),
     };
@@ -556,7 +560,7 @@ async fn remove_unused(
         composer_json_content,
         composer_json: raw.clone(),
         include_dev: dev_mode,
-        repo_cache: None,
+        repo_cache: repo_cache.clone(),
     })
     .await?;
 
@@ -831,7 +835,10 @@ mod tests {
             platform: mozart_registry::resolver::PlatformConfig::new(),
             ignore_platform_reqs: false,
             ignore_platform_req_list: vec![],
-            repo_cache: None,
+            repo_cache: mozart_registry::cache::Cache::new(
+                std::env::temp_dir().join("mozart-test-cache"),
+                false,
+            ),
             temporary_constraints: HashMap::new(),
             repositories: vec![],
         };
@@ -843,7 +850,10 @@ mod tests {
             composer_json_content: content.to_string(),
             composer_json: raw.clone(),
             include_dev: false,
-            repo_cache: None,
+            repo_cache: mozart_registry::cache::Cache::new(
+                std::env::temp_dir().join("mozart-test-cache"),
+                false,
+            ),
         })
         .await
         .expect("initial lock file generation should succeed");
@@ -868,7 +878,10 @@ mod tests {
             platform: mozart_registry::resolver::PlatformConfig::new(),
             ignore_platform_reqs: false,
             ignore_platform_req_list: vec![],
-            repo_cache: None,
+            repo_cache: mozart_registry::cache::Cache::new(
+                std::env::temp_dir().join("mozart-test-cache"),
+                false,
+            ),
             temporary_constraints: HashMap::new(),
             repositories: vec![],
         };
@@ -882,7 +895,10 @@ mod tests {
             composer_json_content: composer_json_content2,
             composer_json: raw,
             include_dev: false,
-            repo_cache: None,
+            repo_cache: mozart_registry::cache::Cache::new(
+                std::env::temp_dir().join("mozart-test-cache"),
+                false,
+            ),
         })
         .await
         .expect("post-remove lock file generation should succeed");
