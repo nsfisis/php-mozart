@@ -76,6 +76,7 @@ impl ForgejoDriver {
         )
     }
 
+    #[tracing::instrument(skip(self))]
     async fn api_get(&self, path: &str) -> Result<serde_json::Value> {
         let url = self.api_url(path);
         let mut req = self
@@ -87,6 +88,7 @@ impl ForgejoDriver {
             req = req.header(AUTHORIZATION, format!("token {token}"));
         }
         let response = req.send().await?;
+        tracing::debug!(status = %response.status(), %url, "Forgejo API response");
         if !response.status().is_success() {
             bail!(
                 "Forgejo API request to {} failed: {}",
@@ -97,6 +99,7 @@ impl ForgejoDriver {
         Ok(response.json().await?)
     }
 
+    #[tracing::instrument(skip(self))]
     async fn api_get_paginated(&self, path: &str) -> Result<Vec<serde_json::Value>> {
         let mut items = Vec::new();
         let mut page = 1;

@@ -20,4 +20,5 @@ sha1.workspace = true
 tar.workspace = true
 tempfile.workspace = true
 tokio.workspace = true
+tracing.workspace = true
 zip.workspace = true

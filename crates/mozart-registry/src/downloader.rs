@@ -79,6 +79,7 @@ impl DownloadProgress {
 /// the `Content-Length` response header.
 /// If `files_cache` is provided, the downloaded bytes are cached by URL; cache hits skip
 /// the network request entirely.
+#[tracing::instrument(skip(expected_shasum, progress, files_cache))]
 pub async fn download_dist(
     url: &str,
     expected_shasum: Option<&str>,
@@ -100,10 +101,12 @@ pub async fn download_dist(
             hasher.update(&cached_bytes);
             let computed = format!("{:x}", hasher.finalize());
             if computed == shasum {
+                tracing::debug!("cache hit");
                 return Ok(cached_bytes);
             }
             // Checksum mismatch — discard cache, re-download
         } else {
+            tracing::debug!("cache hit");
             return Ok(cached_bytes);
         }
     }
@@ -112,6 +115,7 @@ pub async fn download_dist(
         .user_agent(mozart_core::http::user_agent())
         .build()?;
     let response = client.get(url).send().await?;
+    tracing::debug!(status = %response.status(), "received response");
 
     if !response.status().is_success() {
         anyhow::bail!(
@@ -136,6 +140,8 @@ pub async fn download_dist(
     } else {
         response.bytes().await?.to_vec()
     };
+
+    tracing::debug!(size = bytes.len(), "download complete");
 
     // Verify SHA-1 checksum if provided
     if let Some(shasum) = expected_shasum

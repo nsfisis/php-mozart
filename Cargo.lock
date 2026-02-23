@@ -1184,6 +1184,7 @@ dependencies = [
  "tar",
  "tempfile",
  "tokio",
+ "tracing",
  "zip",
 ]
 
@@ -1222,6 +1223,7 @@ dependencies = [
  "sha1",
  "tempfile",
  "tokio",
+ "tracing",
  "url",
 ]
 

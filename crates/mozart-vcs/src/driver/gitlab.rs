@@ -80,6 +80,7 @@ impl GitLabDriver {
         )
     }
 
+    #[tracing::instrument(skip(self))]
     async fn api_get(&self, path: &str) -> Result<serde_json::Value> {
         let url = self.api_url(path);
         let mut req = self
@@ -93,6 +94,7 @@ impl GitLabDriver {
         }
 
         let response = req.send().await?;
+        tracing::debug!(status = %response.status(), %url, "GitLab API response");
         if !response.status().is_success() {
             bail!(
                 "GitLab API request to {} failed with status {}",
@@ -103,6 +105,7 @@ impl GitLabDriver {
         Ok(response.json().await?)
     }
 
+    #[tracing::instrument(skip(self))]
     async fn api_get_paginated(&self, path: &str) -> Result<Vec<serde_json::Value>> {
         let mut items = Vec::new();
         let mut page = 1;

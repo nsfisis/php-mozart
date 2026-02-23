@@ -62,6 +62,7 @@ impl BitbucketDriver {
         )
     }
 
+    #[tracing::instrument(skip(self))]
     async fn api_get(&self, path: &str) -> Result<serde_json::Value> {
         let url = self.api_url(path);
         let mut req = self
@@ -76,6 +77,7 @@ impl BitbucketDriver {
         }
 
         let response = req.send().await?;
+        tracing::debug!(status = %response.status(), %url, "Bitbucket API response");
         if !response.status().is_success() {
             bail!(
                 "Bitbucket API request to {} failed: {}",
@@ -86,6 +88,7 @@ impl BitbucketDriver {
         Ok(response.json().await?)
     }
 
+    #[tracing::instrument(skip(self))]
     async fn api_get_paginated(&self, path: &str) -> Result<Vec<serde_json::Value>> {
         let mut items = Vec::new();
         let mut next_url = Some(self.api_url(path));
@@ -101,6 +104,7 @@ impl BitbucketDriver {
                 req = req.header(AUTHORIZATION, format!("Basic {key}:{secret}"));
             }
             let response = req.send().await?;
+            tracing::debug!(status = %response.status(), %url, "Bitbucket API paginated response");
             if !response.status().is_success() {
                 break;
             }

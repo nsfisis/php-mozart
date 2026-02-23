@@ -215,6 +215,7 @@ pub fn parse_p2_response(json: &str, package_name: &str) -> anyhow::Result<Vec<P
 /// If `repo_cache` is provided, the JSON response is cached on disk under the
 /// key `"provider-{vendor}~{package}.json"`. Subsequent calls for the same
 /// package are served from cache without a network request.
+#[tracing::instrument(skip(repo_cache))]
 pub async fn fetch_package_versions(
     package_name: &str,
     repo_cache: Option<&Cache>,
@@ -226,15 +227,18 @@ pub async fn fetch_package_versions(
     if let Some(cache) = repo_cache
         && let Some(cached) = cache.read(&cache_key)
     {
+        tracing::debug!("cache hit");
         return parse_p2_response(&cached, package_name);
     }
 
     // Cache miss — fetch from Packagist
     let url = format!("https://repo.packagist.org/p2/{package_name}.json");
+    tracing::debug!(%url, "fetching package metadata");
     let client = reqwest::Client::builder()
         .user_agent(mozart_core::http::user_agent())
         .build()?;
     let response = client.get(&url).send().await?;
+    tracing::debug!(status = %response.status(), "received response");
 
     if !response.status().is_success() {
         anyhow::bail!(
@@ -303,6 +307,7 @@ fn url_encode(s: &str) -> String {
 ///
 /// Fetches up to `SEARCH_MAX_PAGES` pages of results and returns the full list.
 /// An optional `package_type` filter can narrow results (e.g. `"library"`).
+#[tracing::instrument(fields(type_filter = package_type))]
 pub async fn search_packages(
     query: &str,
     package_type: Option<&str>,
@@ -318,7 +323,9 @@ pub async fn search_packages(
 
     loop {
         let response: SearchResponse = if let Some(ref url) = next_url {
+            tracing::debug!(%url, page, "fetching next page");
             let resp = client.get(url).send().await?;
+            tracing::debug!(status = %resp.status(), "received response");
             if !resp.status().is_success() {
                 anyhow::bail!("Packagist search request failed (HTTP {})", resp.status());
             }
@@ -331,7 +338,9 @@ pub async fn search_packages(
                 url.push_str(&url_encode(t));
             }
 
+            tracing::debug!(%url, "fetching search results");
             let resp = client.get(&url).send().await?;
+            tracing::debug!(status = %resp.status(), "received response");
             if !resp.status().is_success() {
                 anyhow::bail!("Packagist search request failed (HTTP {})", resp.status());
             }
@@ -415,6 +424,7 @@ pub struct SecurityAdvisoriesResponse {
 ///
 /// If the package list is very large (500+), requests are batched in chunks of
 /// 500 names per request and the results are merged.
+#[tracing::instrument(skip(package_names), fields(package_count = package_names.len()))]
 pub async fn fetch_security_advisories(
     package_names: &[&str],
 ) -> anyhow::Result<BTreeMap<String, Vec<SecurityAdvisory>>> {
@@ -433,12 +443,14 @@ pub async fn fetch_security_advisories(
             .collect::<Vec<_>>()
             .join("&");
 
+        tracing::debug!(chunk_size = chunk.len(), "fetching security advisories");
         let response = client
             .post("https://packagist.org/api/security-advisories/")
             .header("Content-Type", "application/x-www-form-urlencoded")
             .body(body)
             .send()
             .await?;
+        tracing::debug!(status = %response.status(), "received response");
 
         if !response.status().is_success() {
             anyhow::bail!(
