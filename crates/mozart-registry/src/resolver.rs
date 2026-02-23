@@ -497,7 +497,6 @@ pub async fn resolve(request: &ResolveRequest) -> Result<Vec<ResolvedPackage>, R
     // Explore transitive dependencies
     while let Some(name) = builder.next_pending() {
         if PackageName(name.clone()).is_platform() {
-            // Platform package: already added if available, skip fetching
             continue;
         }
 
@@ -531,7 +530,6 @@ pub async fn resolve(request: &ResolveRequest) -> Result<Vec<ResolvedPackage>, R
 
     // Build the pool
     let mut pool = builder.build();
-
     // Collect fixed package IDs
     let mut fixed_ids: Vec<u32> = Vec::new();
     for pkg in pool.packages() {

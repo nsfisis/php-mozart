@@ -114,13 +114,20 @@ impl RuleWatchGraph {
         // We look for rules watching the negation of the decided literal
         let literal = -decided_literal;
 
-        let Some(chain) = self.watch_chains.get(&literal).cloned() else {
+        if !self.watch_chains.contains_key(&literal) {
             return Ok(None);
-        };
+        }
 
-        // We need to process nodes; some may be moved to different chains
+        // Iterate the live chain. When a node is moved away (move_watch removes
+        // it from this chain), we stay at the same index since the Vec shrinks.
+        // When a node stays, we advance past it.
         let mut i = 0;
-        while i < chain.len() {
+        loop {
+            let chain = match self.watch_chains.get(&literal) {
+                Some(c) if i < c.len() => c,
+                _ => break,
+            };
+
             let node_idx = chain[i];
             let node = &self.nodes[node_idx];
             let rule_id = node.rule_id;
@@ -143,14 +150,9 @@ impl RuleWatchGraph {
                         .find(|&&rl| rl != literal && rl != other_watch && !decisions.conflict(rl));
 
                     if let Some(&alt_literal) = alternative {
-                        // Move watch from `literal` to `alt_literal`
+                        // Move watch from `literal` to `alt_literal`.
+                        // This removes node_idx from this chain, so don't increment i.
                         self.move_watch(literal, alt_literal, node_idx);
-                        // Don't increment i since the node was removed from this chain
-                        // We need to re-fetch the chain since it was modified
-                        let chain_ref = self.watch_chains.get(&literal);
-                        if chain_ref.is_none() || i >= chain_ref.unwrap().len() {
-                            break;
-                        }
                         continue;
                     }
 
@@ -174,11 +176,6 @@ impl RuleWatchGraph {
             }
 
             i += 1;
-            // Re-fetch chain in case it was modified
-            let chain_ref = self.watch_chains.get(&literal);
-            if chain_ref.is_none() || i >= chain_ref.unwrap().len() {
-                break;
-            }
         }
 
         Ok(None)

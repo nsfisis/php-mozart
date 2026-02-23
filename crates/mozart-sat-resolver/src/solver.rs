@@ -785,7 +785,6 @@ impl<'a> Solver<'a> {
 
                 if let Some(literal) = last_literal {
                     let last_l = last_level.unwrap();
-
                     self.branches[last_branch_index]
                         .0
                         .remove(last_branch_offset);
