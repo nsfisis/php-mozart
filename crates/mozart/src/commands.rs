@@ -87,7 +87,7 @@ pub struct Cli {
 
 #[derive(clap::Subcommand)]
 pub enum Commands {
-    /// Short information about Composer
+    /// Shows a short information about Mozart
     About(about::AboutArgs),
 
     /// Creates an archive of this composer package
@@ -100,14 +100,14 @@ pub enum Commands {
     #[command(alias = "home")]
     Browse(browse::BrowseArgs),
 
-    /// Increases the lower limit of your package version constraints
+    /// Increases the lower limit of your composer.json requirements to the currently installed versions
     Bump(bump::BumpArgs),
 
     /// Check that platform requirements are satisfied
     #[command(name = "check-platform-reqs")]
     CheckPlatformReqs(check_platform_reqs::CheckPlatformReqsArgs),
 
-    /// Clears Composer's internal package cache
+    /// Clears Mozart's internal package cache
     #[command(name = "clear-cache", alias = "clearcache", alias = "cc")]
     ClearCache(clear_cache::ClearCacheArgs),
 
@@ -138,7 +138,7 @@ pub enum Commands {
     /// Discover how to help fund the maintenance of your dependencies
     Fund(fund::FundArgs),
 
-    /// Allows running commands in the global Composer dir
+    /// Allows running commands in the global composer dir ($COMPOSER_HOME)
     Global(global::GlobalArgs),
 
     /// Creates a basic composer.json file in current directory
@@ -151,7 +151,7 @@ pub enum Commands {
     /// Shows information about licenses of dependencies
     Licenses(licenses::LicensesArgs),
 
-    /// Shows a list of installed packages that have updates available
+    /// Shows a list of installed packages that have updates available, including their latest version
     Outdated(outdated::OutdatedArgs),
 
     /// Shows which packages prevent the given package from being installed
@@ -165,7 +165,7 @@ pub enum Commands {
     #[command(alias = "rm", alias = "uninstall")]
     Remove(remove::RemoveArgs),
 
-    /// Manage repositories
+    /// Manages repositories
     #[command(alias = "repo")]
     Repository(repository::RepositoryArgs),
 
@@ -180,7 +180,7 @@ pub enum Commands {
     /// Searches for packages
     Search(search::SearchArgs),
 
-    /// Updates Composer to the latest version
+    /// Updates Mozart to the latest version
     #[command(name = "self-update", alias = "selfupdate")]
     SelfUpdate(self_update::SelfUpdateArgs),
 
@@ -197,7 +197,7 @@ pub enum Commands {
     )]
     Suggests(suggests::SuggestsArgs),
 
-    /// Updates your dependencies to the latest version according to composer.json
+    /// Updates your dependencies to the latest version according to composer.json, and updates the composer.lock file
     #[command(alias = "u", alias = "upgrade")]
     Update(update::UpdateArgs),
 
