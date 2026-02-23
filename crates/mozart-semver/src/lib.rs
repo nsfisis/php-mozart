@@ -668,6 +668,14 @@ fn parse_wildcard(s: &str) -> Result<VersionConstraint, String> {
 }
 
 /// Parse `1.0 - 2.0` hyphen range.
+///
+/// Follows Composer semantics:
+/// - If the upper bound is a **full** version (3+ numeric segments or has a
+///   pre-release suffix), the upper constraint is `<=upper`.
+/// - If the upper bound is **partial** (1 or 2 numeric segments without a
+///   pre-release suffix), the next significant release is computed and the
+///   upper constraint becomes `< next-dev`.  For example `8.5` → `< 8.6.0-dev`,
+///   `2` → `< 3.0.0-dev`.
 fn parse_hyphen_range(s: &str) -> Result<VersionConstraint, String> {
     let parts: Vec<&str> = s.splitn(2, " - ").collect();
     if parts.len() != 2 {
@@ -675,12 +683,64 @@ fn parse_hyphen_range(s: &str) -> Result<VersionConstraint, String> {
     }
 
     let lower_v = Version::parse_for_constraint(parts[0].trim())?;
-    let upper_v = Version::parse_for_constraint(parts[1].trim())?;
+
+    let upper_raw = parts[1].trim();
+    let upper_constraint = hyphen_upper_bound(upper_raw)?;
 
     Ok(VersionConstraint::And(vec![
         VersionConstraint::Single(Constraint::GreaterThanOrEqual(lower_v)),
-        VersionConstraint::Single(Constraint::LessThanOrEqual(upper_v)),
+        upper_constraint,
     ]))
+}
+
+/// Compute the upper-bound constraint for a hyphen range.
+fn hyphen_upper_bound(raw: &str) -> Result<VersionConstraint, String> {
+    // Strip leading 'v'/'V' for segment counting.
+    let stripped = raw
+        .strip_prefix('v')
+        .or_else(|| raw.strip_prefix('V'))
+        .unwrap_or(raw);
+
+    // Separate numeric part from any pre-release suffix (e.g. "1.2.3-beta1").
+    let (numeric_part, has_pre_release) =
+        match stripped.find(|c: char| c == '-' && !c.is_ascii_digit()) {
+            Some(_) => {
+                // There's a '-' that is NOT inside the " - " separator (already split).
+                // If it looks like a pre-release suffix, treat as full version.
+                let has_suffix = stripped.contains('-') && {
+                    let after_dash = &stripped[stripped.find('-').unwrap() + 1..];
+                    after_dash.chars().next().is_some_and(|c| c.is_alphabetic())
+                };
+                (stripped.split('-').next().unwrap_or(stripped), has_suffix)
+            }
+            None => (stripped, false),
+        };
+
+    let segments: Vec<&str> = numeric_part.split('.').collect();
+    let segment_count = segments.len();
+
+    if has_pre_release || segment_count >= 3 {
+        // Full version → inclusive upper bound.
+        let upper_v = Version::parse_for_constraint(raw)?;
+        return Ok(VersionConstraint::Single(Constraint::LessThanOrEqual(
+            upper_v,
+        )));
+    }
+
+    // Partial version → exclusive upper bound at the next significant release.
+    let upper_v = Version::parse_for_constraint(raw)?;
+    let next = match segment_count {
+        1 => {
+            // "2" → < 3.0.0.0-dev
+            Version::dev_boundary(upper_v.major + 1, 0, 0, 0)
+        }
+        _ => {
+            // "2.3" → < 2.4.0.0-dev
+            Version::dev_boundary(upper_v.major, upper_v.minor + 1, 0, 0)
+        }
+    };
+
+    Ok(VersionConstraint::Single(Constraint::LessThan(next)))
 }
 
 #[cfg(test)]
@@ -965,10 +1025,12 @@ mod tests {
 
     #[test]
     fn test_parse_hyphen_range() {
+        // "1.0 - 2.0" → >=1.0.0.0 <2.1.0.0-dev (upper is partial)
         let c = VersionConstraint::parse("1.0 - 2.0").unwrap();
         assert!(c.matches(&Version::parse("1.0.0").unwrap()));
         assert!(c.matches(&Version::parse("1.5.0").unwrap()));
         assert!(c.matches(&Version::parse("2.0.0").unwrap()));
+        assert!(c.matches(&Version::parse("2.0.5").unwrap()));
         assert!(!c.matches(&Version::parse("0.9.0").unwrap()));
         assert!(!c.matches(&Version::parse("2.1.0").unwrap()));
     }
@@ -1483,9 +1545,11 @@ mod tests {
 
     #[test]
     fn test_hyphen_range_partial_to() {
-        // "1.0 - 2.0": upper = <=2.0.0 (inclusive)
+        // "1.0 - 2.0": upper is partial → <2.1.0-dev (includes all 2.0.x)
         assert!(satisfies("1.0 - 2.0", "2.0.0"));
-        assert!(!satisfies("1.0 - 2.0", "2.0.1"));
+        assert!(satisfies("1.0 - 2.0", "2.0.1"));
+        assert!(satisfies("1.0 - 2.0", "2.0.99"));
+        assert!(!satisfies("1.0 - 2.0", "2.1.0"));
     }
 
     #[test]
@@ -1956,10 +2020,28 @@ mod tests {
 
     #[test]
     fn test_hyphen_range_partial_upper_two_segment() {
-        // "1.0 - 2": upper is <=2.0.0 (parse "2" → 2.0.0.0, inclusive)
+        // "1.0 - 2": upper is partial (1 segment) → <3.0.0.0-dev
         assert!(satisfies("1.0 - 2", "2.0.0"));
-        assert!(!satisfies("1.0 - 2", "2.0.1"));
-        assert!(!satisfies("1.0 - 2", "2.1.0"));
+        assert!(satisfies("1.0 - 2", "2.0.1"));
+        assert!(satisfies("1.0 - 2", "2.1.0"));
+        assert!(satisfies("1.0 - 2", "2.99.99"));
+        assert!(!satisfies("1.0 - 2", "3.0.0"));
+    }
+
+    #[test]
+    fn test_hyphen_range_php_version_constraint() {
+        // "8.1 - 8.5" as used by nette/schema → >=8.1.0.0 <8.6.0.0-dev
+        assert!(satisfies("8.1 - 8.5", "8.1.0"));
+        assert!(satisfies("8.1 - 8.5", "8.3.0"));
+        assert!(satisfies("8.1 - 8.5", "8.5.0"));
+        assert!(satisfies("8.1 - 8.5", "8.5.3"));
+        assert!(!satisfies("8.1 - 8.5", "8.0.99"));
+        assert!(!satisfies("8.1 - 8.5", "8.6.0"));
+        assert!(!satisfies("8.1 - 8.5", "9.0.0"));
+
+        // Full upper bound: "1.0.0 - 2.0.0" → >=1.0.0 <=2.0.0
+        assert!(satisfies("1.0.0 - 2.0.0", "2.0.0"));
+        assert!(!satisfies("1.0.0 - 2.0.0", "2.0.1"));
     }
 
     #[test]
