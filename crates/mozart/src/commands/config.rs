@@ -948,7 +948,9 @@ fn execute_read(
                      or provide a setting key."
                 )
             );
-            std::process::exit(1);
+            return Err(mozart_core::exit_code::bail_silent(
+                mozart_core::exit_code::GENERAL_ERROR,
+            ));
         }
         Some(key) => {
             // 1. Repository query

@@ -1,5 +1,6 @@
 use clap::Args;
 use mozart_core::console_format;
+use mozart_core::exit_code;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -78,7 +79,7 @@ pub async fn execute(
     }
 
     if exit_code != 0 {
-        std::process::exit(exit_code);
+        return Err(exit_code::bail_silent(exit_code));
     }
 
     Ok(())

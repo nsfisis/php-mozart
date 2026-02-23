@@ -153,7 +153,9 @@ pub async fn execute(
 
     if selected.is_empty() {
         eprintln!("Found no packages to reinstall, aborting.");
-        std::process::exit(1);
+        return Err(mozart_core::exit_code::bail_silent(
+            mozart_core::exit_code::GENERAL_ERROR,
+        ));
     }
 
     // Step 6: For each selected package, find its locked metadata.

@@ -157,7 +157,7 @@ pub async fn execute(
     }
 
     if args.strict_ambiguous && result.has_ambiguous_classes {
-        std::process::exit(2);
+        return Err(mozart_core::exit_code::bail_silent(2));
     }
 
     Ok(())

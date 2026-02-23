@@ -121,7 +121,9 @@ pub async fn execute(
                 "<error>Unsupported format \"{format}\". See help for supported formats.</error>"
             )
         );
-        std::process::exit(1);
+        return Err(mozart_core::exit_code::bail_silent(
+            mozart_core::exit_code::GENERAL_ERROR,
+        ));
     }
 
     let (all_results, _total) =

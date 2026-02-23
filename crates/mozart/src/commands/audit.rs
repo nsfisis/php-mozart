@@ -162,7 +162,7 @@ pub async fn execute(
     };
 
     if exit_code != 0 {
-        std::process::exit(exit_code);
+        return Err(mozart_core::exit_code::bail_silent(exit_code));
     }
 
     Ok(())
