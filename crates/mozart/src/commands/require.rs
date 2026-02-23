@@ -873,6 +873,7 @@ pub async fn execute(
                 download_only: false,
                 prefer_source: args.prefer_source,
             },
+            console,
         )
         .await?;
     }

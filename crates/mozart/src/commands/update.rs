@@ -682,6 +682,18 @@ pub fn apply_patch_only(
         .collect()
 }
 
+/// Determine whether a version change is a downgrade.
+///
+/// Parses both versions and compares them; returns true if `new_version` is
+/// lower than `old_version`.
+fn is_downgrade(old_version: &str, new_version: &str) -> bool {
+    use mozart_semver::Version;
+    match (Version::parse(old_version), Version::parse(new_version)) {
+        (Ok(old), Ok(new)) => new < old,
+        _ => false,
+    }
+}
+
 /// Extract (major, minor) from a normalized version string.
 fn major_minor(version: &str) -> (u64, u64) {
     let parts: Vec<&str> = version.split('.').collect();
@@ -845,8 +857,6 @@ pub async fn execute(
     } else {
         console.info("Updating dependencies");
     }
-    console.info("Resolving dependencies...");
-
     let mut resolved = match resolver::resolve(&request).await {
         Ok(packages) => packages,
         Err(e) => {
@@ -1013,7 +1023,7 @@ pub async fn execute(
         .collect();
 
     console.info(&format!(
-        "Package operations: {} install{}, {} update{}, {} removal{}",
+        "Lock file operations: {} install{}, {} update{}, {} removal{}",
         installs.len(),
         if installs.len() == 1 { "" } else { "s" },
         updates.len(),
@@ -1023,44 +1033,60 @@ pub async fn execute(
     ));
 
     // Print individual change lines
-    let prefix = if args.dry_run { "Would" } else { "" };
     for change in &changes {
         match &change.kind {
             ChangeKind::Remove { old_version } => {
                 if args.dry_run {
-                    console.info(&format!(
-                        "  - {} remove {} ({})",
-                        prefix, change.name, old_version
+                    console.info(&console_format!(
+                        "  - Would remove <info>{}</info> (<comment>{}</comment>)",
+                        change.name,
+                        old_version
                     ));
                 } else {
-                    console.info(&format!("  - Removing {} ({})", change.name, old_version));
+                    console.info(&console_format!(
+                        "  - Removing <info>{}</info> (<comment>{}</comment>)",
+                        change.name,
+                        old_version
+                    ));
                 }
             }
             ChangeKind::Install { new_version } => {
                 if args.dry_run {
-                    console.info(&format!(
-                        "  - {} install {} ({})",
-                        prefix, change.name, new_version
+                    console.info(&console_format!(
+                        "  - Would lock <info>{}</info> (<comment>{}</comment>)",
+                        change.name,
+                        new_version
                     ));
                 } else {
-                    console.info(&format!("  - Installing {} ({})", change.name, new_version));
+                    console.info(&console_format!(
+                        "  - Locking <info>{}</info> (<comment>{}</comment>)",
+                        change.name,
+                        new_version
+                    ));
                 }
             }
             ChangeKind::Update {
                 old_version,
                 new_version,
             } => {
-                if args.dry_run {
-                    console.info(&format!(
-                        "  - {} update {} ({} => {})",
-                        prefix, change.name, old_version, new_version
-                    ));
+                let direction = if is_downgrade(old_version, new_version) {
+                    if args.dry_run {
+                        "Would downgrade"
+                    } else {
+                        "Downgrading"
+                    }
+                } else if args.dry_run {
+                    "Would upgrade"
                 } else {
-                    console.info(&format!(
-                        "  - Updating {} ({} => {})",
-                        change.name, old_version, new_version
-                    ));
-                }
+                    "Upgrading"
+                };
+                console.info(&console_format!(
+                    "  - {} <info>{}</info> (<comment>{}</comment> => <comment>{}</comment>)",
+                    direction,
+                    change.name,
+                    old_version,
+                    new_version
+                ));
             }
             ChangeKind::Unchanged => {}
         }
@@ -1191,6 +1217,7 @@ pub async fn execute(
                 download_only: false,
                 prefer_source,
             },
+            console,
         )
         .await?;
     }

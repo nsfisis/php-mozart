@@ -353,6 +353,7 @@ pub async fn install_from_lock(
     working_dir: &Path,
     vendor_dir: &Path,
     config: &InstallConfig,
+    console: &mozart_core::console::Console,
 ) -> anyhow::Result<()> {
     let dev_mode = config.dev_mode;
 
@@ -365,11 +366,11 @@ pub async fn install_from_lock(
 
     // Print install mode header
     if dev_mode {
-        eprintln!("Installing dependencies from lock file (including require-dev)");
+        console.info("Installing dependencies from lock file (including require-dev)");
     } else {
-        eprintln!("Installing dependencies from lock file");
+        console.info("Installing dependencies from lock file");
     }
-    eprintln!("Verifying lock file contents can be installed on current platform.");
+    console.info("Verifying lock file contents can be installed on current platform.");
 
     // Step 2: Warn about platform requirements
     warn_platform_requirements(
@@ -395,20 +396,17 @@ pub async fn install_from_lock(
         .collect();
 
     if installs.is_empty() && updates.is_empty() && removals.is_empty() {
-        eprintln!("Nothing to install, update or remove");
+        console.info("Nothing to install, update or remove");
     } else {
-        eprintln!(
-            "{}",
-            console_format!(
-                "<info>Package operations: {} install{}, {} update{}, {} removal{}</info>",
-                installs.len(),
-                if installs.len() == 1 { "" } else { "s" },
-                updates.len(),
-                if updates.len() == 1 { "" } else { "s" },
-                removals.len(),
-                if removals.len() == 1 { "" } else { "s" },
-            )
-        );
+        console.info(&console_format!(
+            "<info>Package operations: {} install{}, {} update{}, {} removal{}</info>",
+            installs.len(),
+            if installs.len() == 1 { "" } else { "s" },
+            updates.len(),
+            if updates.len() == 1 { "" } else { "s" },
+            removals.len(),
+            if removals.len() == 1 { "" } else { "s" },
+        ));
     }
 
     // Step 6: Execute operations (unless dry_run)
@@ -417,25 +415,41 @@ pub async fn install_from_lock(
             match action {
                 Action::Skip => {}
                 Action::Install => {
-                    eprintln!("  - Would install {} ({})", pkg.name, pkg.version);
+                    console.info(&console_format!(
+                        "  - Would install <info>{}</info> (<comment>{}</comment>)",
+                        pkg.name,
+                        pkg.version
+                    ));
                 }
                 Action::Update => {
-                    eprintln!("  - Would update {} ({})", pkg.name, pkg.version);
+                    console.info(&console_format!(
+                        "  - Would upgrade <info>{}</info> (<comment>{}</comment>)",
+                        pkg.name,
+                        pkg.version
+                    ));
                 }
             }
         }
         for name in &removals {
-            eprintln!("  - Would remove {name}");
+            console.info(&console_format!("  - Would remove <info>{}</info>", name));
         }
     } else {
         for (pkg, action) in &ops {
             match action {
                 Action::Skip => continue,
                 Action::Install => {
-                    eprintln!("  - Installing {} ({})", pkg.name, pkg.version);
+                    console.info(&console_format!(
+                        "  - Installing <info>{}</info> (<comment>{}</comment>)",
+                        pkg.name,
+                        pkg.version
+                    ));
                 }
                 Action::Update => {
-                    eprintln!("  - Updating {} ({})", pkg.name, pkg.version);
+                    console.info(&console_format!(
+                        "  - Upgrading <info>{}</info> (<comment>{}</comment>)",
+                        pkg.name,
+                        pkg.version
+                    ));
                 }
             }
 
@@ -485,7 +499,7 @@ pub async fn install_from_lock(
 
         // Handle removals
         for name in &removals {
-            eprintln!("  - Removing {name}");
+            console.info(&console_format!("  - Removing <info>{}</info>", name));
             let pkg_dir = vendor_dir.join(name);
             if pkg_dir.exists() {
                 std::fs::remove_dir_all(&pkg_dir)?;
@@ -516,22 +530,16 @@ pub async fn install_from_lock(
 
         // Step 9: Generate autoloader (unless no_autoloader or download_only)
         if !config.no_autoloader && !config.download_only {
-            eprintln!("Generating autoload files");
+            console.info("Generating autoload files");
 
             if config.classmap_authoritative {
-                eprintln!(
-                    "{}",
-                    console_format!(
-                        "<info>Classmap-authoritative mode: autoloader will only look up classes in the classmap.</info>"
-                    )
-                );
+                console.info(&console_format!(
+                    "<info>Classmap-authoritative mode: autoloader will only look up classes in the classmap.</info>"
+                ));
             } else if config.optimize_autoloader {
-                eprintln!(
-                    "{}",
-                    console_format!(
-                        "<info>Optimize autoloader: classmap scanning is not yet fully supported. PSR-4/PSR-0 autoloading will still be used.</info>"
-                    )
-                );
+                console.info(&console_format!(
+                    "<info>Optimize autoloader: classmap scanning is not yet fully supported. PSR-4/PSR-0 autoloading will still be used.</info>"
+                ));
             }
 
             let suffix = lock.content_hash.clone();
@@ -551,8 +559,6 @@ pub async fn install_from_lock(
                     platform_check: mozart_autoload::autoload::PlatformCheckMode::Full,
                     ignore_platform_reqs: config.ignore_platform_reqs,
                 })?;
-
-            eprintln!("Generated autoload files");
         }
     }
 
@@ -690,6 +696,7 @@ pub async fn execute(
             download_only: args.download_only,
             prefer_source,
         },
+        console,
     )
     .await
 }

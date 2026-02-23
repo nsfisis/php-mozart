@@ -441,6 +441,7 @@ pub async fn execute(
                 download_only: false,
                 prefer_source: false,
             },
+            console,
         )
         .await?;
     }
@@ -582,6 +583,7 @@ async fn remove_unused(
                 download_only: false,
                 prefer_source: false,
             },
+            console,
         )
         .await?;
     }
