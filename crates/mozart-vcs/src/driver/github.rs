@@ -65,8 +65,7 @@ impl GitHubDriver {
         )
     }
 
-    fn api_get(&self, path: &str) -> Result<serde_json::Value> {
-        let handle = tokio::runtime::Handle::current();
+    async fn api_get(&self, path: &str) -> Result<serde_json::Value> {
         let url = self.api_url(path);
         let mut req = self
             .http_client
@@ -78,7 +77,7 @@ impl GitHubDriver {
             req = req.header(AUTHORIZATION, format!("token {token}"));
         }
 
-        let response = handle.block_on(req.send())?;
+        let response = req.send().await?;
         if !response.status().is_success() {
             bail!(
                 "GitHub API request to {} failed with status {}",
@@ -86,11 +85,10 @@ impl GitHubDriver {
                 response.status()
             );
         }
-        Ok(handle.block_on(response.json())?)
+        Ok(response.json().await?)
     }
 
-    fn api_get_paginated(&self, path: &str) -> Result<Vec<serde_json::Value>> {
-        let handle = tokio::runtime::Handle::current();
+    async fn api_get_paginated(&self, path: &str) -> Result<Vec<serde_json::Value>> {
         let mut items = Vec::new();
         let mut page = 1;
         loop {
@@ -108,12 +106,12 @@ impl GitHubDriver {
                 req = req.header(AUTHORIZATION, format!("token {token}"));
             }
 
-            let response = handle.block_on(req.send())?;
+            let response = req.send().await?;
             if !response.status().is_success() {
                 bail!("GitHub API paginated request failed: {}", response.status());
             }
 
-            let batch: Vec<serde_json::Value> = handle.block_on(response.json())?;
+            let batch: Vec<serde_json::Value> = response.json().await?;
             if batch.is_empty() {
                 break;
             }
@@ -127,11 +125,11 @@ impl GitHubDriver {
         Ok(items)
     }
 
-    fn use_git_fallback(&mut self) -> Result<&mut GitDriver> {
+    async fn use_git_fallback(&mut self) -> Result<&mut GitDriver> {
         if self.git_driver.is_none() {
             let git_url = format!("https://github.com/{}/{}.git", self.owner, self.repo);
             let mut driver = GitDriver::new(&git_url, self.config.clone());
-            driver.initialize()?;
+            driver.initialize().await?;
             self.git_driver = Some(Box::new(driver));
         }
         Ok(self.git_driver.as_mut().unwrap())
@@ -139,9 +137,9 @@ impl GitHubDriver {
 }
 
 impl VcsDriver for GitHubDriver {
-    fn initialize(&mut self) -> Result<()> {
+    async fn initialize(&mut self) -> Result<()> {
         // Try to fetch repo data from API
-        match self.api_get("") {
+        match self.api_get("").await {
             Ok(data) => {
                 let default_branch = data["default_branch"]
                     .as_str()
@@ -152,7 +150,7 @@ impl VcsDriver for GitHubDriver {
             }
             Err(_) => {
                 self.api_failed = true;
-                let driver = self.use_git_fallback()?;
+                let driver = self.use_git_fallback().await?;
                 self.root_identifier = Some(driver.root_identifier().to_string());
             }
         }
@@ -163,14 +161,14 @@ impl VcsDriver for GitHubDriver {
         self.root_identifier.as_deref().unwrap_or("main")
     }
 
-    fn branches(&mut self) -> Result<&BTreeMap<String, String>> {
+    async fn branches(&mut self) -> Result<&BTreeMap<String, String>> {
         if self.branches.is_none() {
             if self.api_failed {
-                let driver = self.use_git_fallback()?;
-                let branches = driver.branches()?.clone();
+                let driver = self.use_git_fallback().await?;
+                let branches = driver.branches().await?.clone();
                 self.branches = Some(branches);
             } else {
-                let items = self.api_get_paginated("/branches")?;
+                let items = self.api_get_paginated("/branches").await?;
                 let mut branches = BTreeMap::new();
                 for item in items {
                     if let (Some(name), Some(sha)) =
@@ -185,14 +183,14 @@ impl VcsDriver for GitHubDriver {
         Ok(self.branches.as_ref().unwrap())
     }
 
-    fn tags(&mut self) -> Result<&BTreeMap<String, String>> {
+    async fn tags(&mut self) -> Result<&BTreeMap<String, String>> {
         if self.tags.is_none() {
             if self.api_failed {
-                let driver = self.use_git_fallback()?;
-                let tags = driver.tags()?.clone();
+                let driver = self.use_git_fallback().await?;
+                let tags = driver.tags().await?.clone();
                 self.tags = Some(tags);
             } else {
-                let items = self.api_get_paginated("/tags")?;
+                let items = self.api_get_paginated("/tags").await?;
                 let mut tags = BTreeMap::new();
                 for item in items {
                     if let (Some(name), Some(sha)) =
@@ -207,12 +205,15 @@ impl VcsDriver for GitHubDriver {
         Ok(self.tags.as_ref().unwrap())
     }
 
-    fn composer_information(&mut self, identifier: &str) -> Result<Option<serde_json::Value>> {
+    async fn composer_information(
+        &mut self,
+        identifier: &str,
+    ) -> Result<Option<serde_json::Value>> {
         if let Some(cached) = self.info_cache.get(identifier) {
             return Ok(cached.clone());
         }
 
-        let content = self.file_content("composer.json", identifier)?;
+        let content = self.file_content("composer.json", identifier).await?;
         let value = match content {
             Some(c) => serde_json::from_str(&c).ok(),
             None => None,
@@ -223,7 +224,7 @@ impl VcsDriver for GitHubDriver {
         Ok(value)
     }
 
-    fn file_content(&self, file: &str, identifier: &str) -> Result<Option<String>> {
+    async fn file_content(&self, file: &str, identifier: &str) -> Result<Option<String>> {
         if self.api_failed {
             // Can't use API, would need git fallback
             // For simplicity, return None (git_driver is mutable)
@@ -231,7 +232,7 @@ impl VcsDriver for GitHubDriver {
         }
 
         let path = format!("/contents/{}?ref={}", file, identifier);
-        match self.api_get(&path) {
+        match self.api_get(&path).await {
             Ok(data) => {
                 if let Some(content) = data["content"].as_str() {
                     // GitHub returns base64-encoded content
@@ -245,13 +246,13 @@ impl VcsDriver for GitHubDriver {
         }
     }
 
-    fn change_date(&self, identifier: &str) -> Result<Option<String>> {
+    async fn change_date(&self, identifier: &str) -> Result<Option<String>> {
         if self.api_failed {
             return Ok(None);
         }
 
         let path = format!("/commits/{}", identifier);
-        match self.api_get(&path) {
+        match self.api_get(&path).await {
             Ok(data) => {
                 let date = data["commit"]["committer"]["date"]
                     .as_str()
@@ -262,7 +263,7 @@ impl VcsDriver for GitHubDriver {
         }
     }
 
-    fn dist(&self, identifier: &str) -> Result<Option<DistReference>> {
+    async fn dist(&self, identifier: &str) -> Result<Option<DistReference>> {
         Ok(Some(DistReference {
             dist_type: "zip".to_string(),
             url: format!(
@@ -286,9 +287,9 @@ impl VcsDriver for GitHubDriver {
         &self.url
     }
 
-    fn cleanup(&mut self) -> Result<()> {
+    async fn cleanup(&mut self) -> Result<()> {
         if let Some(driver) = &mut self.git_driver {
-            driver.cleanup()?;
+            driver.cleanup().await?;
         }
         Ok(())
     }

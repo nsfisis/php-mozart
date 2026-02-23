@@ -407,110 +407,107 @@ pub async fn resolve(request: &ResolveRequest) -> Result<Vec<ResolvedPackage>, R
         root_requires.insert(name.clone(), Some(constraint.clone()));
     }
 
-    // Capture data needed by spawn_blocking
-    let handle = tokio::runtime::Handle::current();
-    let repo_cache = request.repo_cache.clone();
+    // 2. Build pool, generate rules, and solve
+    let mut builder = PoolBuilder::new();
+
+    // Set up ignore list for platform requirements
+    let mut ignore_set: HashSet<String> = HashSet::new();
+    if request.ignore_platform_reqs {
+        // We'll skip platform deps in the loop below
+    }
+    for name in &request.ignore_platform_req_list {
+        ignore_set.insert(name.clone());
+    }
+    builder.set_ignore_platform_reqs(ignore_set.clone());
+
+    // Add platform packages as fixed entries
     let platform_config = request.platform.to_versions();
-    let minimum_stability = request.minimum_stability;
-    let stability_flags = request.stability_flags.clone();
-    let prefer_stable = request.prefer_stable;
-    let prefer_lowest = request.prefer_lowest;
-    let ignore_platform_reqs = request.ignore_platform_reqs;
-    let ignore_platform_req_list = request.ignore_platform_req_list.clone();
-    let vcs_repositories = request.repositories.clone();
-
-    // 2. Build pool, generate rules, and solve on a blocking thread
-    tokio::task::spawn_blocking(move || -> Result<Vec<ResolvedPackage>, ResolveError> {
-        let mut builder = PoolBuilder::new();
-
-        // Set up ignore list for platform requirements
-        let mut ignore_set: HashSet<String> = HashSet::new();
-        if ignore_platform_reqs {
-            // We'll skip platform deps in the loop below
+    let mut fixed_packages_by_name: HashMap<String, u32> = HashMap::new();
+    for (name, version) in &platform_config {
+        if should_skip_platform_dep(
+            name,
+            request.ignore_platform_reqs,
+            &request.ignore_platform_req_list,
+        ) {
+            continue;
         }
-        for name in &ignore_platform_req_list {
-            ignore_set.insert(name.clone());
-        }
-        builder.set_ignore_platform_reqs(ignore_set.clone());
+        let input = PoolPackageInput {
+            name: name.clone(),
+            version: version.to_string(),
+            pretty_version: version.to_string(),
+            requires: vec![],
+            replaces: vec![],
+            provides: vec![],
+            conflicts: vec![],
+            is_fixed: true,
+        };
+        builder.add_package(input);
+    }
 
-        // Add platform packages as fixed entries
-        let mut fixed_packages_by_name: HashMap<String, u32> = HashMap::new();
-        for (name, version) in &platform_config {
-            if should_skip_platform_dep(name, ignore_platform_reqs, &ignore_platform_req_list) {
-                continue;
-            }
-            let input = PoolPackageInput {
-                name: name.clone(),
-                version: version.to_string(),
-                pretty_version: version.to_string(),
-                requires: vec![],
-                replaces: vec![],
-                provides: vec![],
-                conflicts: vec![],
-                is_fixed: true,
-            };
+    // Scan VCS repositories and collect packages from them
+    let vcs_packages = vcs_bridge::scan_vcs_repositories(&request.repositories).await;
+    let mut vcs_package_names: HashSet<String> = HashSet::new();
+    for vpkg in &vcs_packages {
+        vcs_package_names.insert(vpkg.name.clone());
+    }
+
+    // Add VCS packages to the pool
+    for vpkg in &vcs_packages {
+        let inputs = vcs_bridge::vcs_to_pool_inputs(
+            vpkg,
+            request.minimum_stability,
+            &request.stability_flags,
+        );
+        for input in inputs {
             builder.add_package(input);
         }
+    }
 
-        // Scan VCS repositories and collect packages from them
-        let vcs_repos = &vcs_repositories;
-        let vcs_packages = vcs_bridge::scan_vcs_repositories(vcs_repos);
-        let mut vcs_package_names: HashSet<String> = HashSet::new();
-        for vpkg in &vcs_packages {
-            vcs_package_names.insert(vpkg.name.clone());
+    // Seed the builder with packages for root requirements
+    for name in root_requires.keys() {
+        if PackageName(name.clone()).is_platform() {
+            continue; // platform packages already added
         }
 
-        // Add VCS packages to the pool
-        for vpkg in &vcs_packages {
-            let inputs = vcs_bridge::vcs_to_pool_inputs(vpkg, minimum_stability, &stability_flags);
+        // Skip packages already provided by VCS repositories
+        if vcs_package_names.contains(name) {
+            continue;
+        }
+
+        // Fetch available versions from Packagist
+        let versions = packagist::fetch_package_versions(name, request.repo_cache.as_ref())
+            .await
+            .map_err(|e| {
+                ResolveError::DependencyFetchError(format!("Failed to fetch {}: {}", name, e))
+            })?;
+
+        for pv in &versions {
+            let inputs = packagist_to_pool_inputs(
+                name,
+                pv,
+                request.minimum_stability,
+                &request.stability_flags,
+            );
             for input in inputs {
                 builder.add_package(input);
             }
         }
+    }
 
-        // Seed the builder with packages for root requirements
-        for name in root_requires.keys() {
-            if PackageName(name.clone()).is_platform() {
-                continue; // platform packages already added
-            }
-
-            // Skip packages already provided by VCS repositories
-            if vcs_package_names.contains(name) {
-                continue;
-            }
-
-            // Fetch available versions from Packagist
-            let versions = handle
-                .block_on(packagist::fetch_package_versions(name, repo_cache.as_ref()))
-                .map_err(|e| {
-                    ResolveError::DependencyFetchError(format!("Failed to fetch {}: {}", name, e))
-                })?;
-
-            for pv in &versions {
-                let inputs =
-                    packagist_to_pool_inputs(name, pv, minimum_stability, &stability_flags);
-                for input in inputs {
-                    builder.add_package(input);
-                }
-            }
+    // Explore transitive dependencies
+    while let Some(name) = builder.next_pending() {
+        if PackageName(name.clone()).is_platform() {
+            // Platform package: already added if available, skip fetching
+            continue;
         }
 
-        // Explore transitive dependencies
-        while let Some(name) = builder.next_pending() {
-            if PackageName(name.clone()).is_platform() {
-                // Platform package: already added if available, skip fetching
-                continue;
-            }
+        // Skip packages already provided by VCS repositories
+        if vcs_package_names.contains(&name) {
+            continue;
+        }
 
-            // Skip packages already provided by VCS repositories
-            if vcs_package_names.contains(&name) {
-                continue;
-            }
-
-            let versions = match handle.block_on(packagist::fetch_package_versions(
-                &name,
-                repo_cache.as_ref(),
-            )) {
+        let versions =
+            match packagist::fetch_package_versions(&name, request.repo_cache.as_ref()).await {
                 Ok(v) => v,
                 Err(_) => {
                     // Virtual/meta packages (e.g. "psr/http-client-implementation")
@@ -520,68 +517,69 @@ pub async fn resolve(request: &ResolveRequest) -> Result<Vec<ResolvedPackage>, R
                 }
             };
 
-            for pv in &versions {
-                let inputs =
-                    packagist_to_pool_inputs(&name, pv, minimum_stability, &stability_flags);
-                for input in inputs {
-                    builder.add_package(input);
+        for pv in &versions {
+            let inputs = packagist_to_pool_inputs(
+                &name,
+                pv,
+                request.minimum_stability,
+                &request.stability_flags,
+            );
+            for input in inputs {
+                builder.add_package(input);
+            }
+        }
+    }
+
+    // Build the pool
+    let mut pool = builder.build();
+
+    // Collect fixed package IDs
+    let mut fixed_ids: Vec<u32> = Vec::new();
+    for pkg in pool.packages() {
+        if pkg.is_fixed {
+            fixed_ids.push(pkg.id);
+            fixed_packages_by_name.insert(pkg.name.clone(), pkg.id);
+        }
+    }
+
+    // Generate rules
+    let mut generator = RuleSetGenerator::new(&mut pool);
+    generator.set_ignore_platform_reqs(ignore_set);
+    let rules = generator.generate(&root_requires, &fixed_ids);
+
+    // Create policy and solve
+    let policy = DefaultPolicy::new(request.prefer_stable, request.prefer_lowest);
+    let fixed_set: HashSet<u32> = fixed_ids.into_iter().collect();
+    let solver = Solver::new(rules, &pool, policy, fixed_set);
+
+    match solver.solve() {
+        Ok(result) => {
+            let mut resolved = Vec::new();
+            for pkg_id in result.installed {
+                let pkg = pool.package_by_id(pkg_id);
+
+                // Skip platform packages from output
+                if PackageName(pkg.name.clone()).is_platform() {
+                    continue;
                 }
+
+                let is_dev = if let Ok(v) = Version::parse(&pkg.version) {
+                    version_stability(&v) == Stability::Dev
+                } else {
+                    false
+                };
+
+                resolved.push(ResolvedPackage {
+                    name: pkg.name.clone(),
+                    version: pkg.pretty_version.clone(),
+                    version_normalized: pkg.version.clone(),
+                    is_dev,
+                });
             }
+            Ok(resolved)
         }
-
-        // Build the pool
-        let mut pool = builder.build();
-
-        // Collect fixed package IDs
-        let mut fixed_ids: Vec<u32> = Vec::new();
-        for pkg in pool.packages() {
-            if pkg.is_fixed {
-                fixed_ids.push(pkg.id);
-                fixed_packages_by_name.insert(pkg.name.clone(), pkg.id);
-            }
-        }
-
-        // Generate rules
-        let mut generator = RuleSetGenerator::new(&mut pool);
-        generator.set_ignore_platform_reqs(ignore_set);
-        let rules = generator.generate(&root_requires, &fixed_ids);
-
-        // Create policy and solve
-        let policy = DefaultPolicy::new(prefer_stable, prefer_lowest);
-        let fixed_set: HashSet<u32> = fixed_ids.into_iter().collect();
-        let solver = Solver::new(rules, &pool, policy, fixed_set);
-
-        match solver.solve() {
-            Ok(result) => {
-                let mut resolved = Vec::new();
-                for pkg_id in result.installed {
-                    let pkg = pool.package_by_id(pkg_id);
-
-                    // Skip platform packages from output
-                    if PackageName(pkg.name.clone()).is_platform() {
-                        continue;
-                    }
-
-                    let is_dev = if let Ok(v) = Version::parse(&pkg.version) {
-                        version_stability(&v) == Stability::Dev
-                    } else {
-                        false
-                    };
-
-                    resolved.push(ResolvedPackage {
-                        name: pkg.name.clone(),
-                        version: pkg.pretty_version.clone(),
-                        version_normalized: pkg.version.clone(),
-                        is_dev,
-                    });
-                }
-                Ok(resolved)
-            }
-            Err(e) => Err(ResolveError::NoSolution(e.to_string())),
-        }
-    })
-    .await
-    .unwrap()
+        Err(e) => Err(ResolveError::NoSolution(e.to_string())),
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

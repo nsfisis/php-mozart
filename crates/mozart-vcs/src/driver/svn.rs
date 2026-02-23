@@ -74,7 +74,7 @@ impl SvnDriver {
 }
 
 impl VcsDriver for SvnDriver {
-    fn initialize(&mut self) -> Result<()> {
+    async fn initialize(&mut self) -> Result<()> {
         let info = self.svn_info(&self.url)?;
         if let Some(url) = info["url"].as_str() {
             self.base_url = url.to_string();
@@ -87,7 +87,7 @@ impl VcsDriver for SvnDriver {
         self.root_identifier.as_deref().unwrap_or("HEAD")
     }
 
-    fn branches(&mut self) -> Result<&BTreeMap<String, String>> {
+    async fn branches(&mut self) -> Result<&BTreeMap<String, String>> {
         if self.branches.is_none() {
             let mut branches = BTreeMap::new();
 
@@ -117,7 +117,7 @@ impl VcsDriver for SvnDriver {
         Ok(self.branches.as_ref().unwrap())
     }
 
-    fn tags(&mut self) -> Result<&BTreeMap<String, String>> {
+    async fn tags(&mut self) -> Result<&BTreeMap<String, String>> {
         if self.tags.is_none() {
             let mut tags = BTreeMap::new();
             let tags_url = format!("{}/{}", self.base_url, self.tags_path);
@@ -136,18 +136,21 @@ impl VcsDriver for SvnDriver {
         Ok(self.tags.as_ref().unwrap())
     }
 
-    fn composer_information(&mut self, identifier: &str) -> Result<Option<serde_json::Value>> {
+    async fn composer_information(
+        &mut self,
+        identifier: &str,
+    ) -> Result<Option<serde_json::Value>> {
         if let Some(cached) = self.info_cache.get(identifier) {
             return Ok(cached.clone());
         }
-        let content = self.file_content("composer.json", identifier)?;
+        let content = self.file_content("composer.json", identifier).await?;
         let value = content.and_then(|c| serde_json::from_str(&c).ok());
         self.info_cache
             .insert(identifier.to_string(), value.clone());
         Ok(value)
     }
 
-    fn file_content(&self, file: &str, identifier: &str) -> Result<Option<String>> {
+    async fn file_content(&self, file: &str, identifier: &str) -> Result<Option<String>> {
         // identifier is either a path (trunk, branches/x, tags/y) or a revision number
         let url = if identifier.contains('/') || identifier == "trunk" {
             format!("{}/{}/{}", self.base_url, identifier, file)
@@ -164,7 +167,7 @@ impl VcsDriver for SvnDriver {
         }
     }
 
-    fn change_date(&self, identifier: &str) -> Result<Option<String>> {
+    async fn change_date(&self, identifier: &str) -> Result<Option<String>> {
         let url = if identifier.contains('/') || identifier == "trunk" {
             format!("{}/{}", self.base_url, identifier)
         } else {
@@ -176,7 +179,7 @@ impl VcsDriver for SvnDriver {
         }
     }
 
-    fn dist(&self, _identifier: &str) -> Result<Option<DistReference>> {
+    async fn dist(&self, _identifier: &str) -> Result<Option<DistReference>> {
         // SVN doesn't provide dist archives
         Ok(None)
     }
@@ -193,7 +196,7 @@ impl VcsDriver for SvnDriver {
         &self.url
     }
 
-    fn cleanup(&mut self) -> Result<()> {
+    async fn cleanup(&mut self) -> Result<()> {
         Ok(())
     }
 }

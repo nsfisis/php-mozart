@@ -62,8 +62,7 @@ impl BitbucketDriver {
         )
     }
 
-    fn api_get(&self, path: &str) -> Result<serde_json::Value> {
-        let handle = tokio::runtime::Handle::current();
+    async fn api_get(&self, path: &str) -> Result<serde_json::Value> {
         let url = self.api_url(path);
         let mut req = self
             .http_client
@@ -76,7 +75,7 @@ impl BitbucketDriver {
             req = req.header(AUTHORIZATION, format!("Basic {credentials}"));
         }
 
-        let response = handle.block_on(req.send())?;
+        let response = req.send().await?;
         if !response.status().is_success() {
             bail!(
                 "Bitbucket API request to {} failed: {}",
@@ -84,11 +83,10 @@ impl BitbucketDriver {
                 response.status()
             );
         }
-        Ok(handle.block_on(response.json())?)
+        Ok(response.json().await?)
     }
 
-    fn api_get_paginated(&self, path: &str) -> Result<Vec<serde_json::Value>> {
-        let handle = tokio::runtime::Handle::current();
+    async fn api_get_paginated(&self, path: &str) -> Result<Vec<serde_json::Value>> {
         let mut items = Vec::new();
         let mut next_url = Some(self.api_url(path));
         let mut pages = 0;
@@ -102,11 +100,11 @@ impl BitbucketDriver {
             if let Some((key, secret)) = &self.config.bitbucket_oauth {
                 req = req.header(AUTHORIZATION, format!("Basic {key}:{secret}"));
             }
-            let response = handle.block_on(req.send())?;
+            let response = req.send().await?;
             if !response.status().is_success() {
                 break;
             }
-            let data: serde_json::Value = handle.block_on(response.json())?;
+            let data: serde_json::Value = response.json().await?;
             if let Some(values) = data["values"].as_array() {
                 items.extend(values.iter().cloned());
             }
@@ -119,11 +117,11 @@ impl BitbucketDriver {
         Ok(items)
     }
 
-    fn use_git_fallback(&mut self) -> Result<&mut GitDriver> {
+    async fn use_git_fallback(&mut self) -> Result<&mut GitDriver> {
         if self.git_driver.is_none() {
             let git_url = format!("https://bitbucket.org/{}/{}.git", self.owner, self.repo);
             let mut driver = GitDriver::new(&git_url, self.config.clone());
-            driver.initialize()?;
+            driver.initialize().await?;
             self.git_driver = Some(Box::new(driver));
         }
         Ok(self.git_driver.as_mut().unwrap())
@@ -131,8 +129,8 @@ impl BitbucketDriver {
 }
 
 impl VcsDriver for BitbucketDriver {
-    fn initialize(&mut self) -> Result<()> {
-        match self.api_get("") {
+    async fn initialize(&mut self) -> Result<()> {
+        match self.api_get("").await {
             Ok(data) => {
                 if let Some(scm) = data["scm"].as_str() {
                     self.vcs_type = scm.to_string();
@@ -145,7 +143,7 @@ impl VcsDriver for BitbucketDriver {
             }
             Err(_) => {
                 self.api_failed = true;
-                let driver = self.use_git_fallback()?;
+                let driver = self.use_git_fallback().await?;
                 self.root_identifier = Some(driver.root_identifier().to_string());
             }
         }
@@ -156,14 +154,14 @@ impl VcsDriver for BitbucketDriver {
         self.root_identifier.as_deref().unwrap_or("main")
     }
 
-    fn branches(&mut self) -> Result<&BTreeMap<String, String>> {
+    async fn branches(&mut self) -> Result<&BTreeMap<String, String>> {
         if self.branches.is_none() {
             if self.api_failed {
-                let driver = self.use_git_fallback()?;
-                let branches = driver.branches()?.clone();
+                let driver = self.use_git_fallback().await?;
+                let branches = driver.branches().await?.clone();
                 self.branches = Some(branches);
             } else {
-                let items = self.api_get_paginated("/refs/branches?pagelen=100")?;
+                let items = self.api_get_paginated("/refs/branches?pagelen=100").await?;
                 let mut branches = BTreeMap::new();
                 for item in items {
                     if let (Some(name), Some(sha)) =
@@ -178,14 +176,14 @@ impl VcsDriver for BitbucketDriver {
         Ok(self.branches.as_ref().unwrap())
     }
 
-    fn tags(&mut self) -> Result<&BTreeMap<String, String>> {
+    async fn tags(&mut self) -> Result<&BTreeMap<String, String>> {
         if self.tags.is_none() {
             if self.api_failed {
-                let driver = self.use_git_fallback()?;
-                let tags = driver.tags()?.clone();
+                let driver = self.use_git_fallback().await?;
+                let tags = driver.tags().await?.clone();
                 self.tags = Some(tags);
             } else {
-                let items = self.api_get_paginated("/refs/tags?pagelen=100")?;
+                let items = self.api_get_paginated("/refs/tags?pagelen=100").await?;
                 let mut tags = BTreeMap::new();
                 for item in items {
                     if let (Some(name), Some(sha)) =
@@ -200,46 +198,48 @@ impl VcsDriver for BitbucketDriver {
         Ok(self.tags.as_ref().unwrap())
     }
 
-    fn composer_information(&mut self, identifier: &str) -> Result<Option<serde_json::Value>> {
+    async fn composer_information(
+        &mut self,
+        identifier: &str,
+    ) -> Result<Option<serde_json::Value>> {
         if let Some(cached) = self.info_cache.get(identifier) {
             return Ok(cached.clone());
         }
-        let content = self.file_content("composer.json", identifier)?;
+        let content = self.file_content("composer.json", identifier).await?;
         let value = content.and_then(|c| serde_json::from_str(&c).ok());
         self.info_cache
             .insert(identifier.to_string(), value.clone());
         Ok(value)
     }
 
-    fn file_content(&self, file: &str, identifier: &str) -> Result<Option<String>> {
+    async fn file_content(&self, file: &str, identifier: &str) -> Result<Option<String>> {
         if self.api_failed {
             return Ok(None);
         }
-        let handle = tokio::runtime::Handle::current();
         let url = self.api_url(&format!("/src/{identifier}/{file}"));
         let mut req = self.http_client.get(&url).header(USER_AGENT, "mozart/0.1");
         if let Some((key, secret)) = &self.config.bitbucket_oauth {
             req = req.header(AUTHORIZATION, format!("Basic {key}:{secret}"));
         }
-        let response = handle.block_on(req.send())?;
+        let response = req.send().await?;
         if response.status().is_success() {
-            Ok(Some(handle.block_on(response.text())?))
+            Ok(Some(response.text().await?))
         } else {
             Ok(None)
         }
     }
 
-    fn change_date(&self, identifier: &str) -> Result<Option<String>> {
+    async fn change_date(&self, identifier: &str) -> Result<Option<String>> {
         if self.api_failed {
             return Ok(None);
         }
-        match self.api_get(&format!("/commit/{identifier}")) {
+        match self.api_get(&format!("/commit/{identifier}")).await {
             Ok(data) => Ok(data["date"].as_str().map(|s| s.to_string())),
             Err(_) => Ok(None),
         }
     }
 
-    fn dist(&self, identifier: &str) -> Result<Option<DistReference>> {
+    async fn dist(&self, identifier: &str) -> Result<Option<DistReference>> {
         Ok(Some(DistReference {
             dist_type: "zip".to_string(),
             url: format!(
@@ -263,9 +263,9 @@ impl VcsDriver for BitbucketDriver {
         &self.url
     }
 
-    fn cleanup(&mut self) -> Result<()> {
+    async fn cleanup(&mut self) -> Result<()> {
         if let Some(driver) = &mut self.git_driver {
-            driver.cleanup()?;
+            driver.cleanup().await?;
         }
         Ok(())
     }

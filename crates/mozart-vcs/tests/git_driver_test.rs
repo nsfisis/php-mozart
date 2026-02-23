@@ -5,8 +5,7 @@ use tempfile::TempDir;
 
 use mozart_vcs::downloader::VcsDownloader;
 use mozart_vcs::downloader::git::GitDownloader;
-use mozart_vcs::driver::git::GitDriver;
-use mozart_vcs::driver::{DriverConfig, VcsDriver};
+use mozart_vcs::driver::{DriverConfig, DriverType, create_driver};
 use mozart_vcs::process::ProcessExecutor;
 use mozart_vcs::util::git::GitUtil;
 
@@ -66,8 +65,8 @@ fn create_test_repo(dir: &Path) {
     run(&["git", "checkout", "main"]);
 }
 
-#[test]
-fn test_git_driver_local_repo() {
+#[tokio::test]
+async fn test_git_driver_local_repo() {
     if !has_git() {
         eprintln!("Skipping test: git not available");
         return;
@@ -82,13 +81,13 @@ fn test_git_driver_local_repo() {
         ..DriverConfig::default()
     };
 
-    let mut driver = GitDriver::new(repo_dir.path().to_str().unwrap(), config);
+    let mut driver = create_driver(repo_dir.path().to_str().unwrap(), DriverType::Git, config);
 
-    driver.initialize().unwrap();
+    driver.initialize().await.unwrap();
     assert_eq!(driver.root_identifier(), "main");
 
     // Check tags
-    let tags = driver.tags().unwrap().clone();
+    let tags = driver.tags().await.unwrap().clone();
     assert!(
         tags.contains_key("v1.0.0"),
         "Missing tag v1.0.0: {:?}",
@@ -101,7 +100,7 @@ fn test_git_driver_local_repo() {
     );
 
     // Check branches
-    let branches = driver.branches().unwrap().clone();
+    let branches = driver.branches().await.unwrap().clone();
     assert!(
         branches.contains_key("main"),
         "Missing branch main: {:?}",
@@ -115,25 +114,28 @@ fn test_git_driver_local_repo() {
 
     // Read composer.json
     let tag_hash = &tags["v1.0.0"];
-    let info = driver.composer_information(tag_hash).unwrap();
+    let info = driver.composer_information(tag_hash).await.unwrap();
     assert!(info.is_some());
     let info = info.unwrap();
     assert_eq!(info["name"].as_str(), Some("test/package"));
 
     // Read file content
-    let content = driver.file_content("composer.json", tag_hash).unwrap();
+    let content = driver
+        .file_content("composer.json", tag_hash)
+        .await
+        .unwrap();
     assert!(content.is_some());
     assert!(content.unwrap().contains("test/package"));
 
     // Change date
-    let date = driver.change_date(tag_hash).unwrap();
+    let date = driver.change_date(tag_hash).await.unwrap();
     assert!(date.is_some());
 
     // Source reference
     let source = driver.source(tag_hash);
     assert_eq!(source.source_type, "git");
 
-    driver.cleanup().unwrap();
+    driver.cleanup().await.unwrap();
 }
 
 #[test]
@@ -223,8 +225,8 @@ fn test_detect_driver() {
     );
 }
 
-#[test]
-fn test_vcs_repository_scan() {
+#[tokio::test]
+async fn test_vcs_repository_scan() {
     if !has_git() {
         eprintln!("Skipping test: git not available");
         return;
@@ -245,7 +247,7 @@ fn test_vcs_repository_scan() {
         config,
     );
 
-    let versions = repo.scan().unwrap();
+    let versions = repo.scan().await.unwrap();
     assert!(!versions.is_empty(), "No versions found");
 
     // Should find tag versions

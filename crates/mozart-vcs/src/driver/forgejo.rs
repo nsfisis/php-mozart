@@ -76,8 +76,7 @@ impl ForgejoDriver {
         )
     }
 
-    fn api_get(&self, path: &str) -> Result<serde_json::Value> {
-        let handle = tokio::runtime::Handle::current();
+    async fn api_get(&self, path: &str) -> Result<serde_json::Value> {
         let url = self.api_url(path);
         let mut req = self
             .http_client
@@ -87,7 +86,7 @@ impl ForgejoDriver {
         if let Some(token) = &self.config.forgejo_token {
             req = req.header(AUTHORIZATION, format!("token {token}"));
         }
-        let response = handle.block_on(req.send())?;
+        let response = req.send().await?;
         if !response.status().is_success() {
             bail!(
                 "Forgejo API request to {} failed: {}",
@@ -95,16 +94,16 @@ impl ForgejoDriver {
                 response.status()
             );
         }
-        Ok(handle.block_on(response.json())?)
+        Ok(response.json().await?)
     }
 
-    fn api_get_paginated(&self, path: &str) -> Result<Vec<serde_json::Value>> {
+    async fn api_get_paginated(&self, path: &str) -> Result<Vec<serde_json::Value>> {
         let mut items = Vec::new();
         let mut page = 1;
         loop {
             let sep = if path.contains('?') { "&" } else { "?" };
             let paged_path = format!("{path}{sep}limit=50&page={page}");
-            let data = self.api_get(&paged_path)?;
+            let data = self.api_get(&paged_path).await?;
             let batch: Vec<serde_json::Value> = match data {
                 serde_json::Value::Array(arr) => arr,
                 _ => break,
@@ -121,14 +120,14 @@ impl ForgejoDriver {
         Ok(items)
     }
 
-    fn use_git_fallback(&mut self) -> Result<&mut GitDriver> {
+    async fn use_git_fallback(&mut self) -> Result<&mut GitDriver> {
         if self.git_driver.is_none() {
             let git_url = format!(
                 "{}://{}/{}/{}.git",
                 self.scheme, self.host, self.owner, self.repo
             );
             let mut driver = GitDriver::new(&git_url, self.config.clone());
-            driver.initialize()?;
+            driver.initialize().await?;
             self.git_driver = Some(Box::new(driver));
         }
         Ok(self.git_driver.as_mut().unwrap())
@@ -136,8 +135,8 @@ impl ForgejoDriver {
 }
 
 impl VcsDriver for ForgejoDriver {
-    fn initialize(&mut self) -> Result<()> {
-        match self.api_get("") {
+    async fn initialize(&mut self) -> Result<()> {
+        match self.api_get("").await {
             Ok(data) => {
                 let default_branch = data["default_branch"]
                     .as_str()
@@ -147,7 +146,7 @@ impl VcsDriver for ForgejoDriver {
             }
             Err(_) => {
                 self.api_failed = true;
-                let driver = self.use_git_fallback()?;
+                let driver = self.use_git_fallback().await?;
                 self.root_identifier = Some(driver.root_identifier().to_string());
             }
         }
@@ -158,14 +157,14 @@ impl VcsDriver for ForgejoDriver {
         self.root_identifier.as_deref().unwrap_or("main")
     }
 
-    fn branches(&mut self) -> Result<&BTreeMap<String, String>> {
+    async fn branches(&mut self) -> Result<&BTreeMap<String, String>> {
         if self.branches.is_none() {
             if self.api_failed {
-                let driver = self.use_git_fallback()?;
-                let branches = driver.branches()?.clone();
+                let driver = self.use_git_fallback().await?;
+                let branches = driver.branches().await?.clone();
                 self.branches = Some(branches);
             } else {
-                let items = self.api_get_paginated("/branches")?;
+                let items = self.api_get_paginated("/branches").await?;
                 let mut branches = BTreeMap::new();
                 for item in items {
                     if let (Some(name), Some(sha)) =
@@ -180,14 +179,14 @@ impl VcsDriver for ForgejoDriver {
         Ok(self.branches.as_ref().unwrap())
     }
 
-    fn tags(&mut self) -> Result<&BTreeMap<String, String>> {
+    async fn tags(&mut self) -> Result<&BTreeMap<String, String>> {
         if self.tags.is_none() {
             if self.api_failed {
-                let driver = self.use_git_fallback()?;
-                let tags = driver.tags()?.clone();
+                let driver = self.use_git_fallback().await?;
+                let tags = driver.tags().await?.clone();
                 self.tags = Some(tags);
             } else {
-                let items = self.api_get_paginated("/tags")?;
+                let items = self.api_get_paginated("/tags").await?;
                 let mut tags = BTreeMap::new();
                 for item in items {
                     if let (Some(name), Some(sha)) = (
@@ -203,23 +202,26 @@ impl VcsDriver for ForgejoDriver {
         Ok(self.tags.as_ref().unwrap())
     }
 
-    fn composer_information(&mut self, identifier: &str) -> Result<Option<serde_json::Value>> {
+    async fn composer_information(
+        &mut self,
+        identifier: &str,
+    ) -> Result<Option<serde_json::Value>> {
         if let Some(cached) = self.info_cache.get(identifier) {
             return Ok(cached.clone());
         }
-        let content = self.file_content("composer.json", identifier)?;
+        let content = self.file_content("composer.json", identifier).await?;
         let value = content.and_then(|c| serde_json::from_str(&c).ok());
         self.info_cache
             .insert(identifier.to_string(), value.clone());
         Ok(value)
     }
 
-    fn file_content(&self, file: &str, identifier: &str) -> Result<Option<String>> {
+    async fn file_content(&self, file: &str, identifier: &str) -> Result<Option<String>> {
         if self.api_failed {
             return Ok(None);
         }
         let path = format!("/contents/{}?ref={}", file, identifier);
-        match self.api_get(&path) {
+        match self.api_get(&path).await {
             Ok(data) => {
                 if let Some(content) = data["content"].as_str() {
                     // Forgejo returns base64-encoded content
@@ -233,17 +235,17 @@ impl VcsDriver for ForgejoDriver {
         }
     }
 
-    fn change_date(&self, identifier: &str) -> Result<Option<String>> {
+    async fn change_date(&self, identifier: &str) -> Result<Option<String>> {
         if self.api_failed {
             return Ok(None);
         }
-        match self.api_get(&format!("/git/commits/{identifier}")) {
+        match self.api_get(&format!("/git/commits/{identifier}")).await {
             Ok(data) => Ok(data["created"].as_str().map(|s| s.to_string())),
             Err(_) => Ok(None),
         }
     }
 
-    fn dist(&self, identifier: &str) -> Result<Option<DistReference>> {
+    async fn dist(&self, identifier: &str) -> Result<Option<DistReference>> {
         Ok(Some(DistReference {
             dist_type: "zip".to_string(),
             url: format!(
@@ -270,9 +272,9 @@ impl VcsDriver for ForgejoDriver {
         &self.url
     }
 
-    fn cleanup(&mut self) -> Result<()> {
+    async fn cleanup(&mut self) -> Result<()> {
         if let Some(driver) = &mut self.git_driver {
-            driver.cleanup()?;
+            driver.cleanup().await?;
         }
         Ok(())
     }

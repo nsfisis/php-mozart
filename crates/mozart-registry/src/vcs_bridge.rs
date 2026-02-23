@@ -16,7 +16,7 @@ use crate::resolver::{parse_normalized, version_stability};
 /// Scan all VCS-type repositories and collect package versions.
 ///
 /// Non-VCS repos (e.g. "composer", "package") are silently skipped.
-pub fn scan_vcs_repositories(repositories: &[RawRepository]) -> Vec<VcsPackageVersion> {
+pub async fn scan_vcs_repositories(repositories: &[RawRepository]) -> Vec<VcsPackageVersion> {
     let config = DriverConfig::default();
     let mut all_versions = Vec::new();
 
@@ -34,7 +34,7 @@ pub fn scan_vcs_repositories(repositories: &[RawRepository]) -> Vec<VcsPackageVe
 
         let vcs_repo = VcsRepository::new(repo.url.clone(), forced_type, config.clone());
 
-        match vcs_repo.scan() {
+        match vcs_repo.scan().await {
             Ok(versions) => {
                 all_versions.extend(versions);
             }

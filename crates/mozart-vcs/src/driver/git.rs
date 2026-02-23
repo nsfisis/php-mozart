@@ -131,7 +131,7 @@ impl GitDriver {
 }
 
 impl VcsDriver for GitDriver {
-    fn initialize(&mut self) -> Result<()> {
+    async fn initialize(&mut self) -> Result<()> {
         if self.is_local {
             // Local repo: use directly (or its .git subdir)
             let path = Path::new(&self.url);
@@ -174,7 +174,7 @@ impl VcsDriver for GitDriver {
         self.root_identifier.as_deref().unwrap_or("master")
     }
 
-    fn branches(&mut self) -> Result<&BTreeMap<String, String>> {
+    async fn branches(&mut self) -> Result<&BTreeMap<String, String>> {
         if self.branches.is_none() {
             let repo_dir = self.get_repo_dir()?.to_path_buf();
             let process = ProcessExecutor::new();
@@ -187,7 +187,7 @@ impl VcsDriver for GitDriver {
         Ok(self.branches.as_ref().unwrap())
     }
 
-    fn tags(&mut self) -> Result<&BTreeMap<String, String>> {
+    async fn tags(&mut self) -> Result<&BTreeMap<String, String>> {
         if self.tags.is_none() {
             let repo_dir = self.get_repo_dir()?.to_path_buf();
             let process = ProcessExecutor::new();
@@ -204,12 +204,15 @@ impl VcsDriver for GitDriver {
         Ok(self.tags.as_ref().unwrap())
     }
 
-    fn composer_information(&mut self, identifier: &str) -> Result<Option<serde_json::Value>> {
+    async fn composer_information(
+        &mut self,
+        identifier: &str,
+    ) -> Result<Option<serde_json::Value>> {
         if let Some(cached) = self.info_cache.get(identifier) {
             return Ok(cached.clone());
         }
 
-        let content = self.file_content("composer.json", identifier)?;
+        let content = self.file_content("composer.json", identifier).await?;
         let value = match content {
             Some(c) => serde_json::from_str(&c).ok(),
             None => None,
@@ -220,7 +223,7 @@ impl VcsDriver for GitDriver {
         Ok(value)
     }
 
-    fn file_content(&self, file: &str, identifier: &str) -> Result<Option<String>> {
+    async fn file_content(&self, file: &str, identifier: &str) -> Result<Option<String>> {
         let repo_dir = self.get_repo_dir()?;
         let process = ProcessExecutor::new();
         let resource = format!("{identifier}:{file}");
@@ -232,7 +235,7 @@ impl VcsDriver for GitDriver {
         }
     }
 
-    fn change_date(&self, identifier: &str) -> Result<Option<String>> {
+    async fn change_date(&self, identifier: &str) -> Result<Option<String>> {
         let repo_dir = self.get_repo_dir()?;
         let process = ProcessExecutor::new();
         let output = process.execute(
@@ -251,7 +254,7 @@ impl VcsDriver for GitDriver {
         }
     }
 
-    fn dist(&self, _identifier: &str) -> Result<Option<DistReference>> {
+    async fn dist(&self, _identifier: &str) -> Result<Option<DistReference>> {
         // Plain git repos don't provide dist archives
         Ok(None)
     }
@@ -268,7 +271,7 @@ impl VcsDriver for GitDriver {
         &self.url
     }
 
-    fn cleanup(&mut self) -> Result<()> {
+    async fn cleanup(&mut self) -> Result<()> {
         Ok(())
     }
 }

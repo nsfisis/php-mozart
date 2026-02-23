@@ -49,7 +49,7 @@ impl HgDriver {
 }
 
 impl VcsDriver for HgDriver {
-    fn initialize(&mut self) -> Result<()> {
+    async fn initialize(&mut self) -> Result<()> {
         let cache_dir = self.config.cache_dir.join("hg");
         std::fs::create_dir_all(&cache_dir)?;
         let repo_dir = cache_dir.join(crate::util::git::GitUtil::sanitize_url(&self.url));
@@ -83,7 +83,7 @@ impl VcsDriver for HgDriver {
         self.root_identifier.as_deref().unwrap_or("default")
     }
 
-    fn branches(&mut self) -> Result<&BTreeMap<String, String>> {
+    async fn branches(&mut self) -> Result<&BTreeMap<String, String>> {
         if self.branches.is_none() {
             let repo_dir = self.get_repo_dir()?.clone();
             let mut branches = BTreeMap::new();
@@ -121,7 +121,7 @@ impl VcsDriver for HgDriver {
         Ok(self.branches.as_ref().unwrap())
     }
 
-    fn tags(&mut self) -> Result<&BTreeMap<String, String>> {
+    async fn tags(&mut self) -> Result<&BTreeMap<String, String>> {
         if self.tags.is_none() {
             let repo_dir = self.get_repo_dir()?.clone();
             let output = self.hg_util.execute(&["tags", "-q"], Some(&repo_dir))?;
@@ -142,18 +142,21 @@ impl VcsDriver for HgDriver {
         Ok(self.tags.as_ref().unwrap())
     }
 
-    fn composer_information(&mut self, identifier: &str) -> Result<Option<serde_json::Value>> {
+    async fn composer_information(
+        &mut self,
+        identifier: &str,
+    ) -> Result<Option<serde_json::Value>> {
         if let Some(cached) = self.info_cache.get(identifier) {
             return Ok(cached.clone());
         }
-        let content = self.file_content("composer.json", identifier)?;
+        let content = self.file_content("composer.json", identifier).await?;
         let value = content.and_then(|c| serde_json::from_str(&c).ok());
         self.info_cache
             .insert(identifier.to_string(), value.clone());
         Ok(value)
     }
 
-    fn file_content(&self, file: &str, identifier: &str) -> Result<Option<String>> {
+    async fn file_content(&self, file: &str, identifier: &str) -> Result<Option<String>> {
         let repo_dir = self.get_repo_dir()?;
         let output = self
             .hg_util
@@ -165,7 +168,7 @@ impl VcsDriver for HgDriver {
         }
     }
 
-    fn change_date(&self, identifier: &str) -> Result<Option<String>> {
+    async fn change_date(&self, identifier: &str) -> Result<Option<String>> {
         let repo_dir = self.get_repo_dir()?;
         let output = self.hg_util.execute(
             &["log", "-r", identifier, "--template", "{date|isodatesec}"],
@@ -179,7 +182,7 @@ impl VcsDriver for HgDriver {
         }
     }
 
-    fn dist(&self, _identifier: &str) -> Result<Option<DistReference>> {
+    async fn dist(&self, _identifier: &str) -> Result<Option<DistReference>> {
         Ok(None)
     }
 
@@ -195,7 +198,7 @@ impl VcsDriver for HgDriver {
         &self.url
     }
 
-    fn cleanup(&mut self) -> Result<()> {
+    async fn cleanup(&mut self) -> Result<()> {
         Ok(())
     }
 }

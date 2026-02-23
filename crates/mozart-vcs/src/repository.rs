@@ -50,17 +50,17 @@ impl VcsRepository {
     /// 2. Reads composer.json from the root to get the package name
     /// 3. Scans tags → version releases
     /// 4. Scans branches → dev versions
-    pub fn scan(&self) -> Result<Vec<VcsPackageVersion>> {
+    pub async fn scan(&self) -> Result<Vec<VcsPackageVersion>> {
         let driver_type = self
             .driver_type
             .ok_or_else(|| anyhow::anyhow!("No suitable VCS driver found for URL: {}", self.url))?;
 
         let mut driver = create_driver(&self.url, driver_type, self.config.clone());
-        driver.initialize()?;
+        driver.initialize().await?;
 
         // Get package name from root composer.json
         let root_id = driver.root_identifier().to_string();
-        let root_info = driver.composer_information(&root_id)?;
+        let root_info = driver.composer_information(&root_id).await?;
         let package_name = match &root_info {
             Some(info) => info["name"]
                 .as_str()
@@ -81,14 +81,14 @@ impl VcsRepository {
         let mut versions = Vec::new();
 
         // Scan tags
-        let tags = driver.tags()?.clone();
+        let tags = driver.tags().await?.clone();
         for (tag_name, tag_hash) in &tags {
             if let Some(version) = self.tag_to_version(tag_name) {
-                match driver.composer_information(tag_hash) {
+                match driver.composer_information(tag_hash).await {
                     Ok(Some(info)) => {
-                        let time = driver.change_date(tag_hash).unwrap_or(None);
+                        let time = driver.change_date(tag_hash).await.unwrap_or(None);
                         let source = driver.source(tag_hash);
-                        let dist = driver.dist(tag_hash).unwrap_or(None);
+                        let dist = driver.dist(tag_hash).await.unwrap_or(None);
 
                         // Ensure name matches root package
                         if info["name"].as_str() != Some(&package_name) {
@@ -114,18 +114,18 @@ impl VcsRepository {
         }
 
         // Scan branches
-        let branches = driver.branches()?.clone();
+        let branches = driver.branches().await?.clone();
         let default_branch = driver.root_identifier().to_string();
         for (branch_name, branch_hash) in &branches {
-            match driver.composer_information(branch_hash) {
+            match driver.composer_information(branch_hash).await {
                 Ok(Some(info)) => {
                     if info["name"].as_str() != Some(&package_name) {
                         continue;
                     }
 
-                    let time = driver.change_date(branch_hash).unwrap_or(None);
+                    let time = driver.change_date(branch_hash).await.unwrap_or(None);
                     let source = driver.source(branch_hash);
-                    let dist = driver.dist(branch_hash).unwrap_or(None);
+                    let dist = driver.dist(branch_hash).await.unwrap_or(None);
                     let is_default = branch_name == &default_branch;
 
                     let version = self.branch_to_version(branch_name);
@@ -154,7 +154,7 @@ impl VcsRepository {
             }
         }
 
-        driver.cleanup()?;
+        driver.cleanup().await?;
         Ok(versions)
     }
 
