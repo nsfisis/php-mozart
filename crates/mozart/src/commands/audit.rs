@@ -2,6 +2,7 @@ use clap::Args;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
+use mozart_core::console::Verbosity;
 use mozart_registry::packagist::SecurityAdvisory;
 
 #[derive(Args)]
@@ -71,7 +72,7 @@ struct AuditResult {
 pub async fn execute(
     args: &AuditArgs,
     cli: &super::Cli,
-    _console: &mozart_core::console::Console,
+    console: &mozart_core::console::Console,
 ) -> anyhow::Result<()> {
     // Validate format
     let format = args.format.as_str();
@@ -103,7 +104,7 @@ pub async fn execute(
     let packages = load_packages(&working_dir, args.locked, args.no_dev)?;
 
     if packages.is_empty() {
-        eprintln!("No packages - skipping audit.");
+        console.info("No packages - skipping audit.");
         return Ok(());
     }
 
@@ -121,7 +122,7 @@ pub async fn execute(
     };
 
     // Filter advisories by installed versions and severity
-    let matched = filter_advisories(&all_advisories, &packages, &args.ignore_severity);
+    let matched = filter_advisories(&all_advisories, &packages, &args.ignore_severity, console);
 
     // Detect abandoned packages
     let abandoned = if abandoned_mode == "ignore" {
@@ -143,10 +144,10 @@ pub async fn execute(
 
     // Render output
     match format {
-        "table" => render_table(&result),
-        "plain" => render_plain(&result),
-        "json" => render_json(&result)?,
-        "summary" => render_summary(&result),
+        "table" => render_table(&result, console),
+        "plain" => render_plain(&result, console),
+        "json" => render_json(&result, console)?,
+        "summary" => render_summary(&result, console),
         _ => unreachable!(),
     }
 
@@ -254,6 +255,7 @@ fn filter_advisories(
     all_advisories: &BTreeMap<String, Vec<SecurityAdvisory>>,
     packages: &[PackageEntry],
     ignore_severity: &[String],
+    console: &mozart_core::console::Console,
 ) -> BTreeMap<String, Vec<MatchedAdvisory>> {
     let ignore_set: std::collections::HashSet<String> =
         ignore_severity.iter().map(|s| s.to_lowercase()).collect();
@@ -274,9 +276,12 @@ fn filter_advisories(
         let installed_ver = match mozart_semver::Version::parse(version_str) {
             Ok(v) => v,
             Err(_) => {
-                eprintln!(
-                    "Warning: could not parse version \"{}\" for package \"{}\", skipping advisory matching",
-                    version_str, pkg.name
+                console.write(
+                    &format!(
+                        "Warning: could not parse version \"{}\" for package \"{}\", skipping advisory matching",
+                        version_str, pkg.name
+                    ),
+                    Verbosity::Normal,
                 );
                 continue;
             }
@@ -299,9 +304,12 @@ fn filter_advisories(
             let constraint = match mozart_semver::VersionConstraint::parse(&normalized_constraint) {
                 Ok(c) => c,
                 Err(_) => {
-                    eprintln!(
-                        "Warning: could not parse affected versions \"{}\" for advisory \"{}\", skipping",
-                        advisory.affected_versions, advisory.advisory_id
+                    console.write(
+                        &format!(
+                            "Warning: could not parse affected versions \"{}\" for advisory \"{}\", skipping",
+                            advisory.affected_versions, advisory.advisory_id
+                        ),
+                        Verbosity::Normal,
                     );
                     continue;
                 }
@@ -384,12 +392,12 @@ fn detect_abandoned(packages: &[PackageEntry]) -> Vec<AbandonedPackage> {
 
 // ─── Output rendering ─────────────────────────────────────────────────────────
 
-fn render_table(result: &AuditResult) {
+fn render_table(result: &AuditResult, console: &mozart_core::console::Console) {
     if result.total_advisory_count == 0 && result.abandoned.is_empty() {
-        eprintln!(
+        console.info(&format!(
             "{}",
             mozart_core::console::info("No security vulnerability advisories found.")
-        );
+        ));
         return;
     }
 
@@ -403,8 +411,11 @@ fn render_table(result: &AuditResult) {
             "Found {} security vulnerability {} affecting {} package(s):",
             result.total_advisory_count, advisory_word, result.affected_package_count
         );
-        eprintln!("{}", mozart_core::console::highlight(&header));
-        eprintln!();
+        console.write(
+            &format!("{}", mozart_core::console::highlight(&header)),
+            Verbosity::Normal,
+        );
+        console.write("", Verbosity::Normal);
 
         for advisories in result.advisories.values() {
             for matched in advisories {
@@ -436,26 +447,32 @@ fn render_table(result: &AuditResult) {
                     vw = value_width
                 );
 
-                eprintln!("{}", separator);
+                console.write(&separator, Verbosity::Normal);
                 for (label, value) in &rows {
-                    eprintln!(
-                        "| {:<lw$} | {:<vw$} |",
-                        label,
-                        value,
-                        lw = label_width,
-                        vw = value_width
+                    console.write(
+                        &format!(
+                            "| {:<lw$} | {:<vw$} |",
+                            label,
+                            value,
+                            lw = label_width,
+                            vw = value_width
+                        ),
+                        Verbosity::Normal,
                     );
                 }
-                eprintln!("{}", separator);
-                eprintln!();
+                console.write(&separator, Verbosity::Normal);
+                console.write("", Verbosity::Normal);
             }
         }
     }
 
     if !result.abandoned.is_empty() {
         let header = format!("Found {} abandoned package(s):", result.abandoned.len());
-        eprintln!("{}", mozart_core::console::highlight(&header));
-        eprintln!();
+        console.write(
+            &format!("{}", mozart_core::console::highlight(&header)),
+            Verbosity::Normal,
+        );
+        console.write("", Verbosity::Normal);
 
         let name_width = 20usize;
         let ver_width = result
@@ -478,46 +495,55 @@ fn render_table(result: &AuditResult) {
             .unwrap_or(0)
             .max("Suggested Replacement".len());
 
-        eprintln!(
-            "| {:<nw$} | {:<vw$} | {:<rw$} |",
-            "Abandoned Package",
-            "Version",
-            "Suggested Replacement",
-            nw = name_width,
-            vw = ver_width,
-            rw = repl_width
+        console.write(
+            &format!(
+                "| {:<nw$} | {:<vw$} | {:<rw$} |",
+                "Abandoned Package",
+                "Version",
+                "Suggested Replacement",
+                nw = name_width,
+                vw = ver_width,
+                rw = repl_width
+            ),
+            Verbosity::Normal,
         );
-        eprintln!(
-            "+-{:-<nw$}-+-{:-<vw$}-+-{:-<rw$}-+",
-            "",
-            "",
-            "",
-            nw = name_width,
-            vw = ver_width,
-            rw = repl_width
+        console.write(
+            &format!(
+                "+-{:-<nw$}-+-{:-<vw$}-+-{:-<rw$}-+",
+                "",
+                "",
+                "",
+                nw = name_width,
+                vw = ver_width,
+                rw = repl_width
+            ),
+            Verbosity::Normal,
         );
         for pkg in &result.abandoned {
             let replacement = pkg
                 .replacement
                 .as_deref()
                 .unwrap_or("No replacement suggested");
-            eprintln!(
-                "| {:<nw$} | {:<vw$} | {:<rw$} |",
-                pkg.name,
-                pkg.version,
-                replacement,
-                nw = name_width,
-                vw = ver_width,
-                rw = repl_width
+            console.write(
+                &format!(
+                    "| {:<nw$} | {:<vw$} | {:<rw$} |",
+                    pkg.name,
+                    pkg.version,
+                    replacement,
+                    nw = name_width,
+                    vw = ver_width,
+                    rw = repl_width
+                ),
+                Verbosity::Normal,
             );
         }
-        eprintln!();
+        console.write("", Verbosity::Normal);
     }
 }
 
-fn render_plain(result: &AuditResult) {
+fn render_plain(result: &AuditResult, console: &mozart_core::console::Console) {
     if result.total_advisory_count == 0 && result.abandoned.is_empty() {
-        eprintln!("No security vulnerability advisories found.");
+        console.info("No security vulnerability advisories found.");
         return;
     }
 
@@ -527,44 +553,77 @@ fn render_plain(result: &AuditResult) {
         } else {
             "advisories"
         };
-        eprintln!(
-            "Found {} security vulnerability {} affecting {} package(s):",
-            result.total_advisory_count, advisory_word, result.affected_package_count
+        console.write(
+            &format!(
+                "Found {} security vulnerability {} affecting {} package(s):",
+                result.total_advisory_count, advisory_word, result.affected_package_count
+            ),
+            Verbosity::Normal,
         );
-        eprintln!();
+        console.write("", Verbosity::Normal);
 
         for advisories in result.advisories.values() {
             for matched in advisories {
                 let adv = &matched.advisory;
-                eprintln!("Package: {}", adv.package_name);
-                eprintln!("Version: {}", matched.installed_version);
-                eprintln!("Severity: {}", adv.severity.as_deref().unwrap_or(""));
-                eprintln!("Advisory ID: {}", adv.advisory_id);
-                eprintln!("CVE: {}", adv.cve.as_deref().unwrap_or("NO CVE"));
-                eprintln!("Title: {}", adv.title);
-                eprintln!("URL: {}", adv.link.as_deref().unwrap_or(""));
-                eprintln!("Affected versions: {}", adv.affected_versions);
-                eprintln!("Reported at: {}", adv.reported_at);
-                eprintln!("--------");
+                console.write(&format!("Package: {}", adv.package_name), Verbosity::Normal);
+                console.write(
+                    &format!("Version: {}", matched.installed_version),
+                    Verbosity::Normal,
+                );
+                console.write(
+                    &format!("Severity: {}", adv.severity.as_deref().unwrap_or("")),
+                    Verbosity::Normal,
+                );
+                console.write(
+                    &format!("Advisory ID: {}", adv.advisory_id),
+                    Verbosity::Normal,
+                );
+                console.write(
+                    &format!("CVE: {}", adv.cve.as_deref().unwrap_or("NO CVE")),
+                    Verbosity::Normal,
+                );
+                console.write(&format!("Title: {}", adv.title), Verbosity::Normal);
+                console.write(
+                    &format!("URL: {}", adv.link.as_deref().unwrap_or("")),
+                    Verbosity::Normal,
+                );
+                console.write(
+                    &format!("Affected versions: {}", adv.affected_versions),
+                    Verbosity::Normal,
+                );
+                console.write(
+                    &format!("Reported at: {}", adv.reported_at),
+                    Verbosity::Normal,
+                );
+                console.write("--------", Verbosity::Normal);
             }
         }
     }
 
     for pkg in &result.abandoned {
         match &pkg.replacement {
-            Some(repl) => eprintln!(
-                "{} ({}) is abandoned. Use {} instead.",
-                pkg.name, pkg.version, repl
+            Some(repl) => console.write(
+                &format!(
+                    "{} ({}) is abandoned. Use {} instead.",
+                    pkg.name, pkg.version, repl
+                ),
+                Verbosity::Normal,
             ),
-            None => eprintln!(
-                "{} ({}) is abandoned. No replacement was suggested.",
-                pkg.name, pkg.version
+            None => console.write(
+                &format!(
+                    "{} ({}) is abandoned. No replacement was suggested.",
+                    pkg.name, pkg.version
+                ),
+                Verbosity::Normal,
             ),
         }
     }
 }
 
-fn render_json(result: &AuditResult) -> anyhow::Result<()> {
+fn render_json(
+    result: &AuditResult,
+    console: &mozart_core::console::Console,
+) -> anyhow::Result<()> {
     // Build advisories map: package_name -> [advisory objects]
     let mut advisories_map: serde_json::Map<String, serde_json::Value> = serde_json::Map::new();
     for (pkg_name, advisories) in &result.advisories {
@@ -594,35 +653,44 @@ fn render_json(result: &AuditResult) -> anyhow::Result<()> {
         "abandoned": abandoned_map,
     });
 
-    println!("{}", serde_json::to_string_pretty(&output)?);
+    console.write_stdout(&serde_json::to_string_pretty(&output)?, Verbosity::Normal);
     Ok(())
 }
 
-fn render_summary(result: &AuditResult) {
+fn render_summary(result: &AuditResult, console: &mozart_core::console::Console) {
     if result.total_advisory_count == 0 {
-        eprintln!("No security vulnerability advisories found.");
+        console.info("No security vulnerability advisories found.");
     } else {
         let advisory_word = if result.total_advisory_count == 1 {
             "advisory"
         } else {
             "advisories"
         };
-        eprintln!(
-            "Found {} security vulnerability {} affecting {} package(s).",
-            result.total_advisory_count, advisory_word, result.affected_package_count
+        console.write(
+            &format!(
+                "Found {} security vulnerability {} affecting {} package(s).",
+                result.total_advisory_count, advisory_word, result.affected_package_count
+            ),
+            Verbosity::Normal,
         );
-        eprintln!("Run \"mozart audit\" for a full list of advisories.");
+        console.info("Run \"mozart audit\" for a full list of advisories.");
     }
 
     for pkg in &result.abandoned {
         match &pkg.replacement {
-            Some(repl) => eprintln!(
-                "{} ({}) is abandoned. Use {} instead.",
-                pkg.name, pkg.version, repl
+            Some(repl) => console.write(
+                &format!(
+                    "{} ({}) is abandoned. Use {} instead.",
+                    pkg.name, pkg.version, repl
+                ),
+                Verbosity::Normal,
             ),
-            None => eprintln!(
-                "{} ({}) is abandoned. No replacement was suggested.",
-                pkg.name, pkg.version
+            None => console.write(
+                &format!(
+                    "{} ({}) is abandoned. No replacement was suggested.",
+                    pkg.name, pkg.version
+                ),
+                Verbosity::Normal,
             ),
         }
     }
@@ -682,14 +750,19 @@ mod tests {
 
     // ── filter_advisories ────────────────────────────────────────────────────
 
+    fn make_console() -> mozart_core::console::Console {
+        mozart_core::console::Console::new(0, false, false, false, false)
+    }
+
     #[test]
     fn test_filter_advisories_matching() {
+        let console = make_console();
         let advisory = make_advisory("PKSA-0001", "vendor/pkg", ">=1.0,<2.0", None);
         let mut all: BTreeMap<String, Vec<SecurityAdvisory>> = BTreeMap::new();
         all.insert("vendor/pkg".to_string(), vec![advisory]);
 
         let packages = vec![make_pkg("vendor/pkg", "1.5.0", Some("1.5.0.0"))];
-        let result = filter_advisories(&all, &packages, &[]);
+        let result = filter_advisories(&all, &packages, &[], &console);
 
         assert_eq!(result.len(), 1);
         assert_eq!(result["vendor/pkg"].len(), 1);
@@ -697,30 +770,33 @@ mod tests {
 
     #[test]
     fn test_filter_advisories_not_matching() {
+        let console = make_console();
         let advisory = make_advisory("PKSA-0002", "vendor/pkg", ">=1.0,<2.0", None);
         let mut all: BTreeMap<String, Vec<SecurityAdvisory>> = BTreeMap::new();
         all.insert("vendor/pkg".to_string(), vec![advisory]);
 
         let packages = vec![make_pkg("vendor/pkg", "2.0.0", Some("2.0.0.0"))];
-        let result = filter_advisories(&all, &packages, &[]);
+        let result = filter_advisories(&all, &packages, &[], &console);
 
         assert!(result.is_empty());
     }
 
     #[test]
     fn test_filter_advisories_ignore_severity() {
+        let console = make_console();
         let advisory = make_advisory("PKSA-0003", "vendor/pkg", ">=1.0,<2.0", Some("low"));
         let mut all: BTreeMap<String, Vec<SecurityAdvisory>> = BTreeMap::new();
         all.insert("vendor/pkg".to_string(), vec![advisory]);
 
         let packages = vec![make_pkg("vendor/pkg", "1.5.0", Some("1.5.0.0"))];
-        let result = filter_advisories(&all, &packages, &["low".to_string()]);
+        let result = filter_advisories(&all, &packages, &["low".to_string()], &console);
 
         assert!(result.is_empty());
     }
 
     #[test]
     fn test_filter_advisories_multiple_packages() {
+        let console = make_console();
         let adv1 = make_advisory("PKSA-0004", "vendor/pkg1", ">=1.0,<2.0", None);
         let adv2 = make_advisory("PKSA-0005", "vendor/pkg2", ">=3.0,<4.0", None);
         let mut all: BTreeMap<String, Vec<SecurityAdvisory>> = BTreeMap::new();
@@ -731,7 +807,7 @@ mod tests {
             make_pkg("vendor/pkg1", "1.5.0", Some("1.5.0.0")),
             make_pkg("vendor/pkg2", "3.5.0", Some("3.5.0.0")),
         ];
-        let result = filter_advisories(&all, &packages, &[]);
+        let result = filter_advisories(&all, &packages, &[], &console);
 
         assert_eq!(result.len(), 2);
         assert_eq!(result["vendor/pkg1"].len(), 1);
@@ -740,6 +816,7 @@ mod tests {
 
     #[test]
     fn test_filter_advisories_complex_constraint() {
+        let console = make_console();
         // OR constraint: >=1.0,<1.5|>=2.0,<2.3
         let advisory = make_advisory("PKSA-0006", "vendor/pkg", ">=1.0,<1.5|>=2.0,<2.3", None);
         let mut all: BTreeMap<String, Vec<SecurityAdvisory>> = BTreeMap::new();
@@ -747,16 +824,17 @@ mod tests {
 
         // 2.1.0 is in [2.0, 2.3) so should match
         let packages = vec![make_pkg("vendor/pkg", "2.1.0", Some("2.1.0.0"))];
-        let result = filter_advisories(&all, &packages, &[]);
+        let result = filter_advisories(&all, &packages, &[], &console);
 
         assert_eq!(result.len(), 1);
     }
 
     #[test]
     fn test_filter_advisories_no_advisories() {
+        let console = make_console();
         let all: BTreeMap<String, Vec<SecurityAdvisory>> = BTreeMap::new();
         let packages = vec![make_pkg("vendor/pkg", "1.5.0", Some("1.5.0.0"))];
-        let result = filter_advisories(&all, &packages, &[]);
+        let result = filter_advisories(&all, &packages, &[], &console);
         assert!(result.is_empty());
     }
 
@@ -1047,18 +1125,20 @@ mod tests {
         };
 
         // Should not panic
-        render_json(&result).unwrap();
+        let console = make_console();
+        render_json(&result, &console).unwrap();
     }
 
     #[test]
     fn test_render_json_empty() {
+        let console = make_console();
         let result = AuditResult {
             advisories: BTreeMap::new(),
             abandoned: vec![],
             affected_package_count: 0,
             total_advisory_count: 0,
         };
-        render_json(&result).unwrap();
+        render_json(&result, &console).unwrap();
     }
 
     // ── argument validation ───────────────────────────────────────────────────

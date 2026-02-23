@@ -1,4 +1,5 @@
 use clap::Args;
+use mozart_core::console::Verbosity;
 use mozart_core::console_format;
 use std::path::{Path, PathBuf};
 
@@ -144,7 +145,14 @@ pub async fn execute(
 
     // Output results
     let check_publish = !args.no_check_publish;
-    output_result(&file, &result, check_publish, check_lock, &lock_errors);
+    output_result(
+        console,
+        &file,
+        &result,
+        check_publish,
+        check_lock,
+        &lock_errors,
+    );
 
     // Validate dependencies' composer.json files
     let (dep_errors, dep_warnings) = if args.with_dependencies {
@@ -489,12 +497,9 @@ fn validate_dependencies(
                 dep_errors += 1;
                 let pkg_name =
                     format!("{}/{}", vendor_str, pkg_entry.file_name().to_string_lossy());
-                eprintln!(
-                    "{}",
-                    console_format!(
-                        "<warning>{pkg_name}: composer.json contains invalid JSON</warning>"
-                    )
-                );
+                console.info(&console_format!(
+                    "<warning>{pkg_name}: composer.json contains invalid JSON</warning>"
+                ));
                 continue;
             };
 
@@ -508,11 +513,11 @@ fn validate_dependencies(
                     format!("{}/{}", vendor_str, pkg_entry.file_name().to_string_lossy());
 
                 for e in &result.errors {
-                    eprintln!("{}", console_format!("<error>{pkg_name}: {e}</error>"));
+                    console.error(&console_format!("<error>{pkg_name}: {e}</error>"));
                     dep_errors += 1;
                 }
                 for w in &result.warnings {
-                    eprintln!("{}", console_format!("<warning>{pkg_name}: {w}</warning>"));
+                    console.info(&console_format!("<warning>{pkg_name}: {w}</warning>"));
                     dep_warnings += 1;
                 }
             }
@@ -568,6 +573,7 @@ fn check_lock_freshness(
 // ─── Output ──────────────────────────────────────────────────────────────────
 
 fn output_result(
+    console: &mozart_core::console::Console,
     file: &Path,
     result: &ValidationResult,
     check_publish: bool,
@@ -578,48 +584,37 @@ fn output_result(
 
     // Print header message
     if result.has_errors() {
-        eprintln!(
-            "{}",
-            console_format!(
-                "<error>{name} is invalid, the following errors/warnings were found:</error>"
-            )
-        );
+        console.error(&console_format!(
+            "<error>{name} is invalid, the following errors/warnings were found:</error>"
+        ));
     } else if result.has_publish_errors() && check_publish {
-        eprintln!(
-            "{}",
-            console_format!("<info>{name} is valid for simple usage with Composer but has</info>")
-        );
-        eprintln!(
-            "{}",
-            mozart_core::console::info(
-                "strict errors that make it unable to be published as a package"
-            )
-        );
-        eprintln!(
-            "{}",
-            mozart_core::console::warning(
-                "See https://getcomposer.org/doc/04-schema.md for details on the schema"
-            )
-        );
+        console.info(&console_format!(
+            "<info>{name} is valid for simple usage with Composer but has</info>"
+        ));
+        console.info(&mozart_core::console::info(
+            "strict errors that make it unable to be published as a package",
+        ));
+        console.info(&mozart_core::console::warning(
+            "See https://getcomposer.org/doc/04-schema.md for details on the schema",
+        ));
     } else if result.has_warnings() {
-        eprintln!(
-            "{}",
-            console_format!("<info>{name} is valid, but with a few warnings</info>")
-        );
-        eprintln!(
-            "{}",
-            mozart_core::console::warning(
-                "See https://getcomposer.org/doc/04-schema.md for details on the schema"
-            )
-        );
+        console.info(&console_format!(
+            "<info>{name} is valid, but with a few warnings</info>"
+        ));
+        console.info(&mozart_core::console::warning(
+            "See https://getcomposer.org/doc/04-schema.md for details on the schema",
+        ));
     } else if !lock_errors.is_empty() {
         let kind = if check_lock { "errors" } else { "warnings" };
-        println!(
-            "{}",
-            console_format!("<info>{name} is valid but your composer.lock has some {kind}</info>")
+        console.write_stdout(
+            &console_format!("<info>{name} is valid but your composer.lock has some {kind}</info>"),
+            Verbosity::Normal,
         );
     } else {
-        println!("{}", console_format!("<info>{name} is valid</info>"));
+        console.write_stdout(
+            &console_format!("<info>{name} is valid</info>"),
+            Verbosity::Normal,
+        );
     }
 
     // Collect error and warning message lines
@@ -662,18 +657,17 @@ fn output_result(
     // Print errors
     for msg in &all_errors {
         if msg.starts_with('#') {
-            eprintln!("{}", mozart_core::console::error(msg));
+            console.error(&mozart_core::console::error(msg));
         } else {
-            eprintln!("{msg}");
+            console.error(msg);
         }
     }
 
-    // Print warnings
     for msg in &all_warnings {
         if msg.starts_with('#') {
-            eprintln!("{}", mozart_core::console::warning(msg));
+            console.info(&mozart_core::console::warning(msg));
         } else {
-            eprintln!("{msg}");
+            console.info(msg);
         }
     }
 }

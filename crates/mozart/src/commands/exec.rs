@@ -21,8 +21,9 @@ pub struct ExecArgs {
 pub async fn execute(
     args: &ExecArgs,
     cli: &super::Cli,
-    _console: &mozart_core::console::Console,
+    console: &mozart_core::console::Console,
 ) -> anyhow::Result<()> {
+    use mozart_core::console::Verbosity;
     let working_dir = match &cli.working_dir {
         Some(dir) => PathBuf::from(dir),
         None => std::env::current_dir()?,
@@ -38,15 +39,21 @@ pub async fn execute(
                 bin_dir.display()
             );
         }
-        println!(
-            "{}",
-            console_format!("<comment>Available binaries:</comment>")
+        console.write_stdout(
+            &console_format!("<comment>Available binaries:</comment>"),
+            Verbosity::Normal,
         );
         for (name, is_local) in &binaries {
             if *is_local {
-                println!("{}", console_format!("<info>- {} (local)</info>", name));
+                console.write_stdout(
+                    &console_format!("<info>- {} (local)</info>", name),
+                    Verbosity::Normal,
+                );
             } else {
-                println!("{}", console_format!("<info>- {}</info>", name));
+                console.write_stdout(
+                    &console_format!("<info>- {}</info>", name),
+                    Verbosity::Normal,
+                );
             }
         }
         return Ok(());

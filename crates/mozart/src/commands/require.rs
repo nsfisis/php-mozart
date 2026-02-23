@@ -1,4 +1,5 @@
 use clap::Args;
+use mozart_core::console::Verbosity;
 use mozart_core::console_format;
 use mozart_core::package::{self, Stability};
 use mozart_core::validation;
@@ -135,6 +136,7 @@ async fn interactive_search_packages(
     already_required: &std::collections::HashSet<String>,
     preferred_stability: Stability,
     fixed: bool,
+    console: &mozart_core::console::Console,
 ) -> anyhow::Result<Vec<String>> {
     let stdin = std::io::stdin();
     if !stdin.is_terminal() {
@@ -168,10 +170,9 @@ async fn interactive_search_packages(
         let (results, total) = match packagist::search_packages(&query, None).await {
             Ok(r) => r,
             Err(e) => {
-                eprintln!(
-                    "{}",
-                    console_format!("<warning>Search failed: {e}. Try again.</warning>")
-                );
+                console.info(&console_format!(
+                    "<warning>Search failed: {e}. Try again.</warning>"
+                ));
                 continue;
             }
         };
@@ -184,21 +185,18 @@ async fn interactive_search_packages(
             .collect();
 
         if filtered.is_empty() {
-            eprintln!(
-                "{}",
-                console_format!(
-                    "<warning>No new packages found for \"{query}\" (total: {total}).</warning>"
-                )
-            );
+            console.info(&console_format!(
+                "<warning>No new packages found for \"{query}\" (total: {total}).</warning>"
+            ));
             continue;
         }
 
-        eprintln!(
+        console.info(&format!(
             "\nFound {} package{} for \"{}\":",
             filtered.len(),
             if filtered.len() == 1 { "" } else { "s" },
             query
-        );
+        ));
 
         let name_width = filtered.iter().map(|r| r.name.len()).max().unwrap_or(0);
         for (idx, result) in filtered.iter().enumerate() {
@@ -207,15 +205,15 @@ async fn interactive_search_packages(
             } else {
                 format!(" — {}", result.description)
             };
-            eprintln!(
+            console.info(&format!(
                 "  [{idx}] {:<width$}{desc}",
                 result.name,
                 idx = idx + 1,
                 width = name_width,
-            );
+            ));
         }
-        eprintln!("  [0] Search again / enter full package name");
-        eprintln!();
+        console.info("  [0] Search again / enter full package name");
+        console.info("");
 
         // Ask user to pick
         eprint!("Enter package # or name (leave empty to finish): ");
@@ -243,10 +241,9 @@ async fn interactive_search_packages(
             } else if num <= filtered.len() {
                 filtered[num - 1].name.to_lowercase()
             } else {
-                eprintln!(
-                    "{}",
-                    console_format!("<warning>Invalid selection: {num}</warning>")
-                );
+                console.info(&console_format!(
+                    "<warning>Invalid selection: {num}</warning>"
+                ));
                 continue;
             }
         } else {
@@ -259,25 +256,21 @@ async fn interactive_search_packages(
             match validation::parse_require_string(&package_name) {
                 Ok((n, v)) => (n.to_lowercase(), v),
                 Err(e) => {
-                    eprintln!("{}", console_format!("<warning>Invalid: {e}</warning>"));
+                    console.info(&console_format!("<warning>Invalid: {e}</warning>"));
                     continue;
                 }
             }
         } else {
             if !validation::validate_package_name(&package_name) {
-                eprintln!(
-                    "{}",
-                    console_format!("<warning>Invalid package name: \"{package_name}\"</warning>")
-                );
+                console.info(&console_format!(
+                    "<warning>Invalid package name: \"{package_name}\"</warning>"
+                ));
                 continue;
             }
 
-            eprintln!(
-                "{}",
-                console_format!(
-                    "<info>Using version constraint for {package_name} from Packagist...</info>"
-                )
-            );
+            console.info(&console_format!(
+                "<info>Using version constraint for {package_name} from Packagist...</info>"
+            ));
 
             match packagist::fetch_package_versions(&package_name, None).await {
                 Ok(versions) => {
@@ -293,32 +286,23 @@ async fn interactive_search_packages(
                                     stability,
                                 )
                             };
-                            eprintln!(
-                                "{}",
-                                console_format!(
-                                    "<info>Using version {c} for {package_name}</info>"
-                                )
-                            );
+                            console.info(&console_format!(
+                                "<info>Using version {c} for {package_name}</info>"
+                            ));
                             (package_name, c)
                         }
                         None => {
-                            eprintln!(
-                                "{}",
-                                console_format!(
-                                    "<warning>Could not find a version of \"{package_name}\" matching your minimum-stability. Try specifying it explicitly.</warning>"
-                                )
-                            );
+                            console.info(&console_format!(
+                                "<warning>Could not find a version of \"{package_name}\" matching your minimum-stability. Try specifying it explicitly.</warning>"
+                            ));
                             continue;
                         }
                     }
                 }
                 Err(e) => {
-                    eprintln!(
-                        "{}",
-                        console_format!(
-                            "<warning>Could not fetch versions for \"{package_name}\": {e}</warning>"
-                        )
-                    );
+                    console.info(&console_format!(
+                        "<warning>Could not fetch versions for \"{package_name}\": {e}</warning>"
+                    ));
                     continue;
                 }
             }
@@ -392,8 +376,13 @@ pub async fn execute(
             })
             .unwrap_or(Stability::Stable);
 
-        let found =
-            interactive_search_packages(&already_required, preferred_stability, args.fixed).await?;
+        let found = interactive_search_packages(
+            &already_required,
+            preferred_stability,
+            args.fixed,
+            console,
+        )
+        .await?;
 
         if found.is_empty() {
             // Nothing selected — exit cleanly
@@ -470,11 +459,11 @@ pub async fn execute(
                     anyhow::bail!("Invalid package name: \"{name}\"");
                 }
 
-                println!(
-                    "{}",
-                    console_format!(
+                console.write_stdout(
+                    &console_format!(
                         "<info>Using version constraint for {name} from Packagist...</info>"
-                    )
+                    ),
+                    Verbosity::Normal,
                 );
 
                 let versions = packagist::fetch_package_versions(&name, None).await?;
@@ -497,9 +486,9 @@ pub async fn execute(
                     )
                 };
 
-                println!(
-                    "{}",
-                    console_format!("<info>Using version {constraint} for {name}</info>")
+                console.write_stdout(
+                    &console_format!("<info>Using version {constraint} for {name}</info>"),
+                    Verbosity::Normal,
                 );
 
                 (name, constraint)
@@ -525,23 +514,17 @@ pub async fn execute(
         if *is_dev {
             // Adding to require-dev: check require (prod)
             if raw.require.contains_key(name.as_str()) {
-                eprintln!(
-                    "{}",
-                    console_format!(
-                        "<warning>{name} is currently present in the require key and will be moved to the require-dev key.</warning>"
-                    )
-                );
+                console.info(&console_format!(
+                    "<warning>{name} is currently present in the require key and will be moved to the require-dev key.</warning>"
+                ));
                 raw.require.remove(name.as_str());
             }
         } else {
             // Adding to require (prod): check require-dev
             if raw.require_dev.contains_key(name.as_str()) {
-                eprintln!(
-                    "{}",
-                    console_format!(
-                        "<warning>{name} is currently present in the require-dev key and will be moved to the require key.</warning>"
-                    )
-                );
+                console.info(&console_format!(
+                    "<warning>{name} is currently present in the require-dev key and will be moved to the require key.</warning>"
+                ));
                 raw.require_dev.remove(name.as_str());
             }
         }
@@ -557,16 +540,16 @@ pub async fn execute(
         };
 
         if let Some(existing) = target.get(name) {
-            println!(
-                "{}",
-                console_format!(
+            console.write_stdout(
+                &console_format!(
                     "<comment>Updating {name} from {existing} to {constraint} in {section_name}</comment>"
-                )
+                ),
+                Verbosity::Normal,
             );
         } else {
-            println!(
-                "{}",
-                console_format!("<info>Adding {name} ({constraint}) to {section_name}</info>")
+            console.write_stdout(
+                &console_format!("<info>Adding {name} ({constraint}) to {section_name}</info>"),
+                Verbosity::Normal,
             );
         }
 
@@ -592,9 +575,9 @@ pub async fn execute(
 
     // Write back composer.json (unless --dry-run)
     if args.dry_run {
-        println!(
-            "{}",
-            console_format!("<comment>Dry run: composer.json not modified.</comment>")
+        console.write_stdout(
+            &console_format!("<comment>Dry run: composer.json not modified.</comment>"),
+            Verbosity::Normal,
         );
     } else {
         package::write_to_file(&raw, &composer_path)?;
@@ -602,11 +585,11 @@ pub async fn execute(
 
     // Handle --no-update: skip resolution entirely
     if args.no_update {
-        println!(
-            "{}",
-            console_format!(
+        console.write_stdout(
+            &console_format!(
                 "<comment>Not updating dependencies, only modifying composer.json.</comment>"
-            )
+            ),
+            Verbosity::Normal,
         );
         return Ok(());
     }
@@ -674,16 +657,20 @@ pub async fn execute(
         Err(e) => {
             // Fix 1: Revert composer.json (and composer.lock) on failure
             if !args.dry_run {
-                eprintln!(
-                    "Installation failed, reverting ./composer.json to its original content."
+                console.write_error(
+                    "Installation failed, reverting ./composer.json to its original content.",
                 );
                 if let Err(revert_err) = std::fs::write(&composer_path, &original_composer_json) {
-                    eprintln!("Warning: Failed to revert composer.json: {revert_err}");
+                    console.write_error(&format!(
+                        "Warning: Failed to revert composer.json: {revert_err}"
+                    ));
                 }
                 if let Some(ref lock_content) = original_composer_lock
                     && let Err(revert_err) = std::fs::write(&lock_path_for_backup, lock_content)
                 {
-                    eprintln!("Warning: Failed to revert composer.lock: {revert_err}");
+                    console.write_error(&format!(
+                        "Warning: Failed to revert composer.lock: {revert_err}"
+                    ));
                 }
             }
             return Err(mozart_core::exit_code::bail(

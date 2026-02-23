@@ -1,4 +1,5 @@
 use clap::Args;
+use mozart_core::console::{Console, Verbosity};
 use serde::Serialize;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -31,7 +32,7 @@ struct LicenseEntry {
 pub async fn execute(
     args: &LicensesArgs,
     cli: &super::Cli,
-    _console: &mozart_core::console::Console,
+    console: &mozart_core::console::Console,
 ) -> anyhow::Result<()> {
     let working_dir = match &cli.working_dir {
         Some(dir) => PathBuf::from(dir),
@@ -87,9 +88,9 @@ pub async fn execute(
 
     // Render output
     match format {
-        "json" => render_json(&root_name, &root_version, &root_licenses, &entries)?,
-        "summary" => render_summary(&entries),
-        _ => render_text(&root_name, &root_version, &root_licenses, &entries),
+        "json" => render_json(&root_name, &root_version, &root_licenses, &entries, console)?,
+        "summary" => render_summary(&entries, console),
+        _ => render_text(&root_name, &root_version, &root_licenses, &entries, console),
     }
 
     Ok(())
@@ -202,27 +203,35 @@ fn render_text(
     root_version: &str,
     root_licenses: &[String],
     entries: &[LicenseEntry],
+    console: &Console,
 ) {
     let license_display = if root_licenses.is_empty() {
         "none".to_string()
     } else {
         root_licenses.join(", ")
     };
-    // Print root package header
-    println!("Name: {}", mozart_core::console::comment(root_name));
-    println!("Version: {}", mozart_core::console::comment(root_version));
-    println!(
-        "Licenses: {}",
-        mozart_core::console::comment(&license_display)
+    console.write_stdout(
+        &format!("Name: {}", mozart_core::console::comment(root_name)),
+        Verbosity::Normal,
     );
-    println!("Dependencies:");
-    println!();
+    console.write_stdout(
+        &format!("Version: {}", mozart_core::console::comment(root_version)),
+        Verbosity::Normal,
+    );
+    console.write_stdout(
+        &format!(
+            "Licenses: {}",
+            mozart_core::console::comment(&license_display)
+        ),
+        Verbosity::Normal,
+    );
+    console.write_stdout("Dependencies:", Verbosity::Normal);
+    console.write_stdout("", Verbosity::Normal);
 
     if entries.is_empty() {
         return;
     }
 
-    // Compute column widths (factor in header strings for minimum width)
     let name_width = entries
         .iter()
         .map(|e| e.name.len())
@@ -236,13 +245,15 @@ fn render_text(
         .unwrap_or(0)
         .max("Version".len());
 
-    // Print header row
-    println!(
-        "{:<nw$}  {:<vw$}  Licenses",
-        "Name",
-        "Version",
-        nw = name_width,
-        vw = version_width
+    console.write_stdout(
+        &format!(
+            "{:<nw$}  {:<vw$}  Licenses",
+            "Name",
+            "Version",
+            nw = name_width,
+            vw = version_width
+        ),
+        Verbosity::Normal,
     );
 
     for entry in entries {
@@ -251,13 +262,16 @@ fn render_text(
         } else {
             entry.licenses.join(", ")
         };
-        println!(
-            "{:<nw$}  {:<vw$}  {}",
-            entry.name,
-            entry.version,
-            license_str,
-            nw = name_width,
-            vw = version_width
+        console.write_stdout(
+            &format!(
+                "{:<nw$}  {:<vw$}  {}",
+                entry.name,
+                entry.version,
+                license_str,
+                nw = name_width,
+                vw = version_width
+            ),
+            Verbosity::Normal,
         );
     }
 }
@@ -267,6 +281,7 @@ fn render_json(
     root_version: &str,
     root_licenses: &[String],
     entries: &[LicenseEntry],
+    console: &Console,
 ) -> anyhow::Result<()> {
     let root_license_arr: Vec<serde_json::Value> = root_licenses
         .iter()
@@ -300,21 +315,20 @@ fn render_json(
     let formatter = serde_json::ser::PrettyFormatter::with_indent(b"    ");
     let mut ser = serde_json::Serializer::with_formatter(buf, formatter);
     output.serialize(&mut ser)?;
-    println!("{}", String::from_utf8(ser.into_inner())?);
+    console.write_stdout(&String::from_utf8(ser.into_inner())?, Verbosity::Normal);
     Ok(())
 }
 
-fn render_summary(entries: &[LicenseEntry]) {
+fn render_summary(entries: &[LicenseEntry], console: &Console) {
     let counts = count_licenses(entries);
 
     if counts.is_empty() {
-        println!("No dependencies found.");
+        console.write_stdout("No dependencies found.", Verbosity::Normal);
         return;
     }
 
     const COL2_HEADER: &str = "Number of dependencies";
 
-    // Compute column widths (at least as wide as the header strings)
     let license_width = counts
         .iter()
         .map(|(l, _)| l.len())
@@ -328,34 +342,43 @@ fn render_summary(entries: &[LicenseEntry]) {
         .unwrap_or(0)
         .max(COL2_HEADER.len());
 
-    // Each column is padded with 1 space on each side, so the border dash count = width + 2
     let border_col1 = "-".repeat(license_width + 2);
     let border_col2 = "-".repeat(count_width + 2);
 
-    // Top border
-    println!(" {} {}", border_col1, border_col2);
-    // Header row (two leading spaces = one space indent + one space left-padding)
-    println!(
-        "  {:<lw$}   {:<cw$}",
-        "License",
-        COL2_HEADER,
-        lw = license_width,
-        cw = count_width
+    console.write_stdout(
+        &format!(" {} {}", border_col1, border_col2),
+        Verbosity::Normal,
     );
-    // Mid border
-    println!(" {} {}", border_col1, border_col2);
-    // Data rows
-    for (license, count) in &counts {
-        println!(
+    console.write_stdout(
+        &format!(
             "  {:<lw$}   {:<cw$}",
-            license,
-            count,
+            "License",
+            COL2_HEADER,
             lw = license_width,
             cw = count_width
+        ),
+        Verbosity::Normal,
+    );
+    console.write_stdout(
+        &format!(" {} {}", border_col1, border_col2),
+        Verbosity::Normal,
+    );
+    for (license, count) in &counts {
+        console.write_stdout(
+            &format!(
+                "  {:<lw$}   {:<cw$}",
+                license,
+                count,
+                lw = license_width,
+                cw = count_width
+            ),
+            Verbosity::Normal,
         );
     }
-    // Bottom border
-    println!(" {} {}", border_col1, border_col2);
+    console.write_stdout(
+        &format!(" {} {}", border_col1, border_col2),
+        Verbosity::Normal,
+    );
 }
 
 // ─── Tests ───────────────────────────────────────────────────────────────────

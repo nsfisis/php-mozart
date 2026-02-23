@@ -1,5 +1,6 @@
 use clap::Args;
 use mozart_core::console;
+use mozart_core::console::Verbosity;
 use mozart_core::console_format;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -43,7 +44,7 @@ struct Suggestion {
 pub async fn execute(
     args: &SuggestsArgs,
     cli: &super::Cli,
-    _console: &console::Console,
+    console: &console::Console,
 ) -> anyhow::Result<()> {
     let working_dir = match &cli.working_dir {
         Some(dir) => PathBuf::from(dir),
@@ -134,26 +135,29 @@ pub async fn execute(
         let shown = filtered.len();
         let diff = total_before_direct_filter.saturating_sub(shown);
         if diff > 0 {
-            println!(
-                "{} by transitive dependencies can be shown with {}",
-                console_format!("<info>{diff} additional suggestions</info>"),
-                console_format!("<info>--all</info>"),
+            console.write_stdout(
+                &format!(
+                    "{} by transitive dependencies can be shown with {}",
+                    console_format!("<info>{diff} additional suggestions</info>"),
+                    console_format!("<info>--all</info>"),
+                ),
+                Verbosity::Normal,
             );
         }
     }
 
     // 6. Render output
     if args.list {
-        render_list(&filtered);
+        render_list(&filtered, console);
     } else if args.by_suggestion && !args.by_package {
-        render_by_suggestion(&filtered);
+        render_by_suggestion(&filtered, console);
     } else if args.by_package && args.by_suggestion {
-        render_by_package(&filtered);
-        println!("{}", "-".repeat(78));
-        render_by_suggestion(&filtered);
+        render_by_package(&filtered, console);
+        console.write_stdout(&"-".repeat(78), Verbosity::Normal);
+        render_by_suggestion(&filtered, console);
     } else {
         // Default: by-package
-        render_by_package(&filtered);
+        render_by_package(&filtered, console);
     }
 
     Ok(())
@@ -431,64 +435,70 @@ fn deduplicate_suggestions(suggestions: Vec<Suggestion>) -> Vec<Suggestion> {
 
 // ─── Rendering ───────────────────────────────────────────────────────────────
 
-fn render_list(suggestions: &[&Suggestion]) {
+fn render_list(suggestions: &[&Suggestion], console: &console::Console) {
     let mut targets: Vec<&str> = suggestions.iter().map(|s| s.target.as_str()).collect();
     targets.sort_unstable();
     targets.dedup();
     for t in targets {
-        println!("{}", console_format!("<info>{}</info>", t));
+        console.write_stdout(&console_format!("<info>{}</info>", t), Verbosity::Normal);
     }
 }
 
-fn render_by_package(suggestions: &[&Suggestion]) {
+fn render_by_package(suggestions: &[&Suggestion], console: &console::Console) {
     // Group by source, preserving insertion order via BTreeMap (sorted)
     let mut grouped: BTreeMap<&str, Vec<&Suggestion>> = BTreeMap::new();
     for s in suggestions {
         grouped.entry(s.source.as_str()).or_default().push(s);
     }
     for (source, items) in &grouped {
-        println!(
-            "{}",
-            console_format!("<comment>{}</comment> suggests:", source)
+        console.write_stdout(
+            &console_format!("<comment>{}</comment> suggests:", source),
+            Verbosity::Normal,
         );
         for s in items {
             let reason = sanitize_reason(&s.reason);
             if reason.is_empty() {
-                println!("{}", console_format!(" - <info>{}</info>", &s.target));
+                console.write_stdout(
+                    &console_format!(" - <info>{}</info>", &s.target),
+                    Verbosity::Normal,
+                );
             } else {
-                println!(
-                    "{}",
-                    console_format!(" - <info>{}</info>: {}", &s.target, reason)
+                console.write_stdout(
+                    &console_format!(" - <info>{}</info>: {}", &s.target, reason),
+                    Verbosity::Normal,
                 );
             }
         }
-        println!();
+        console.write_stdout("", Verbosity::Normal);
     }
 }
 
-fn render_by_suggestion(suggestions: &[&Suggestion]) {
+fn render_by_suggestion(suggestions: &[&Suggestion], console: &console::Console) {
     // Group by target
     let mut grouped: BTreeMap<&str, Vec<&Suggestion>> = BTreeMap::new();
     for s in suggestions {
         grouped.entry(s.target.as_str()).or_default().push(s);
     }
     for (target, items) in &grouped {
-        println!(
-            "{}",
-            console_format!("<info>{}</info> is suggested by:", target)
+        console.write_stdout(
+            &console_format!("<info>{}</info> is suggested by:", target),
+            Verbosity::Normal,
         );
         for s in items {
             let reason = sanitize_reason(&s.reason);
             if reason.is_empty() {
-                println!("{}", console_format!(" - <comment>{}</comment>", &s.source));
+                console.write_stdout(
+                    &console_format!(" - <comment>{}</comment>", &s.source),
+                    Verbosity::Normal,
+                );
             } else {
-                println!(
-                    "{}",
-                    console_format!(" - <comment>{}</comment>: {}", &s.source, reason)
+                console.write_stdout(
+                    &console_format!(" - <comment>{}</comment>: {}", &s.source, reason),
+                    Verbosity::Normal,
                 );
             }
         }
-        println!();
+        console.write_stdout("", Verbosity::Normal);
     }
 }
 

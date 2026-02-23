@@ -1,4 +1,5 @@
 use clap::Args;
+use mozart_core::console::{Console, Verbosity};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
@@ -83,7 +84,10 @@ pub async fn execute(
     if requirements.is_empty() {
         // No platform requirements to check
         if format == "json" {
-            println!("{}", serde_json::to_string_pretty(&serde_json::json!([]))?);
+            console.write_stdout(
+                &serde_json::to_string_pretty(&serde_json::json!([]))?,
+                Verbosity::Normal,
+            );
         }
         return Ok(());
     }
@@ -99,8 +103,8 @@ pub async fn execute(
 
     // Render output
     match format {
-        "json" => render_json(&results)?,
-        _ => render_text(&results),
+        "json" => render_json(&results, console)?,
+        _ => render_text(&results, console),
     }
 
     if exit_code != 0 {
@@ -353,7 +357,7 @@ fn determine_exit_code(results: &[CheckResult]) -> i32 {
 
 // ─── Rendering ───────────────────────────────────────────────────────────────
 
-fn render_text(results: &[CheckResult]) {
+fn render_text(results: &[CheckResult], console: &Console) {
     if results.is_empty() {
         return;
     }
@@ -370,11 +374,14 @@ fn render_text(results: &[CheckResult]) {
 
         match result.status {
             CheckStatus::Success => {
-                println!(
-                    "{}  {}  {}",
-                    mozart_core::console::info(&padded_name),
-                    mozart_core::console::comment(&padded_version),
-                    mozart_core::console::info("success"),
+                console.write_stdout(
+                    &format!(
+                        "{}  {}  {}",
+                        mozart_core::console::info(&padded_name),
+                        mozart_core::console::comment(&padded_version),
+                        mozart_core::console::info("success"),
+                    ),
+                    Verbosity::Normal,
                 );
             }
             CheckStatus::Failed => {
@@ -383,13 +390,16 @@ fn render_text(results: &[CheckResult]) {
                     .as_ref()
                     .map(|(c, p)| (c.as_str(), p.as_str()))
                     .unwrap_or(("", ""));
-                println!(
-                    "{}  {}  {} requires {} ({})",
-                    mozart_core::console::comment(&padded_name),
-                    mozart_core::console::comment(&padded_version),
-                    mozart_core::console::error("failed"),
-                    provider,
-                    constraint,
+                console.write_stdout(
+                    &format!(
+                        "{}  {}  {} requires {} ({})",
+                        mozart_core::console::comment(&padded_name),
+                        mozart_core::console::comment(&padded_version),
+                        mozart_core::console::error("failed"),
+                        provider,
+                        constraint,
+                    ),
+                    Verbosity::Normal,
                 );
             }
             CheckStatus::Missing => {
@@ -398,20 +408,23 @@ fn render_text(results: &[CheckResult]) {
                     .as_ref()
                     .map(|(c, p)| (c.as_str(), p.as_str()))
                     .unwrap_or(("*", ""));
-                println!(
-                    "{}  {}  {} requires {} ({})",
-                    mozart_core::console::comment(&padded_name),
-                    mozart_core::console::comment(&padded_version),
-                    mozart_core::console::error("missing"),
-                    provider,
-                    constraint,
+                console.write_stdout(
+                    &format!(
+                        "{}  {}  {} requires {} ({})",
+                        mozart_core::console::comment(&padded_name),
+                        mozart_core::console::comment(&padded_version),
+                        mozart_core::console::error("missing"),
+                        provider,
+                        constraint,
+                    ),
+                    Verbosity::Normal,
                 );
             }
         }
     }
 }
 
-fn render_json(results: &[CheckResult]) -> anyhow::Result<()> {
+fn render_json(results: &[CheckResult], console: &Console) -> anyhow::Result<()> {
     let json_results: Vec<serde_json::Value> = results
         .iter()
         .map(|r| {
@@ -437,7 +450,10 @@ fn render_json(results: &[CheckResult]) -> anyhow::Result<()> {
         })
         .collect();
 
-    println!("{}", serde_json::to_string_pretty(&json_results)?);
+    console.write_stdout(
+        &serde_json::to_string_pretty(&json_results)?,
+        Verbosity::Normal,
+    );
     Ok(())
 }
 

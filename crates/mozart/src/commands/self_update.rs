@@ -1,4 +1,5 @@
 use clap::Args;
+use mozart_core::console::Verbosity;
 use mozart_core::console_format;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -54,7 +55,7 @@ const BACKUP_EXTENSION: &str = ".old";
 pub async fn execute(
     args: &SelfUpdateArgs,
     _cli: &super::Cli,
-    _console: &mozart_core::console::Console,
+    console: &mozart_core::console::Console,
 ) -> anyhow::Result<()> {
     let current_exe = std::env::current_exe()
         .map_err(|e| anyhow::anyhow!("Could not determine current executable path: {e}"))?;
@@ -68,9 +69,9 @@ pub async fn execute(
     })?;
 
     if args.rollback {
-        rollback(&current_exe, &data_dir)
+        rollback(&current_exe, &data_dir, console)
     } else {
-        update(args, &current_exe, &data_dir).await
+        update(args, &current_exe, &data_dir, console).await
     }
 }
 
@@ -227,6 +228,7 @@ async fn download_asset(
     asset: &GitHubAsset,
     dest: &Path,
     show_progress: bool,
+    console: &mozart_core::console::Console,
 ) -> anyhow::Result<()> {
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(300))
@@ -272,7 +274,7 @@ async fn download_asset(
     }
 
     if show_progress && total_bytes > 0 {
-        eprintln!(); // newline after progress
+        console.info(""); // newline after progress
     }
 
     Ok(())
@@ -280,7 +282,12 @@ async fn download_asset(
 
 // ─── Core update flow ─────────────────────────────────────────────────────────
 
-async fn update(args: &SelfUpdateArgs, current_exe: &Path, data_dir: &Path) -> anyhow::Result<()> {
+async fn update(
+    args: &SelfUpdateArgs,
+    current_exe: &Path,
+    data_dir: &Path,
+    console: &mozart_core::console::Console,
+) -> anyhow::Result<()> {
     let current_version = get_current_version();
     let channel = effective_channel(args.preview);
 
@@ -298,33 +305,38 @@ async fn update(args: &SelfUpdateArgs, current_exe: &Path, data_dir: &Path) -> a
 
     // If no explicit version was requested and we're already up-to-date, bail early
     if args.version.is_none() && target_version == current_version {
-        println!(
-            "{}",
-            console_format!(
+        console.write_stdout(
+            &console_format!(
                 "<info>You are already using the latest available Mozart version {current_version} ({channel} channel).</info>"
-            )
+            ),
+            Verbosity::Normal,
         );
 
         if args.clean_backups {
             // Preserve the most recent backup
             let latest = find_latest_backup(data_dir).ok();
             clean_backups(data_dir, latest.as_deref())?;
-            println!(
-                "{}",
-                console_format!("<comment>Old backups removed.</comment>")
+            console.write_stdout(
+                &console_format!("<comment>Old backups removed.</comment>"),
+                Verbosity::Normal,
             );
         }
 
         return Ok(());
     }
 
-    println!("Upgrading to version {target_version} ({channel} channel).");
+    console.info(&format!(
+        "Upgrading to version {target_version} ({channel} channel)."
+    ));
 
     // Find the platform asset
     let asset_name = platform_asset_name()?;
     let asset = find_asset(target_release, &asset_name)?;
 
-    println!("Downloading {} ({} bytes)...", asset.name, asset.size);
+    console.info(&format!(
+        "Downloading {} ({} bytes)...",
+        asset.name, asset.size
+    ));
 
     // Download to a tempfile
     let tmp = tempfile::Builder::new()
@@ -333,7 +345,7 @@ async fn update(args: &SelfUpdateArgs, current_exe: &Path, data_dir: &Path) -> a
         .map_err(|e| anyhow::anyhow!("Could not create temporary file: {e}"))?;
     let tmp_path = tmp.path().to_path_buf();
 
-    download_asset(asset, &tmp_path, !args.no_progress).await?;
+    download_asset(asset, &tmp_path, !args.no_progress, console).await?;
 
     // Set executable permission on Unix
     #[cfg(unix)]
@@ -362,19 +374,21 @@ async fn update(args: &SelfUpdateArgs, current_exe: &Path, data_dir: &Path) -> a
     // tmp is still in scope and will be cleaned up; the replace succeeded
     drop(tmp);
 
-    println!(
-        "{}",
-        console_format!(
+    console.write_stdout(
+        &console_format!(
             "<info>Mozart updated successfully from {current_version} to {target_version}</info>"
-        )
+        ),
+        Verbosity::Normal,
     );
-    println!("Use `mozart self-update --rollback` to return to version {current_version}");
+    console.info(&format!(
+        "Use `mozart self-update --rollback` to return to version {current_version}"
+    ));
 
     if args.clean_backups {
         clean_backups(data_dir, Some(&backup_path))?;
-        println!(
-            "{}",
-            console_format!("<comment>Old backups removed.</comment>")
+        console.write_stdout(
+            &console_format!("<comment>Old backups removed.</comment>"),
+            Verbosity::Normal,
         );
     }
 
@@ -383,11 +397,15 @@ async fn update(args: &SelfUpdateArgs, current_exe: &Path, data_dir: &Path) -> a
 
 // ─── Rollback ─────────────────────────────────────────────────────────────────
 
-fn rollback(current_exe: &Path, data_dir: &Path) -> anyhow::Result<()> {
+fn rollback(
+    current_exe: &Path,
+    data_dir: &Path,
+    console: &mozart_core::console::Console,
+) -> anyhow::Result<()> {
     let backup = find_latest_backup(data_dir)?;
     let backup_version = version_from_backup(&backup);
 
-    println!("Rolling back to version {backup_version}...");
+    console.info(&format!("Rolling back to version {backup_version}..."));
 
     // Set executable permission on Unix before replacing
     #[cfg(unix)]
@@ -402,9 +420,9 @@ fn rollback(current_exe: &Path, data_dir: &Path) -> anyhow::Result<()> {
     self_replace::self_replace(&backup)
         .map_err(|e| anyhow::anyhow!("Could not restore backup: {e}"))?;
 
-    println!(
-        "{}",
-        console_format!("<info>Rollback successful. Restored version {backup_version}</info>")
+    console.write_stdout(
+        &console_format!("<info>Rollback successful. Restored version {backup_version}</info>"),
+        Verbosity::Normal,
     );
 
     let _ = current_exe; // suppress unused warning

@@ -519,9 +519,12 @@ fn sample_versions_from_constraint(
 /// Print results as a flat table.
 ///
 /// Columns: package name | version | link description | link constraint
-pub fn print_table(results: &[DependencyResult]) {
+pub fn print_table(results: &[DependencyResult], console: &mozart_core::console::Console) {
     if results.is_empty() {
-        println!("{}", mozart_core::console::info("No relationships found."));
+        console.write_stdout(
+            &format!("{}", mozart_core::console::info("No relationships found.")),
+            mozart_core::console::Verbosity::Normal,
+        );
         return;
     }
 
@@ -551,15 +554,18 @@ pub fn print_table(results: &[DependencyResult]) {
         if !seen.insert(key) {
             continue;
         }
-        println!(
-            "{:<name_w$}  {:<ver_w$}  {:<desc_w$}  {}",
-            mozart_core::console::info(&r.package_name),
-            mozart_core::console::comment(&r.package_version),
-            r.link_description,
-            mozart_core::console::comment(&r.link_constraint),
-            name_w = name_w,
-            ver_w = ver_w,
-            desc_w = desc_w,
+        console.write_stdout(
+            &format!(
+                "{:<name_w$}  {:<ver_w$}  {:<desc_w$}  {}",
+                mozart_core::console::info(&r.package_name),
+                mozart_core::console::comment(&r.package_version),
+                r.link_description,
+                mozart_core::console::comment(&r.link_constraint),
+                name_w = name_w,
+                ver_w = ver_w,
+                desc_w = desc_w,
+            ),
+            mozart_core::console::Verbosity::Normal,
         );
     }
 }
@@ -573,9 +579,16 @@ pub fn print_table(results: &[DependencyResult]) {
 /// └─ vendor/b  2.0.0  requires  ^2.0
 ///    └─ root/project  ROOT  requires  ^2.0
 /// ```
-pub fn print_tree(results: &[DependencyResult], depth: usize) {
+pub fn print_tree(
+    results: &[DependencyResult],
+    depth: usize,
+    console: &mozart_core::console::Console,
+) {
     if results.is_empty() && depth == 0 {
-        println!("{}", mozart_core::console::info("No relationships found."));
+        console.write_stdout(
+            &format!("{}", mozart_core::console::info("No relationships found.")),
+            mozart_core::console::Verbosity::Normal,
+        );
         return;
     }
 
@@ -584,17 +597,20 @@ pub fn print_tree(results: &[DependencyResult], depth: usize) {
         let is_last = i + 1 == count;
         let prefix = tree_prefix(depth, is_last);
 
-        println!(
-            "{}{:<}  {}  {}  {}",
-            prefix,
-            mozart_core::console::info(&r.package_name),
-            mozart_core::console::comment(&r.package_version),
-            r.link_description,
-            mozart_core::console::comment(&r.link_constraint),
+        console.write_stdout(
+            &format!(
+                "{}{:<}  {}  {}  {}",
+                prefix,
+                mozart_core::console::info(&r.package_name),
+                mozart_core::console::comment(&r.package_version),
+                r.link_description,
+                mozart_core::console::comment(&r.link_constraint),
+            ),
+            mozart_core::console::Verbosity::Normal,
         );
 
         if !r.children.is_empty() {
-            print_tree(&r.children, depth + 1);
+            print_tree(&r.children, depth + 1, console);
         }
     }
 }
@@ -777,11 +793,13 @@ mod tests {
 
     #[test]
     fn test_print_table_empty() {
-        print_table(&[]);
+        let console = mozart_core::console::Console::new(0, false, false, false, false);
+        print_table(&[], &console);
     }
 
     #[test]
     fn test_print_table_single() {
+        let console = mozart_core::console::Console::new(0, false, false, false, false);
         let results = vec![DependencyResult {
             package_name: "vendor/a".to_string(),
             package_version: "1.0.0".to_string(),
@@ -790,16 +808,18 @@ mod tests {
             link_constraint: "^2.0".to_string(),
             children: vec![],
         }];
-        print_table(&results);
+        print_table(&results, &console);
     }
 
     #[test]
     fn test_print_tree_empty() {
-        print_tree(&[], 0);
+        let console = mozart_core::console::Console::new(0, false, false, false, false);
+        print_tree(&[], 0, &console);
     }
 
     #[test]
     fn test_print_tree_nested() {
+        let console = mozart_core::console::Console::new(0, false, false, false, false);
         let results = vec![DependencyResult {
             package_name: "vendor/a".to_string(),
             package_version: "1.0.0".to_string(),
@@ -815,6 +835,6 @@ mod tests {
                 children: vec![],
             }],
         }];
-        print_tree(&results, 0);
+        print_tree(&results, 0, &console);
     }
 }

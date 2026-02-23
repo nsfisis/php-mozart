@@ -504,7 +504,7 @@ fn load_config_section(
 pub async fn execute(
     args: &ConfigArgs,
     cli: &super::Cli,
-    _console: &mozart_core::console::Console,
+    console: &mozart_core::console::Console,
 ) -> anyhow::Result<()> {
     // 1. Handle --editor mode
     if args.editor {
@@ -526,7 +526,7 @@ pub async fn execute(
     }
 
     // 4b. Read mode
-    execute_read(args, cli, &config_file_path)
+    execute_read(args, cli, &config_file_path, console)
 }
 
 // ─── execute_editor() ────────────────────────────────────────────────────────
@@ -895,6 +895,7 @@ fn execute_read(
     args: &ConfigArgs,
     cli: &super::Cli,
     config_file_path: &Path,
+    console: &mozart_core::console::Console,
 ) -> anyhow::Result<()> {
     // Build the effective config for config-section keys.
     let mut config = ComposerConfig::defaults();
@@ -934,20 +935,23 @@ fn execute_read(
 
     if args.list {
         for (key, value) in &config.values {
-            println!("[{}] {}", key, render_value(value));
+            console.write_stdout(
+                &format!("[{}] {}", key, render_value(value)),
+                mozart_core::console::Verbosity::Quiet,
+            );
         }
         return Ok(());
     }
 
     match &args.setting_key {
         None => {
-            eprintln!(
+            console.error(&format!(
                 "{}",
                 mozart_core::console::error(
                     "No command specified. Use --list to show all config values, \
-                     or provide a setting key."
+                         or provide a setting key."
                 )
-            );
+            ));
             return Err(mozart_core::exit_code::bail_silent(
                 mozart_core::exit_code::GENERAL_ERROR,
             ));
@@ -959,7 +963,10 @@ fn execute_read(
                 if let Some(repos) = raw["repositories"].as_array() {
                     for entry in repos {
                         if entry.get("name").and_then(|n| n.as_str()) == Some(repo_name) {
-                            println!("{}", render_value(entry));
+                            console.write_stdout(
+                                &render_value(entry),
+                                mozart_core::console::Verbosity::Quiet,
+                            );
                             return Ok(());
                         }
                     }
@@ -971,7 +978,7 @@ fn execute_read(
             if key.starts_with("extra.") || key.starts_with("suggest.") {
                 let raw = read_json_file(config_file_path, args.global)?;
                 if let Some(v) = get_nested(&raw, key) {
-                    println!("{}", render_value(v));
+                    console.write_stdout(&render_value(v), mozart_core::console::Verbosity::Quiet);
                     return Ok(());
                 }
                 return Err(anyhow!("Setting \"{}\" does not exist.", key));
@@ -981,7 +988,7 @@ fn execute_read(
             if CONFIGURABLE_PACKAGE_PROPERTIES.contains(&key.as_str()) {
                 let raw = read_json_file(config_file_path, args.global)?;
                 if let Some(v) = raw.get(key.as_str()) {
-                    println!("{}", render_value(v));
+                    console.write_stdout(&render_value(v), mozart_core::console::Verbosity::Quiet);
                     return Ok(());
                 }
                 // Fall through to config section lookup
@@ -990,7 +997,8 @@ fn execute_read(
             // 4. Standard config key lookup
             match config.get(key) {
                 Some(value) => {
-                    println!("{}", render_value(value));
+                    console
+                        .write_stdout(&render_value(value), mozart_core::console::Verbosity::Quiet);
                 }
                 None => {
                     return Err(anyhow!("Setting \"{}\" does not exist.", key));

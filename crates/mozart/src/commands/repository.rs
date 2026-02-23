@@ -59,16 +59,16 @@ fn resolve_file_path(args: &RepositoryArgs, cli: &super::Cli) -> anyhow::Result<
 pub async fn execute(
     args: &RepositoryArgs,
     cli: &super::Cli,
-    _console: &mozart_core::console::Console,
+    console: &mozart_core::console::Console,
 ) -> anyhow::Result<()> {
     let action = args.action.as_deref().unwrap_or("list");
 
     match action {
-        "list" | "ls" | "show" => execute_list(args, cli),
+        "list" | "ls" | "show" => execute_list(args, cli, console),
         "add" => execute_add(args, cli),
         "remove" | "rm" | "delete" => execute_remove(args, cli),
         "set-url" | "seturl" => execute_set_url(args, cli),
-        "get-url" | "geturl" => execute_get_url(args, cli),
+        "get-url" | "geturl" => execute_get_url(args, cli, console),
         "disable" => execute_disable(args, cli),
         "enable" => execute_enable(args, cli),
         _ => Err(anyhow!(
@@ -79,7 +79,11 @@ pub async fn execute(
 
 // ─── list ─────────────────────────────────────────────────────────────────────
 
-fn execute_list(args: &RepositoryArgs, cli: &super::Cli) -> anyhow::Result<()> {
+fn execute_list(
+    args: &RepositoryArgs,
+    cli: &super::Cli,
+    console: &mozart_core::console::Console,
+) -> anyhow::Result<()> {
     let file_path = resolve_file_path(args, cli)?;
     let json = read_json_file(&file_path, args.global)?;
 
@@ -90,7 +94,10 @@ fn execute_list(args: &RepositoryArgs, cli: &super::Cli) -> anyhow::Result<()> {
         if let Some(obj) = entry.as_object() {
             // Check for disabled repo entry like {"packagist.org": false}
             if let Some((key, _)) = obj.iter().find(|(_, v)| v == &&serde_json::json!(false)) {
-                println!("[{key}] disabled");
+                console.write_stdout(
+                    &format!("[{key}] disabled"),
+                    mozart_core::console::Verbosity::Normal,
+                );
                 if key == "packagist.org" {
                     has_packagist_disable = true;
                 }
@@ -108,11 +115,17 @@ fn execute_list(args: &RepositoryArgs, cli: &super::Cli) -> anyhow::Result<()> {
             .unwrap_or("unknown");
         let url = entry.get("url").and_then(|u| u.as_str()).unwrap_or("");
 
-        println!("[{name}] {repo_type} {url}");
+        console.write_stdout(
+            &format!("[{name}] {repo_type} {url}"),
+            mozart_core::console::Verbosity::Normal,
+        );
     }
 
     if !has_packagist_disable {
-        println!("[packagist.org] composer https://repo.packagist.org");
+        console.write_stdout(
+            "[packagist.org] composer https://repo.packagist.org",
+            mozart_core::console::Verbosity::Normal,
+        );
     }
 
     Ok(())
@@ -251,7 +264,11 @@ fn execute_set_url(args: &RepositoryArgs, cli: &super::Cli) -> anyhow::Result<()
 
 // ─── get-url ──────────────────────────────────────────────────────────────────
 
-fn execute_get_url(args: &RepositoryArgs, cli: &super::Cli) -> anyhow::Result<()> {
+fn execute_get_url(
+    args: &RepositoryArgs,
+    cli: &super::Cli,
+    console: &mozart_core::console::Console,
+) -> anyhow::Result<()> {
     let name = args
         .name
         .as_deref()
@@ -267,7 +284,10 @@ fn execute_get_url(args: &RepositoryArgs, cli: &super::Cli) -> anyhow::Result<()
             let entry = &repos[idx];
             match entry.get("url") {
                 Some(url_val) => {
-                    println!("{}", render_value(url_val));
+                    console.write_stdout(
+                        &render_value(url_val),
+                        mozart_core::console::Verbosity::Normal,
+                    );
                     Ok(())
                 }
                 None => Err(anyhow!("The \"{name}\" repository does not have a URL")),

@@ -1,4 +1,5 @@
 use clap::Args;
+use mozart_core::console::Verbosity;
 use mozart_core::console_format;
 use mozart_registry::packagist::SearchResult;
 use serde::Serialize;
@@ -104,7 +105,7 @@ fn passes_only_vendor(result: &SearchResult, query: &str) -> bool {
 pub async fn execute(
     args: &SearchArgs,
     _cli: &super::Cli,
-    _console: &mozart_core::console::Console,
+    console: &mozart_core::console::Console,
 ) -> anyhow::Result<()> {
     if args.only_name && args.only_vendor {
         anyhow::bail!("--only-name and --only-vendor cannot be used together");
@@ -115,12 +116,9 @@ pub async fn execute(
     let format = args.format.as_deref().unwrap_or("text");
 
     if !matches!(format, "text" | "json") {
-        eprintln!(
-            "{}",
-            console_format!(
-                "<error>Unsupported format \"{format}\". See help for supported formats.</error>"
-            )
-        );
+        console.error(&console_format!(
+            "<error>Unsupported format \"{format}\". See help for supported formats.</error>"
+        ));
         return Err(mozart_core::exit_code::bail_silent(
             mozart_core::exit_code::GENERAL_ERROR,
         ));
@@ -153,17 +151,19 @@ pub async fn execute(
         match format {
             "json" => {
                 let json = serde_json::to_string_pretty(&vendor_names)?;
-                println!("{json}");
+                console.write_stdout(&json, Verbosity::Normal);
             }
             _ => {
                 if vendor_names.is_empty() {
-                    eprintln!(
-                        "{}",
-                        console_format!("<warning>No packages found for \"{query}\"</warning>")
-                    );
+                    console.info(&console_format!(
+                        "<warning>No packages found for \"{query}\"</warning>"
+                    ));
                 } else {
                     for vendor in &vendor_names {
-                        println!("{}", console_format!("<info>{vendor}</info>"));
+                        console.write_stdout(
+                            &console_format!("<info>{vendor}</info>"),
+                            Verbosity::Normal,
+                        );
                     }
                 }
             }
@@ -179,14 +179,13 @@ pub async fn execute(
                 .map(|r| SearchResultOutput::from(*r))
                 .collect();
             let json = serde_json::to_string_pretty(&output)?;
-            println!("{json}");
+            console.write_stdout(&json, Verbosity::Normal);
         }
         _ => {
             if results.is_empty() {
-                eprintln!(
-                    "{}",
-                    console_format!("<warning>No packages found for \"{query}\"</warning>")
-                );
+                console.info(&console_format!(
+                    "<warning>No packages found for \"{query}\"</warning>"
+                ));
                 return Ok(());
             }
 
@@ -211,7 +210,10 @@ pub async fn execute(
                 };
 
                 let padding = " ".repeat(name_width.saturating_sub(result.name.len()));
-                println!("{}{}{}{}", result.name, padding, warning, desc_display);
+                console.write_stdout(
+                    &format!("{}{}{}{}", result.name, padding, warning, desc_display),
+                    Verbosity::Normal,
+                );
             }
         }
     }

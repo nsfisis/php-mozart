@@ -1,5 +1,6 @@
 use clap::Args;
 use colored::Colorize;
+use mozart_core::console::{Console, Verbosity};
 use std::path::{Path, PathBuf};
 
 #[derive(Args)]
@@ -25,32 +26,42 @@ enum CheckResult {
 /// Print "Checking {label}: OK/WARNING/FAIL/SKIP" and ratchet exit_code.
 ///
 /// Exit code ratchet: Warning → 1 (if currently 0), Fail → 2 (always overrides 1).
-fn print_check(label: &str, result: &CheckResult, exit_code: &mut i32) {
+fn print_check(label: &str, result: &CheckResult, exit_code: &mut i32, console: &Console) {
     match result {
         CheckResult::Ok(detail) => {
             let ok_str = "OK".green().bold();
             match detail {
-                Some(d) => println!("Checking {label}: {ok_str} ({d})"),
-                None => println!("Checking {label}: {ok_str}"),
+                Some(d) => {
+                    console.write_stdout(
+                        &format!("Checking {label}: {ok_str} ({d})"),
+                        Verbosity::Normal,
+                    );
+                }
+                None => {
+                    console.write_stdout(&format!("Checking {label}: {ok_str}"), Verbosity::Normal);
+                }
             }
         }
         CheckResult::Warning(msg) => {
             let warn_str = "WARNING".yellow().bold();
-            println!("Checking {label}: {warn_str}");
-            println!("  {}", msg.yellow());
+            console.write_stdout(&format!("Checking {label}: {warn_str}"), Verbosity::Normal);
+            console.write_stdout(&format!("  {}", msg.yellow()), Verbosity::Normal);
             if *exit_code < 1 {
                 *exit_code = 1;
             }
         }
         CheckResult::Fail(msg) => {
             let fail_str = "FAIL".red().bold();
-            println!("Checking {label}: {fail_str}");
-            println!("  {}", msg.red());
+            console.write_stdout(&format!("Checking {label}: {fail_str}"), Verbosity::Normal);
+            console.write_stdout(&format!("  {}", msg.red()), Verbosity::Normal);
             *exit_code = 2;
         }
         CheckResult::Skip(reason) => {
             let skip_str = "SKIP".cyan().bold();
-            println!("Checking {label}: {skip_str} ({reason})");
+            console.write_stdout(
+                &format!("Checking {label}: {skip_str} ({reason})"),
+                Verbosity::Normal,
+            );
         }
         CheckResult::Info(_) => {
             // Info results are not "checked" — use print_info_line instead.
@@ -59,9 +70,9 @@ fn print_check(label: &str, result: &CheckResult, exit_code: &mut i32) {
 }
 
 /// Print an informational line (not a check result).
-fn print_info_line(result: &CheckResult) {
+fn print_info_line(result: &CheckResult, console: &Console) {
     if let CheckResult::Info(msg) = result {
-        println!("{msg}");
+        console.write_stdout(msg, Verbosity::Normal);
     }
 }
 
@@ -389,7 +400,7 @@ fn check_cache_dir(cache_dir: &Path) -> CheckResult {
 pub async fn execute(
     _args: &DiagnoseArgs,
     cli: &super::Cli,
-    _console: &mozart_core::console::Console,
+    console: &Console,
 ) -> anyhow::Result<()> {
     let working_dir = match &cli.working_dir {
         Some(dir) => PathBuf::from(dir),
@@ -413,8 +424,8 @@ pub async fn execute(
     };
 
     // 1. Mozart version info
-    print_info_line(&check_version());
-    println!();
+    print_info_line(&check_version(), console);
+    console.write_stdout("", Verbosity::Normal);
 
     // 2. HTTPS connectivity to Packagist
     let https_result = check_http_connectivity("https://repo.packagist.org/packages.json").await;
@@ -422,6 +433,7 @@ pub async fn execute(
         "https connectivity to packagist",
         &https_result,
         &mut exit_code,
+        console,
     );
 
     // 3. HTTP connectivity to Packagist
@@ -430,27 +442,38 @@ pub async fn execute(
         "http connectivity to packagist",
         &http_result,
         &mut exit_code,
+        console,
     );
 
     // 4. GitHub API connectivity
     let github_result = check_github_api().await;
-    print_check("github.com connectivity", &github_result, &mut exit_code);
+    print_check(
+        "github.com connectivity",
+        &github_result,
+        &mut exit_code,
+        console,
+    );
 
     // 5. HTTP proxy config
     let proxy_result = check_http_proxy();
-    print_check("http proxy", &proxy_result, &mut exit_code);
+    print_check("http proxy", &proxy_result, &mut exit_code, console);
 
     // 6. composer.json validation
     let composer_json_result = check_composer_json(&working_dir);
-    print_check("composer.json", &composer_json_result, &mut exit_code);
+    print_check(
+        "composer.json",
+        &composer_json_result,
+        &mut exit_code,
+        console,
+    );
 
     // 7. composer.lock freshness
     let lock_result = check_composer_lock(&working_dir);
-    print_check("composer.lock", &lock_result, &mut exit_code);
+    print_check("composer.lock", &lock_result, &mut exit_code, console);
 
     // 8. Git availability
     let git_result = check_git();
-    print_check("git", &git_result, &mut exit_code);
+    print_check("git", &git_result, &mut exit_code, console);
 
     // 9. Disk space — working directory
     let disk_wd_result = check_disk_space(&working_dir, "working directory");
@@ -458,6 +481,7 @@ pub async fn execute(
         "disk free space (working directory)",
         &disk_wd_result,
         &mut exit_code,
+        console,
     );
 
     // 9b. Disk space — cache directory
@@ -466,22 +490,32 @@ pub async fn execute(
         "disk free space (cache directory)",
         &disk_cache_result,
         &mut exit_code,
+        console,
     );
 
     // 10. Cache directory status
     let cache_result = check_cache_dir(&cache_dir);
-    print_check("cache directory", &cache_result, &mut exit_code);
+    print_check("cache directory", &cache_result, &mut exit_code, console);
 
-    println!();
+    console.write_stdout("", Verbosity::Normal);
     if exit_code == 0 {
-        println!("{}", "No issues found.".green());
+        console.write_stdout(
+            &format!("{}", "No issues found.".green()),
+            Verbosity::Normal,
+        );
     } else if exit_code == 1 {
-        println!(
-            "{}",
-            "Some warnings were found. See above for details.".yellow()
+        console.write_stdout(
+            &format!(
+                "{}",
+                "Some warnings were found. See above for details.".yellow()
+            ),
+            Verbosity::Normal,
         );
     } else {
-        println!("{}", "Some errors were found. See above for details.".red());
+        console.write_stdout(
+            &format!("{}", "Some errors were found. See above for details.".red()),
+            Verbosity::Normal,
+        );
     }
 
     if exit_code != 0 {
@@ -666,10 +700,11 @@ mod tests {
 
     #[test]
     fn test_check_result_exit_code_ratcheting() {
+        let console = Console::new(0, false, false, false, false);
         let mut exit_code = 0i32;
 
         // Ok does not change exit code
-        print_check("label", &CheckResult::Ok(None), &mut exit_code);
+        print_check("label", &CheckResult::Ok(None), &mut exit_code, &console);
         assert_eq!(exit_code, 0);
 
         // Warning raises to 1
@@ -677,11 +712,12 @@ mod tests {
             "label",
             &CheckResult::Warning("warn".to_string()),
             &mut exit_code,
+            &console,
         );
         assert_eq!(exit_code, 1);
 
         // Another Ok does not lower from 1
-        print_check("label", &CheckResult::Ok(None), &mut exit_code);
+        print_check("label", &CheckResult::Ok(None), &mut exit_code, &console);
         assert_eq!(exit_code, 1);
 
         // Fail raises to 2
@@ -689,6 +725,7 @@ mod tests {
             "label",
             &CheckResult::Fail("fail".to_string()),
             &mut exit_code,
+            &console,
         );
         assert_eq!(exit_code, 2);
 
@@ -697,6 +734,7 @@ mod tests {
             "label",
             &CheckResult::Warning("another warn".to_string()),
             &mut exit_code,
+            &console,
         );
         assert_eq!(exit_code, 2);
     }

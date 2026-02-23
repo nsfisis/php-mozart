@@ -1,4 +1,5 @@
 use clap::Args;
+use mozart_core::console::Verbosity;
 use mozart_core::console_format;
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -154,34 +155,34 @@ pub async fn execute(
     let total_changes = require_changes.len() + require_dev_changes.len();
 
     if total_changes == 0 {
-        println!(
-            "{}",
-            console_format!(
+        console.write_stdout(
+            &console_format!(
                 "<info>No requirements to update in {}.</info>",
                 composer_json_path.display()
-            )
+            ),
+            Verbosity::Normal,
         );
         return Ok(());
     }
 
     if args.dry_run {
-        println!(
-            "{}",
-            console_format!(
+        console.write_stdout(
+            &console_format!(
                 "<info>{} would be updated with:</info>",
                 composer_json_path.display()
-            )
+            ),
+            Verbosity::Normal,
         );
         for (name, _old, new) in &require_changes {
-            println!(
-                "{}",
-                console_format!("<info> - require.{name}: {new}</info>")
+            console.write_stdout(
+                &console_format!("<info> - require.{name}: {new}</info>"),
+                Verbosity::Normal,
             );
         }
         for (name, _old, new) in &require_dev_changes {
-            println!(
-                "{}",
-                console_format!("<info> - require-dev.{name}: {new}</info>")
+            console.write_stdout(
+                &console_format!("<info> - require-dev.{name}: {new}</info>"),
+                Verbosity::Normal,
             );
         }
         // Return exit code 1 when dry-run detects changes (useful for CI to detect un-bumped constraints)
@@ -209,12 +210,12 @@ pub async fn execute(
     updated_lock.content_hash = new_hash;
     updated_lock.write_to_file(&lock_path)?;
 
-    println!(
-        "{}",
-        console_format!(
+    console.write_stdout(
+        &console_format!(
             "<info>{} has been updated ({total_changes} changes).</info>",
             composer_json_path.display()
-        )
+        ),
+        Verbosity::Normal,
     );
 
     Ok(())

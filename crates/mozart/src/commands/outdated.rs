@@ -100,7 +100,7 @@ struct OutdatedEntry {
 pub async fn execute(
     args: &OutdatedArgs,
     cli: &super::Cli,
-    _console: &mozart_core::console::Console,
+    console: &mozart_core::console::Console,
 ) -> anyhow::Result<()> {
     // Validate mutually exclusive level filters
     let level_count = args.major_only as u8 + args.minor_only as u8 + args.patch_only as u8;
@@ -214,8 +214,8 @@ pub async fn execute(
     // Render output
     let format = args.format.as_deref().unwrap_or("text");
     match format {
-        "json" => render_json(&entries)?,
-        _ => render_text(&entries),
+        "json" => render_json(&entries, console)?,
+        _ => render_text(&entries, console),
     }
 
     // --strict: exit with code 1 if any outdated packages exist
@@ -448,11 +448,13 @@ fn passes_level_filter(args: &OutdatedArgs, current: &str, latest: &str) -> bool
 
 // ─── Rendering ───────────────────────────────────────────────────────────────
 
-fn render_text(entries: &[OutdatedEntry]) {
+fn render_text(entries: &[OutdatedEntry], console: &mozart_core::console::Console) {
+    use mozart_core::console::Verbosity;
+
     if entries.is_empty() {
-        println!(
-            "{}",
-            mozart_core::console::info("All packages are up to date.")
+        console.write_stdout(
+            &mozart_core::console::info("All packages are up to date.").to_string(),
+            Verbosity::Normal,
         );
         return;
     }
@@ -490,17 +492,24 @@ fn render_text(entries: &[OutdatedEntry]) {
             ),
         };
 
-        println!(
-            "{} {} {} {}",
-            name_str,
-            mozart_core::console::comment(&cur_col),
-            lat_str,
-            entry.description
+        console.write_stdout(
+            &format!(
+                "{} {} {} {}",
+                name_str,
+                mozart_core::console::comment(&cur_col),
+                lat_str,
+                entry.description
+            ),
+            Verbosity::Normal,
         );
     }
 }
 
-fn render_json(entries: &[OutdatedEntry]) -> anyhow::Result<()> {
+fn render_json(
+    entries: &[OutdatedEntry],
+    console: &mozart_core::console::Console,
+) -> anyhow::Result<()> {
+    use mozart_core::console::Verbosity;
     let json_entries: Vec<serde_json::Value> = entries
         .iter()
         .map(|entry| {
@@ -521,7 +530,7 @@ fn render_json(entries: &[OutdatedEntry]) -> anyhow::Result<()> {
         .collect();
 
     let output = serde_json::json!({ "installed": json_entries });
-    println!("{}", serde_json::to_string_pretty(&output)?);
+    console.write_stdout(&serde_json::to_string_pretty(&output)?, Verbosity::Normal);
     Ok(())
 }
 
@@ -745,10 +754,17 @@ mod tests {
 
     // ── render_json (smoke test with no network) ──────────────────────────────
 
+    fn test_console() -> mozart_core::console::Console {
+        mozart_core::console::Console {
+            interactive: false,
+            verbosity: mozart_core::console::Verbosity::Normal,
+            decorated: false,
+        }
+    }
+
     #[test]
     fn test_render_json_empty() {
-        // Should succeed without error on empty input
-        render_json(&[]).unwrap();
+        render_json(&[], &test_console()).unwrap();
     }
 
     #[test]
@@ -771,6 +787,6 @@ mod tests {
                 is_direct: false,
             },
         ];
-        render_json(&entries).unwrap();
+        render_json(&entries, &test_console()).unwrap();
     }
 }

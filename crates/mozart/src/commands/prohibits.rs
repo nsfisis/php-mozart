@@ -71,21 +71,21 @@ pub async fn execute(
     )?;
 
     if results.is_empty() {
-        println!(
-            "{}",
-            console_format!(
+        console.write_stdout(
+            &console_format!(
                 "<info>{} {} can be installed.</info>",
                 args.package,
                 args.version
-            )
+            ),
+            mozart_core::console::Verbosity::Normal,
         );
         return Ok(());
     }
 
     if args.tree {
-        super::dependency::print_tree(&results, 0);
+        super::dependency::print_tree(&results, 0, console);
     } else {
-        super::dependency::print_table(&results);
+        super::dependency::print_table(&results, console);
     }
 
     // Fix #5: Print resolution hint message
@@ -114,10 +114,10 @@ pub async fn execute(
         })
         .unwrap_or("update");
 
-    eprintln!(
+    console.info(&format!(
         "Not finding what you were looking for? Try calling `composer {} \"{}:{}\" --dry-run` to get another view on the problem.",
         composer_command, args.package, args.version
-    );
+    ));
 
     // Fix #3: Return exit code 1 when prohibitors are found
     Err(mozart_core::exit_code::bail_silent(

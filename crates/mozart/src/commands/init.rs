@@ -348,7 +348,7 @@ async fn build_interactive(
 
     let mut require = parse_requirements(&args.require)?;
     let interactive_require =
-        interactive_search_packages("require", &require, preferred_stability).await?;
+        interactive_search_packages("require", &require, preferred_stability, console).await?;
     for (name, constraint) in interactive_require {
         require.insert(name, constraint);
     }
@@ -367,7 +367,8 @@ async fn build_interactive(
         .map(|(k, v)| (k.clone(), v.clone()))
         .collect();
     let interactive_dev =
-        interactive_search_packages("require-dev", &all_required, preferred_stability).await?;
+        interactive_search_packages("require-dev", &all_required, preferred_stability, console)
+            .await?;
     for (name, constraint) in interactive_dev {
         require_dev.insert(name, constraint);
     }
@@ -417,6 +418,7 @@ async fn interactive_search_packages(
     label: &str,
     already_required: &BTreeMap<String, String>,
     preferred_stability: Stability,
+    console: &console::Console,
 ) -> anyhow::Result<BTreeMap<String, String>> {
     let stdin = std::io::stdin();
     let mut selected: BTreeMap<String, String> = BTreeMap::new();
@@ -442,10 +444,9 @@ async fn interactive_search_packages(
         let (results, total) = match packagist::search_packages(&query, None).await {
             Ok(r) => r,
             Err(e) => {
-                eprintln!(
-                    "{}",
-                    console_format!("<warning>Search failed: {e}. Try again.</warning>")
-                );
+                console.info(&console_format!(
+                    "<warning>Search failed: {e}. Try again.</warning>"
+                ));
                 continue;
             }
         };
@@ -461,21 +462,18 @@ async fn interactive_search_packages(
             .collect();
 
         if filtered.is_empty() {
-            eprintln!(
-                "{}",
-                console_format!(
-                    "<warning>No new packages found for \"{query}\" (total: {total}).</warning>"
-                )
-            );
+            console.info(&console_format!(
+                "<warning>No new packages found for \"{query}\" (total: {total}).</warning>"
+            ));
             continue;
         }
 
-        eprintln!(
+        console.info(&format!(
             "\nFound {} package{} for \"{}\":",
             filtered.len(),
             if filtered.len() == 1 { "" } else { "s" },
             query,
-        );
+        ));
 
         let name_width = filtered.iter().map(|r| r.name.len()).max().unwrap_or(0);
         for (idx, result) in filtered.iter().enumerate() {
@@ -484,15 +482,15 @@ async fn interactive_search_packages(
             } else {
                 format!(" — {}", result.description)
             };
-            eprintln!(
+            console.info(&format!(
                 "  [{idx}] {:<width$}{desc}",
                 result.name,
                 idx = idx + 1,
                 width = name_width,
-            );
+            ));
         }
-        eprintln!("  [0] Search again / enter full package name");
-        eprintln!();
+        console.info("  [0] Search again / enter full package name");
+        console.info("");
 
         // Ask user to pick
         eprint!("Enter package # or name (leave empty to finish): ");
@@ -518,10 +516,9 @@ async fn interactive_search_packages(
             } else if num <= filtered.len() {
                 filtered[num - 1].name.to_lowercase()
             } else {
-                eprintln!(
-                    "{}",
-                    console_format!("<warning>Invalid selection: {num}</warning>")
-                );
+                console.info(&console_format!(
+                    "<warning>Invalid selection: {num}</warning>"
+                ));
                 continue;
             }
         } else {
@@ -533,25 +530,21 @@ async fn interactive_search_packages(
             match validation::parse_require_string(&package_name) {
                 Ok((n, v)) => (n.to_lowercase(), v),
                 Err(e) => {
-                    eprintln!("{}", console_format!("<warning>Invalid: {e}</warning>"));
+                    console.info(&console_format!("<warning>Invalid: {e}</warning>"));
                     continue;
                 }
             }
         } else {
             if !validation::validate_package_name(&package_name) {
-                eprintln!(
-                    "{}",
-                    console_format!("<warning>Invalid package name: \"{package_name}\"</warning>")
-                );
+                console.info(&console_format!(
+                    "<warning>Invalid package name: \"{package_name}\"</warning>"
+                ));
                 continue;
             }
 
-            eprintln!(
-                "{}",
-                console_format!(
-                    "<info>Using version constraint for {package_name} from Packagist...</info>"
-                )
-            );
+            console.info(&console_format!(
+                "<info>Using version constraint for {package_name} from Packagist...</info>"
+            ));
 
             match packagist::fetch_package_versions(&package_name, None).await {
                 Ok(versions) => {
@@ -563,33 +556,24 @@ async fn interactive_search_packages(
                                 &best.version_normalized,
                                 stability,
                             );
-                            eprintln!(
-                                "{}",
-                                console_format!(
-                                    "<info>Using version {c} for {package_name}</info>"
-                                )
-                            );
+                            console.info(&console_format!(
+                                "<info>Using version {c} for {package_name}</info>"
+                            ));
                             (package_name, c)
                         }
                         None => {
-                            eprintln!(
-                                "{}",
-                                console_format!(
-                                    "<warning>Could not find a version of \"{package_name}\" matching \
-                                     your minimum-stability. Try specifying it explicitly.</warning>"
-                                )
-                            );
+                            console.info(&console_format!(
+                                "<warning>Could not find a version of \"{package_name}\" matching \
+                                 your minimum-stability. Try specifying it explicitly.</warning>"
+                            ));
                             continue;
                         }
                     }
                 }
                 Err(e) => {
-                    eprintln!(
-                        "{}",
-                        console_format!(
-                            "<warning>Could not fetch versions for \"{package_name}\": {e}</warning>"
-                        )
-                    );
+                    console.info(&console_format!(
+                        "<warning>Could not fetch versions for \"{package_name}\": {e}</warning>"
+                    ));
                     continue;
                 }
             }

@@ -379,7 +379,11 @@ fn glob_segment_matches_inner(pattern: &[u8], text: &[u8]) -> bool {
 ///
 /// Non-wildcard specifiers are passed through unchanged (even if not in the lock,
 /// so the resolver can report the error naturally).
-pub fn expand_wildcards(specifiers: &[String], lock: &lockfile::LockFile) -> Vec<String> {
+pub fn expand_wildcards(
+    specifiers: &[String],
+    lock: &lockfile::LockFile,
+    console: &mozart_core::console::Console,
+) -> Vec<String> {
     // Collect all locked package names (prod + dev)
     let all_names: Vec<String> = lock
         .packages
@@ -407,13 +411,10 @@ pub fn expand_wildcards(specifiers: &[String], lock: &lockfile::LockFile) -> Vec
                 }
             }
             if !matched {
-                eprintln!(
-                    "{}",
-                    console::warning(&format!(
-                        "No locked packages matched the pattern '{}'. Pattern will be ignored.",
-                        spec
-                    ))
-                );
+                console.info(&console::warning(&format!(
+                    "No locked packages matched the pattern '{}'. Pattern will be ignored.",
+                    spec
+                )));
             }
         } else {
             let lower = spec.to_lowercase();
@@ -524,10 +525,10 @@ pub fn expand_packages(
     lock: Option<&lockfile::LockFile>,
     with_dependencies: bool,
     with_all_dependencies: bool,
+    console: &mozart_core::console::Console,
 ) -> Vec<String> {
-    // First expand wildcards (requires a lock file)
     let mut packages: Vec<String> = if let Some(lock) = lock {
-        expand_wildcards(specifiers, lock)
+        expand_wildcards(specifiers, lock, console)
     } else {
         // No lock file: pass through as-is (no wildcards can be resolved)
         specifiers.iter().map(|s| s.to_lowercase()).collect()
@@ -556,21 +557,21 @@ pub fn expand_packages(
 ///
 /// When stdin is not a TTY (e.g. in CI or piped input), emits a warning and
 /// returns the full package list unchanged.
-pub fn interactive_select_packages(packages: Vec<String>) -> Vec<String> {
+pub fn interactive_select_packages(
+    packages: Vec<String>,
+    console: &mozart_core::console::Console,
+) -> Vec<String> {
     use std::io::{self, BufRead, IsTerminal, Write};
 
     let stdin = io::stdin();
     if !stdin.is_terminal() {
-        eprintln!(
-            "{}",
-            console::warning(
-                "Interactive mode requires a TTY. Running non-interactively with all packages."
-            )
-        );
+        console.info(&console::warning(
+            "Interactive mode requires a TTY. Running non-interactively with all packages.",
+        ));
         return packages;
     }
 
-    eprintln!("Select packages to update (y/n for each):");
+    console.info("Select packages to update (y/n for each):");
 
     let mut selected = Vec::new();
     let stdin_locked = stdin.lock();
@@ -593,7 +594,7 @@ pub fn interactive_select_packages(packages: Vec<String>) -> Vec<String> {
                             break;
                         }
                         _ => {
-                            eprintln!("  Please answer y or n.");
+                            console.info("  Please answer y or n.");
                         }
                     }
                 }
@@ -925,11 +926,12 @@ pub async fn execute(
                     Some(lock),
                     args.with_dependencies,
                     args.with_all_dependencies,
+                    console,
                 );
 
                 // 2. Interactive selection (filter the expanded list)
                 if args.interactive {
-                    expanded = interactive_select_packages(expanded);
+                    expanded = interactive_select_packages(expanded, console);
                 }
 
                 expanded
@@ -958,7 +960,7 @@ pub async fn execute(
                                 .map(|p| p.name.to_lowercase()),
                         )
                         .collect();
-                    interactive_select_packages(all_names)
+                    interactive_select_packages(all_names, console)
                 }
             }
         } else {
@@ -1327,6 +1329,14 @@ mod tests {
             version: version.to_string(),
             version_normalized: format!("{}.0", version),
             is_dev: false,
+        }
+    }
+
+    fn test_console() -> mozart_core::console::Console {
+        mozart_core::console::Console {
+            interactive: false,
+            verbosity: mozart_core::console::Verbosity::Normal,
+            decorated: false,
         }
     }
 
@@ -1723,7 +1733,7 @@ mod tests {
     fn test_expand_wildcards_no_wildcard_passthrough() {
         let lock = minimal_lock(vec![make_locked_package("psr/log", "3.0.0")]);
         let specs = vec!["psr/log".to_string(), "nonexistent/pkg".to_string()];
-        let result = expand_wildcards(&specs, &lock);
+        let result = expand_wildcards(&specs, &lock, &test_console());
         assert_eq!(result, vec!["psr/log", "nonexistent/pkg"]);
     }
 
@@ -1735,7 +1745,7 @@ mod tests {
             make_locked_package("monolog/monolog", "3.8.0"),
         ]);
         let specs = vec!["symfony/*".to_string()];
-        let mut result = expand_wildcards(&specs, &lock);
+        let mut result = expand_wildcards(&specs, &lock, &test_console());
         result.sort();
         assert_eq!(result, vec!["symfony/console", "symfony/http-kernel"]);
     }
@@ -1745,7 +1755,7 @@ mod tests {
         let lock = minimal_lock(vec![make_locked_package("psr/log", "3.0.0")]);
         let specs = vec!["unknown/*".to_string()];
         // Should return empty (no match), no panic
-        let result = expand_wildcards(&specs, &lock);
+        let result = expand_wildcards(&specs, &lock, &test_console());
         assert!(result.is_empty());
     }
 
@@ -1753,7 +1763,7 @@ mod tests {
     fn test_expand_wildcards_deduplication() {
         let lock = minimal_lock(vec![make_locked_package("psr/log", "3.0.0")]);
         let specs = vec!["psr/log".to_string(), "psr/log".to_string()];
-        let result = expand_wildcards(&specs, &lock);
+        let result = expand_wildcards(&specs, &lock, &test_console());
         assert_eq!(result.len(), 1);
         assert_eq!(result[0], "psr/log");
     }
@@ -1763,7 +1773,7 @@ mod tests {
         let mut lock = minimal_lock(vec![make_locked_package("psr/log", "3.0.0")]);
         lock.packages_dev = Some(vec![make_locked_package("phpunit/phpunit", "11.0.0")]);
         let specs = vec!["phpunit/*".to_string()];
-        let result = expand_wildcards(&specs, &lock);
+        let result = expand_wildcards(&specs, &lock, &test_console());
         assert_eq!(result, vec!["phpunit/phpunit"]);
     }
 
@@ -1883,6 +1893,7 @@ mod tests {
             Some(&lock),
             true,  // with_dependencies
             false, // with_all_dependencies
+            &test_console(),
         );
 
         assert!(result.contains(&"symfony/console".to_string()));

@@ -1,4 +1,5 @@
 use clap::Args;
+use mozart_core::console::Verbosity;
 use sha1::{Digest, Sha1};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -48,7 +49,7 @@ struct PackageStatus {
 pub async fn execute(
     args: &StatusArgs,
     cli: &super::Cli,
-    _console: &mozart_core::console::Console,
+    console: &mozart_core::console::Console,
 ) -> anyhow::Result<()> {
     let working_dir = match &cli.working_dir {
         Some(dir) => PathBuf::from(dir),
@@ -59,7 +60,7 @@ pub async fn execute(
     let installed = mozart_registry::installed::InstalledPackages::read(&vendor_dir)?;
 
     if installed.packages.is_empty() {
-        eprintln!("No packages installed.");
+        console.info("No packages installed.");
         return Ok(());
     }
 
@@ -75,7 +76,7 @@ pub async fn execute(
             Some(d) => d,
             None => {
                 if cli.verbose > 1 {
-                    eprintln!("  Skipping {} — no dist info available", pkg.name);
+                    console.verbose(&format!("  Skipping {} — no dist info available", pkg.name));
                 }
                 continue;
             }
@@ -85,11 +86,11 @@ pub async fn execute(
         let install_path = resolve_install_path(pkg, &vendor_dir);
         if !install_path.exists() {
             if cli.verbose > 0 {
-                eprintln!(
+                console.verbose(&format!(
                     "  Skipping {} — install path does not exist: {}",
                     pkg.name,
                     install_path.display()
-                );
+                ));
             }
             continue;
         }
@@ -106,7 +107,7 @@ pub async fn execute(
         }
 
         if cli.verbose > 0 {
-            eprintln!("  Checking {} ...", pkg.name);
+            console.verbose(&format!("  Checking {} ...", pkg.name));
         }
 
         // Download original archive to a temp dir
@@ -122,7 +123,10 @@ pub async fn execute(
         let bytes = match downloaded {
             Ok(b) => b,
             Err(e) => {
-                eprintln!("  Warning: could not download dist for {}: {}", pkg.name, e);
+                console.info(&format!(
+                    "  Warning: could not download dist for {}: {}",
+                    pkg.name, e
+                ));
                 let _ = std::fs::remove_dir_all(&tmp_dir);
                 continue;
             }
@@ -135,17 +139,20 @@ pub async fn execute(
                 mozart_registry::downloader::extract_tar_gz(&bytes, &tmp_dir)
             }
             other => {
-                eprintln!(
+                console.info(&format!(
                     "  Warning: unsupported dist type '{}' for {}",
                     other, pkg.name
-                );
+                ));
                 let _ = std::fs::remove_dir_all(&tmp_dir);
                 continue;
             }
         };
 
         if let Err(e) = extract_result {
-            eprintln!("  Warning: could not extract dist for {}: {}", pkg.name, e);
+            console.info(&format!(
+                "  Warning: could not extract dist for {}: {}",
+                pkg.name, e
+            ));
             let _ = std::fs::remove_dir_all(&tmp_dir);
             continue;
         }
@@ -168,18 +175,17 @@ pub async fn execute(
     }
 
     if modified_packages.is_empty() {
-        eprintln!("No local changes");
+        console.info("No local changes");
         return Ok(());
     }
 
-    eprintln!("You have changes in the following dependencies:\n");
+    console.info("You have changes in the following dependencies:\n");
 
     for pkg_status in &modified_packages {
         if let Some(ref note) = pkg_status.note {
-            println!("{}", note);
+            console.write_stdout(note, Verbosity::Normal);
         } else {
-            // Show full install path, matching Composer's format
-            println!("{}", pkg_status.install_path);
+            console.write_stdout(&pkg_status.install_path, Verbosity::Normal);
 
             if show_files {
                 let mut sorted_changes: Vec<&FileChange> = pkg_status.changes.iter().collect();
@@ -191,7 +197,10 @@ pub async fn execute(
                         ChangeKind::Added => '+',
                         ChangeKind::Removed => '-',
                     };
-                    println!("    {} {}", prefix, change.path);
+                    console.write_stdout(
+                        &format!("    {} {}", prefix, change.path),
+                        Verbosity::Normal,
+                    );
                 }
             }
         }
@@ -199,7 +208,7 @@ pub async fn execute(
 
     // Hint about --verbose if not already showing files and there are modified packages
     if !show_files {
-        eprintln!("Use --verbose (-v) to see a list of files");
+        console.info("Use --verbose (-v) to see a list of files");
     }
 
     // Exit with code 1 if modifications found

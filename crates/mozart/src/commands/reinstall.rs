@@ -152,7 +152,7 @@ pub async fn execute(
     }
 
     if selected.is_empty() {
-        eprintln!("Found no packages to reinstall, aborting.");
+        console.info("Found no packages to reinstall, aborting.");
         return Err(mozart_core::exit_code::bail_silent(
             mozart_core::exit_code::GENERAL_ERROR,
         ));
@@ -171,9 +171,15 @@ pub async fn execute(
         for pkg in &selected {
             let locked = find_locked_package(&all_locked, &pkg.name);
             if let Some(lp) = locked {
-                println!("  - Would reinstall {} ({})", lp.name, lp.version);
+                console.write_stdout(
+                    &format!("  - Would reinstall {} ({})", lp.name, lp.version),
+                    mozart_core::console::Verbosity::Normal,
+                );
             } else {
-                println!("  - Would reinstall {} (not found in lock file)", pkg.name);
+                console.write_stdout(
+                    &format!("  - Would reinstall {} (not found in lock file)", pkg.name),
+                    mozart_core::console::Verbosity::Normal,
+                );
             }
         }
         return Ok(());
@@ -242,7 +248,10 @@ pub async fn execute(
     }
 
     if reinstalled_count == 0 {
-        println!("Nothing was reinstalled.");
+        console.write_stdout(
+            "Nothing was reinstalled.",
+            mozart_core::console::Verbosity::Normal,
+        );
         return Ok(());
     }
 

@@ -62,19 +62,19 @@ pub async fn execute(
     let results = super::dependency::get_dependents(&packages, &needles, None, false, recursive)?;
 
     if results.is_empty() {
-        eprintln!(
+        console.info(&format!(
             "There is no installed package depending on \"{}\"",
             args.package
-        );
+        ));
         return Err(mozart_core::exit_code::bail_silent(
             mozart_core::exit_code::GENERAL_ERROR,
         ));
     }
 
     if args.tree {
-        super::dependency::print_tree(&results, 0);
+        super::dependency::print_tree(&results, 0, console);
     } else {
-        super::dependency::print_table(&results);
+        super::dependency::print_table(&results, console);
     }
 
     Ok(())

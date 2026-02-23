@@ -38,7 +38,7 @@ pub async fn execute(
                 "No composer.json found in the current directory and no package specified."
             );
         }
-        eprintln!("No package specified, opening homepage for the root package");
+        console.info("No package specified, opening homepage for the root package");
         let root = mozart_core::package::read_from_file(&composer_json)?;
         vec![root.name.clone()]
     } else {
@@ -56,14 +56,14 @@ pub async fn execute(
                         mozart_core::console::Verbosity::Normal,
                     );
                 } else {
-                    open_browser(&url)?;
+                    open_browser(&url, console)?;
                 }
             }
             ResolveResult::NotFound => {
-                eprintln!(
-                    "{}",
-                    console_format!("<warning>Package {} not found</warning>", package_name)
-                );
+                console.info(&console_format!(
+                    "<warning>Package {} not found</warning>",
+                    package_name
+                ));
                 exit_code = 1;
             }
             ResolveResult::NoUrl => {
@@ -72,7 +72,7 @@ pub async fn execute(
                 } else {
                     format!("Invalid or missing repository URL for {}", package_name)
                 };
-                eprintln!("{}", console_format!("<warning>{}</warning>", msg));
+                console.info(&console_format!("<warning>{}</warning>", msg));
                 exit_code = 1;
             }
         }
@@ -255,7 +255,7 @@ fn is_valid_url(url: &str) -> bool {
     }
 }
 
-fn open_browser(url: &str) -> anyhow::Result<()> {
+fn open_browser(url: &str, console: &mozart_core::console::Console) -> anyhow::Result<()> {
     #[cfg(target_os = "macos")]
     {
         Command::new("open").arg(url).status()?;
@@ -290,10 +290,10 @@ fn open_browser(url: &str) -> anyhow::Result<()> {
             Command::new("open").arg(url).status()?;
             return Ok(());
         }
-        eprintln!(
+        console.info(&format!(
             "No suitable browser opener found. Please open manually: {}",
             url
-        );
+        ));
         Ok(())
     }
 }

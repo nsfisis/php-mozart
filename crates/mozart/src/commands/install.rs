@@ -269,6 +269,7 @@ fn warn_platform_requirements(
     packages: &[&lockfile::LockedPackage],
     ignore_platform_reqs: bool,
     ignore_platform_req: &[String],
+    console: &console::Console,
 ) {
     if ignore_platform_reqs {
         return;
@@ -284,14 +285,14 @@ fn warn_platform_requirements(
             if is_platform_package(req_name) {
                 let lower = req_name.to_lowercase();
                 if !ignored_set.contains(&lower) {
-                    eprintln!(
+                    console.info(&format!(
                         "{}",
                         console::warning(&format!(
                             "Platform requirement {req_name} {req_constraint} (required by {}) \
                              has not been verified. Platform detection is not yet fully implemented.",
                             pkg.name
                         ))
-                    );
+                    ));
                 }
             }
         }
@@ -377,6 +378,7 @@ pub async fn install_from_lock(
         &packages_to_install,
         config.ignore_platform_reqs,
         &config.ignore_platform_req,
+        console,
     );
 
     // Step 3: Read currently installed packages

@@ -77,7 +77,7 @@ const ALL_SCRIPT_EVENTS: &[&str] = &[
 pub async fn execute(
     args: &RunScriptArgs,
     cli: &super::Cli,
-    _console: &mozart_core::console::Console,
+    console: &mozart_core::console::Console,
 ) -> anyhow::Result<()> {
     let working_dir = match &cli.working_dir {
         Some(dir) => PathBuf::from(dir),
@@ -87,7 +87,7 @@ pub async fn execute(
     let (scripts, descriptions) = load_scripts(&working_dir)?;
 
     if args.list {
-        return list_scripts(&scripts, &descriptions);
+        return list_scripts(&scripts, &descriptions, console);
     }
 
     if cli.no_scripts {
@@ -151,6 +151,7 @@ pub async fn execute(
         dev_mode,
         &mut event_stack,
         cli.verbose,
+        console,
     )?;
 
     if exit_code != 0 {
@@ -210,11 +211,14 @@ fn load_scripts(
 fn list_scripts(
     scripts: &BTreeMap<String, Vec<String>>,
     descriptions: &BTreeMap<String, String>,
+    console: &mozart_core::console::Console,
 ) -> anyhow::Result<()> {
-    println!("scripts:");
+    use mozart_core::console::Verbosity;
+
+    console.write_stdout("scripts:", Verbosity::Normal);
     for name in scripts.keys() {
         let desc = descriptions.get(name).map(|s| s.as_str()).unwrap_or("");
-        println!("  {}  {}", name, desc);
+        console.write_stdout(&format!("  {}  {}", name, desc), Verbosity::Normal);
     }
     Ok(())
 }
@@ -232,6 +236,7 @@ fn run_script(
     dev_mode: bool,
     event_stack: &mut Vec<String>,
     verbose: u8,
+    console: &mozart_core::console::Console,
 ) -> anyhow::Result<i32> {
     if event_stack.contains(&script_name.to_string()) {
         anyhow::bail!(
@@ -258,6 +263,7 @@ fn run_script(
             dev_mode,
             event_stack,
             verbose,
+            console,
         )?;
         if code > max_exit_code {
             max_exit_code = code;
@@ -287,6 +293,7 @@ fn run_script_entry(
     dev_mode: bool,
     event_stack: &mut Vec<String>,
     verbose: u8,
+    console: &mozart_core::console::Console,
 ) -> anyhow::Result<i32> {
     let suppress_additional_args = entry.contains("@no_additional_args");
     let effective_args: &[String] = if suppress_additional_args {
@@ -312,10 +319,10 @@ fn run_script_entry(
     };
 
     if is_php_callback(&entry) {
-        eprintln!(
+        console.info(&format!(
             "Skipping PHP callback '{}' -- Mozart cannot execute PHP class methods.",
             entry
-        );
+        ));
         return Ok(0);
     }
 
@@ -344,6 +351,7 @@ fn run_script_entry(
             dev_mode,
             event_stack,
             verbose,
+            console,
         );
     }
 
@@ -514,6 +522,14 @@ mod tests {
     use super::*;
     use std::fs;
 
+    fn test_console() -> mozart_core::console::Console {
+        mozart_core::console::Console {
+            interactive: false,
+            verbosity: mozart_core::console::Verbosity::Normal,
+            decorated: false,
+        }
+    }
+
     // ── Classifier tests ──────────────────────────────────────────────────────
 
     #[test]
@@ -652,7 +668,7 @@ mod tests {
         descriptions.insert("test".to_string(), "Run tests".to_string());
 
         // Just verify the function doesn't error
-        let result = list_scripts(&scripts, &descriptions);
+        let result = list_scripts(&scripts, &descriptions, &test_console());
         assert!(result.is_ok());
     }
 
@@ -693,6 +709,7 @@ mod tests {
             true,
             &mut stack,
             0,
+            &test_console(),
         )
         .unwrap();
         assert_eq!(code, 0);
@@ -720,6 +737,7 @@ mod tests {
             true,
             &mut stack,
             0,
+            &test_console(),
         )
         .unwrap();
 
@@ -751,6 +769,7 @@ mod tests {
             true,
             &mut stack,
             0,
+            &test_console(),
         )
         .unwrap();
 
@@ -777,6 +796,7 @@ mod tests {
             true,
             &mut stack,
             0,
+            &test_console(),
         )
         .unwrap();
         assert_eq!(code, 0);
@@ -802,6 +822,7 @@ mod tests {
             true,
             &mut stack,
             0,
+            &test_console(),
         );
         assert!(result.is_err());
         let msg = result.unwrap_err().to_string();
@@ -830,6 +851,7 @@ mod tests {
             true,
             &mut stack,
             0,
+            &test_console(),
         )
         .unwrap();
         assert_eq!(code, 0);
@@ -858,6 +880,7 @@ mod tests {
             true,
             &mut stack,
             0,
+            &test_console(),
         )
         .unwrap();
         assert_eq!(code, 0);
@@ -885,6 +908,7 @@ mod tests {
             true,
             &mut stack,
             0,
+            &test_console(),
         )
         .unwrap();
         assert_eq!(code, 0);
@@ -976,7 +1000,7 @@ mod tests {
         assert!(scripts.contains_key("test"));
         assert!(scripts.contains_key("lint"));
 
-        let result = list_scripts(&scripts, &descriptions);
+        let result = list_scripts(&scripts, &descriptions, &test_console());
         assert!(result.is_ok());
     }
 

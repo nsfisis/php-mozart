@@ -1,4 +1,5 @@
 use clap::Args;
+use mozart_core::console::Verbosity;
 use mozart_core::console_format;
 use mozart_core::package;
 use mozart_core::validation;
@@ -148,9 +149,9 @@ pub async fn execute(
         if args.dev {
             // Only look in require-dev
             if raw.require_dev.contains_key(&name) {
-                println!(
-                    "{}",
-                    console_format!("<info>Removing {name} from require-dev</info>")
+                console.write_stdout(
+                    &console_format!("<info>Removing {name} from require-dev</info>"),
+                    Verbosity::Normal,
                 );
                 raw.require_dev.remove(&name);
                 any_removed = true;
@@ -160,16 +161,16 @@ pub async fn execute(
         } else {
             // Auto-detect: look in require first, then require-dev
             if raw.require.contains_key(&name) {
-                println!(
-                    "{}",
-                    console_format!("<info>Removing {name} from require</info>")
+                console.write_stdout(
+                    &console_format!("<info>Removing {name} from require</info>"),
+                    Verbosity::Normal,
                 );
                 raw.require.remove(&name);
                 any_removed = true;
             } else if raw.require_dev.contains_key(&name) {
-                println!(
-                    "{}",
-                    console_format!("<info>Removing {name} from require-dev</info>")
+                console.write_stdout(
+                    &console_format!("<info>Removing {name} from require-dev</info>"),
+                    Verbosity::Normal,
                 );
                 raw.require_dev.remove(&name);
                 any_removed = true;
@@ -181,22 +182,22 @@ pub async fn execute(
 
     // Step 6: Write updated composer.json (unless --dry-run)
     if args.dry_run {
-        println!(
-            "{}",
-            console_format!("<comment>Dry run: composer.json not modified.</comment>")
+        console.write_stdout(
+            &console_format!("<comment>Dry run: composer.json not modified.</comment>"),
+            Verbosity::Normal,
         );
     } else if any_removed {
         package::write_to_file(&raw, &composer_path)?;
     }
-    eprintln!("./composer.json has been updated");
+    console.info("./composer.json has been updated");
 
     // Step 7: Handle --no-update early return
     if args.no_update {
-        println!(
-            "{}",
-            console_format!(
+        console.write_stdout(
+            &console_format!(
                 "<comment>Not updating dependencies, only modifying composer.json.</comment>"
-            )
+            ),
+            Verbosity::Normal,
         );
         return Ok(());
     }

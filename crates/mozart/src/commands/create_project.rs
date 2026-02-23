@@ -135,15 +135,17 @@ fn dir_from_package_name(package_name: &str) -> &str {
 }
 
 /// Remove VCS metadata directories from the target directory.
-fn remove_vcs_metadata(target_dir: &Path) -> anyhow::Result<()> {
+fn remove_vcs_metadata(
+    target_dir: &Path,
+    console: &mozart_core::console::Console,
+) -> anyhow::Result<()> {
     for vcs_dir in VCS_DIRS {
         let path = target_dir.join(vcs_dir);
         if path.exists() {
             std::fs::remove_dir_all(&path)?;
-            eprintln!(
-                "{}",
-                console_format!("<comment>Removed VCS metadata directory: {vcs_dir}</comment>")
-            );
+            console.info(&console_format!(
+                "<comment>Removed VCS metadata directory: {vcs_dir}</comment>"
+            ));
         }
     }
     Ok(())
@@ -344,7 +346,7 @@ pub async fn execute(
     // Default (neither flag): remove.
     let vcs_removed = args.remove_vcs || !args.keep_vcs;
     if vcs_removed {
-        remove_vcs_metadata(&target_dir)?;
+        remove_vcs_metadata(&target_dir, console)?;
     }
 
     // --- Step 6: Read composer.json and optionally install dependencies ---
