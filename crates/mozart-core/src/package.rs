@@ -458,6 +458,7 @@ delegate_complete_package!(RootPackageData => complete);
 /// and map directly to the JSON keys via serde.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RawPackageData {
+    #[serde(default = "default_root_package_name")]
     pub name: String,
 
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -529,6 +530,12 @@ pub struct RawRepository {
     #[serde(rename = "type")]
     pub repo_type: String,
     pub url: String,
+}
+
+/// Default root-package name when `composer.json` omits the `name` field.
+/// Mirrors Composer's `RootPackageLoader` fallback.
+fn default_root_package_name() -> String {
+    "__root__".to_string()
 }
 
 impl RawPackageData {
