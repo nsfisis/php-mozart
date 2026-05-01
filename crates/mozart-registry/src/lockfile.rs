@@ -226,6 +226,111 @@ impl LockFile {
         let digest = md5::compute(compact.as_bytes());
         Ok(format!("{:x}", digest))
     }
+
+    /// Check that every root `require` (and `require-dev` when `include_dev`)
+    /// is satisfied by the locked packages. Returns the list of bullet-prefixed
+    /// error lines (plus the trailing merge-conflict hint) if anything is
+    /// missing or mismatched, otherwise an empty vec.
+    ///
+    /// Mirrors `Composer\Package\Locker::getMissingRequirementInfo()`.
+    pub fn get_missing_requirement_info(
+        &self,
+        root: &mozart_core::package::RawPackageData,
+        include_dev: bool,
+    ) -> Vec<String> {
+        let mut messages = Vec::new();
+        let mut any_missing = false;
+
+        let base_pool: Vec<&LockedPackage> = self.packages.iter().collect();
+        let mut dev_pool: Vec<&LockedPackage> = base_pool.clone();
+        if let Some(dev) = &self.packages_dev {
+            dev_pool.extend(dev.iter());
+        }
+
+        check_requirement_set(
+            &root.require,
+            "Required",
+            &base_pool,
+            &mut messages,
+            &mut any_missing,
+        );
+        if include_dev {
+            check_requirement_set(
+                &root.require_dev,
+                "Required (in require-dev)",
+                &dev_pool,
+                &mut messages,
+                &mut any_missing,
+            );
+        }
+
+        if any_missing {
+            messages.push(
+                "This usually happens when composer files are incorrectly merged or the composer.json file is manually edited.".to_string(),
+            );
+            messages.push(
+                "Read more about correctly resolving merge conflicts https://getcomposer.org/doc/articles/resolving-merge-conflicts.md".to_string(),
+            );
+            messages.push(
+                "and prefer using the \"require\" command over editing the composer.json file directly https://getcomposer.org/doc/03-cli.md#require-r".to_string(),
+            );
+        }
+
+        messages
+    }
+}
+
+fn check_requirement_set(
+    requires: &BTreeMap<String, String>,
+    description: &str,
+    pool: &[&LockedPackage],
+    messages: &mut Vec<String>,
+    any_missing: &mut bool,
+) {
+    for (name, constraint_str) in requires {
+        if mozart_core::platform::is_platform_package(name) {
+            continue;
+        }
+        if constraint_str.trim() == "self.version" {
+            continue;
+        }
+
+        let constraint = mozart_semver::VersionConstraint::parse(constraint_str).ok();
+
+        let mut name_only_match: Option<&LockedPackage> = None;
+        let mut satisfied = false;
+        for pkg in pool {
+            if pkg.name != *name {
+                continue;
+            }
+            if name_only_match.is_none() {
+                name_only_match = Some(pkg);
+            }
+            if let Some(ref c) = constraint
+                && let Ok(version) = mozart_semver::Version::parse(&pkg.version)
+                && c.matches(&version)
+            {
+                satisfied = true;
+                break;
+            }
+        }
+
+        if satisfied {
+            continue;
+        }
+
+        *any_missing = true;
+        if let Some(pkg) = name_only_match {
+            messages.push(format!(
+                "- {description} package \"{name}\" is in the lock file as \"{}\" but that does not satisfy your constraint \"{constraint_str}\".",
+                pkg.version
+            ));
+        } else {
+            messages.push(format!(
+                "- {description} package \"{name}\" is not present in the lock file."
+            ));
+        }
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1091,5 +1196,160 @@ mod tests {
         for pkg in &lock.packages {
             println!("  {} {}", pkg.name, pkg.version);
         }
+    }
+
+    // ──────────── get_missing_requirement_info tests ────────────
+
+    fn make_locked(name: &str, version: &str) -> LockedPackage {
+        LockedPackage {
+            name: name.to_string(),
+            version: version.to_string(),
+            version_normalized: None,
+            source: None,
+            dist: None,
+            require: BTreeMap::new(),
+            require_dev: BTreeMap::new(),
+            conflict: BTreeMap::new(),
+            suggest: None,
+            package_type: Some("library".to_string()),
+            autoload: None,
+            autoload_dev: None,
+            license: None,
+            description: None,
+            homepage: None,
+            keywords: None,
+            authors: None,
+            support: None,
+            funding: None,
+            time: None,
+            extra_fields: BTreeMap::new(),
+        }
+    }
+
+    fn lock_with(packages: Vec<LockedPackage>, dev: Vec<LockedPackage>) -> LockFile {
+        LockFile {
+            readme: LockFile::default_readme(),
+            content_hash: "x".to_string(),
+            packages,
+            packages_dev: Some(dev),
+            aliases: vec![],
+            minimum_stability: "stable".to_string(),
+            stability_flags: serde_json::json!({}),
+            prefer_stable: false,
+            prefer_lowest: false,
+            platform: serde_json::json!({}),
+            platform_dev: serde_json::json!({}),
+            plugin_api_version: Some("2.6.0".to_string()),
+        }
+    }
+
+    fn root_with_require(
+        require: &[(&str, &str)],
+        require_dev: &[(&str, &str)],
+    ) -> mozart_core::package::RawPackageData {
+        let mut root = mozart_core::package::RawPackageData::new("__root__".to_string());
+        for (k, v) in require {
+            root.require.insert((*k).to_string(), (*v).to_string());
+        }
+        for (k, v) in require_dev {
+            root.require_dev.insert((*k).to_string(), (*v).to_string());
+        }
+        root
+    }
+
+    #[test]
+    fn missing_requirement_info_empty_when_satisfied() {
+        let lock = lock_with(vec![make_locked("a/a", "1.0.0")], vec![]);
+        let root = root_with_require(&[("a/a", "^1.0")], &[]);
+        assert!(lock.get_missing_requirement_info(&root, true).is_empty());
+    }
+
+    #[test]
+    fn missing_requirement_info_reports_missing_package() {
+        let lock = lock_with(vec![], vec![]);
+        let root = root_with_require(&[("a/a", "^1.0")], &[]);
+        let info = lock.get_missing_requirement_info(&root, true);
+        assert_eq!(
+            info[0],
+            "- Required package \"a/a\" is not present in the lock file."
+        );
+        assert!(info.iter().any(|m| m.contains("merge conflicts")));
+    }
+
+    #[test]
+    fn missing_requirement_info_reports_unsatisfied_constraint() {
+        let lock = lock_with(vec![make_locked("some/dep", "dev-foo")], vec![]);
+        let root = root_with_require(&[("some/dep", "dev-main")], &[]);
+        let info = lock.get_missing_requirement_info(&root, true);
+        assert_eq!(
+            info[0],
+            "- Required package \"some/dep\" is in the lock file as \"dev-foo\" but that does not satisfy your constraint \"dev-main\"."
+        );
+    }
+
+    #[test]
+    fn missing_requirement_info_skips_platform_packages() {
+        let lock = lock_with(vec![], vec![]);
+        let root = root_with_require(&[("php", "^8.0"), ("ext-json", "*")], &[]);
+        assert!(lock.get_missing_requirement_info(&root, true).is_empty());
+    }
+
+    #[test]
+    fn missing_requirement_info_skips_self_version() {
+        let lock = lock_with(vec![], vec![]);
+        let root = root_with_require(&[("a/a", "self.version")], &[]);
+        assert!(lock.get_missing_requirement_info(&root, true).is_empty());
+    }
+
+    #[test]
+    fn missing_requirement_info_dev_pool_includes_packages_dev() {
+        // require-dev "a/a" should be satisfied by an entry in packages-dev.
+        let lock = lock_with(vec![], vec![make_locked("a/a", "1.0.0")]);
+        let root = root_with_require(&[], &[("a/a", "^1.0")]);
+        assert!(lock.get_missing_requirement_info(&root, true).is_empty());
+    }
+
+    #[test]
+    fn missing_requirement_info_skips_dev_when_include_dev_false() {
+        // require-dev errors must NOT appear when include_dev is false (no_dev).
+        let lock = lock_with(vec![], vec![]);
+        let root = root_with_require(&[], &[("a/a", "^1.0")]);
+        assert!(lock.get_missing_requirement_info(&root, false).is_empty());
+    }
+
+    #[test]
+    fn missing_requirement_info_require_pool_excludes_packages_dev() {
+        // A regular require should NOT be satisfied by an entry that lives only
+        // in packages-dev.
+        let lock = lock_with(vec![], vec![make_locked("a/a", "1.0.0")]);
+        let root = root_with_require(&[("a/a", "^1.0")], &[]);
+        let info = lock.get_missing_requirement_info(&root, true);
+        assert_eq!(
+            info[0],
+            "- Required package \"a/a\" is not present in the lock file."
+        );
+    }
+
+    #[test]
+    fn missing_requirement_info_reports_multiple_problems() {
+        let lock = lock_with(vec![make_locked("some/dep", "dev-foo")], vec![]);
+        let root = root_with_require(&[("some/dep", "dev-main"), ("some/dep2", "dev-main")], &[]);
+        let info = lock.get_missing_requirement_info(&root, true);
+        assert!(
+            info.iter()
+                .any(|m| m.contains("some/dep") && m.contains("dev-foo") && m.contains("dev-main"))
+        );
+        assert!(
+            info.iter()
+                .any(|m| m == "- Required package \"some/dep2\" is not present in the lock file.")
+        );
+    }
+
+    #[test]
+    fn missing_requirement_info_uses_dev_description_label() {
+        let lock = lock_with(vec![], vec![]);
+        let root = root_with_require(&[], &[("a/a", "^1.0")]);
+        let info = lock.get_missing_requirement_info(&root, true);
+        assert!(info[0].contains("Required (in require-dev) package \"a/a\""));
     }
 }

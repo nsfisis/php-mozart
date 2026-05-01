@@ -662,7 +662,15 @@ pub async fn execute(
     }
     let lock = lockfile::LockFile::read_from_file(&lock_path)?;
 
-    // Step 4: Freshness check
+    // Step 4: Determine dev mode (needed for the lock-vs-composer.json check)
+    let dev_mode = !args.no_dev;
+
+    // Step 5: Freshness check + lock-vs-composer.json requirement check
+    //
+    // Mirrors `Composer\Installer::doInstall()` lines 745-756: if the lock is
+    // stale, warn; then verify every root require (and require-dev when in dev
+    // mode) is satisfied by the lock contents. If not, exit with
+    // ERROR_LOCK_FILE_INVALID (4) before attempting to install.
     let composer_json_path = working_dir.join("composer.json");
     if composer_json_path.exists() {
         let content = std::fs::read_to_string(&composer_json_path)?;
@@ -671,9 +679,20 @@ pub async fn execute(
                 "<warning>Warning: The lock file is not up to date with the latest changes in composer.json. You may be getting outdated dependencies. It is recommended that you run `mozart update`.</warning>"
             ));
         }
+
+        let root_pkg = mozart_core::package::read_from_file(&composer_json_path)?;
+        let missing = lock.get_missing_requirement_info(&root_pkg, dev_mode);
+        if !missing.is_empty() {
+            for line in &missing {
+                console.info(line);
+            }
+            return Err(mozart_core::exit_code::bail_silent(
+                mozart_core::exit_code::LOCK_FILE_INVALID,
+            ));
+        }
     }
 
-    // Step 5: Determine if prefer-source is enabled
+    // Step 6: Determine if prefer-source is enabled
     let prefer_source = args.prefer_source
         || args
             .prefer_install
@@ -681,8 +700,6 @@ pub async fn execute(
             .map(|s| s.eq_ignore_ascii_case("source"))
             .unwrap_or(false);
 
-    // Step 6: Determine dev mode and vendor directory
-    let dev_mode = !args.no_dev;
     let vendor_dir = working_dir.join("vendor");
 
     // Step 7: Delegate to shared install_from_lock()

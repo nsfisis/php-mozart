@@ -297,10 +297,7 @@ installer_fixture!(
     load_replaced_package_if_replacer_dropped,
     ignore = "mozart binary cannot yet run this fixture"
 );
-installer_fixture!(
-    outdated_lock_file_fails_install,
-    ignore = "mozart binary cannot yet run this fixture"
-);
+installer_fixture!(outdated_lock_file_fails_install);
 installer_fixture!(
     outdated_lock_file_with_new_platform_reqs_fails,
     ignore = "mozart binary cannot yet run this fixture"
