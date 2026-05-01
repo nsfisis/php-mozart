@@ -1081,6 +1081,7 @@ dependencies = [
  "mozart-core",
  "mozart-registry",
  "mozart-semver",
+ "mozart-test-harness",
  "mozart-vcs",
  "predicates",
  "regex",
@@ -1206,6 +1207,16 @@ version = "0.1.0"
 dependencies = [
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "mozart-test-harness"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "regex",
+ "serde_json",
+ "tempfile",
 ]
 
 [[package]]
