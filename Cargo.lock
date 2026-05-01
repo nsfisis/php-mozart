@@ -1209,6 +1209,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "mozart-test-harness"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "regex",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
 name = "mozart-vcs"
 version = "0.1.0"
 dependencies = [
