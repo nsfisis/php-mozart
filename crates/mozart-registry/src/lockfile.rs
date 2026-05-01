@@ -18,7 +18,7 @@ fn default_empty_object() -> serde_json::Value {
 /// Represents the content of a composer.lock file.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LockFile {
-    #[serde(rename = "_readme")]
+    #[serde(rename = "_readme", default = "LockFile::default_readme")]
     pub readme: Vec<String>,
 
     #[serde(rename = "content-hash")]
