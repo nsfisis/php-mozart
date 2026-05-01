@@ -21,7 +21,10 @@ pub struct LockFile {
     #[serde(rename = "_readme", default = "LockFile::default_readme")]
     pub readme: Vec<String>,
 
-    #[serde(rename = "content-hash")]
+    /// Composer lock files written before content-hash existed (or fixtures
+    /// covering BC behavior) may omit this field; mirror Composer's BC support
+    /// in `Locker::isLocked()` by defaulting to empty.
+    #[serde(rename = "content-hash", default)]
     pub content_hash: String,
 
     pub packages: Vec<LockedPackage>,
@@ -702,6 +705,25 @@ mod tests {
         let readme = LockFile::default_readme();
         assert_eq!(readme.len(), 3);
         assert!(readme[0].contains("locks the dependencies"));
+    }
+
+    #[test]
+    fn parses_lock_without_content_hash() {
+        // Composer fixtures (and historical lock files) may omit content-hash;
+        // mirror Composer's BC handling by accepting it and treating the lock
+        // as not-fresh against any composer.json.
+        let raw = r#"{
+            "packages": [],
+            "packages-dev": [],
+            "aliases": [],
+            "minimum-stability": "dev",
+            "stability-flags": {},
+            "prefer-stable": false,
+            "prefer-lowest": false
+        }"#;
+        let lock: LockFile = serde_json::from_str(raw).unwrap();
+        assert_eq!(lock.content_hash, "");
+        assert!(!lock.is_fresh(r#"{"require": {}}"#));
     }
 
     // ──────────── Lock file generation tests ────────────

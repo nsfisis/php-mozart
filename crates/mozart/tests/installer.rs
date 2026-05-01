@@ -791,10 +791,7 @@ installer_fixture!(
     update_without_lock,
     ignore = "mozart binary cannot yet run this fixture"
 );
-installer_fixture!(
-    updating_dev_from_lock_removes_old_deps,
-    ignore = "mozart binary cannot yet run this fixture"
-);
+installer_fixture!(updating_dev_from_lock_removes_old_deps);
 installer_fixture!(
     updating_dev_updates_url_and_reference,
     ignore = "mozart binary cannot yet run this fixture"
