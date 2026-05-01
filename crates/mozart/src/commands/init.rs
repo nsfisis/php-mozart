@@ -700,12 +700,17 @@ fn parse_repositories(repos: &[String]) -> anyhow::Result<Vec<RawRepository>> {
                 .as_str()
                 .ok_or_else(|| anyhow::anyhow!("Repository JSON must contain a 'url' field"))?
                 .to_string();
-            result.push(RawRepository { repo_type, url });
+            result.push(RawRepository {
+                repo_type,
+                url: Some(url),
+                package: None,
+            });
         } else {
             // Plain URL
             result.push(RawRepository {
                 repo_type: "vcs".to_string(),
-                url: repo.clone(),
+                url: Some(repo.clone()),
+                package: None,
             });
         }
     }

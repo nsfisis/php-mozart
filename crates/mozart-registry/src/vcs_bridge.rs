@@ -32,14 +32,20 @@ pub async fn scan_vcs_repositories(repositories: &[RawRepository]) -> Vec<VcsPac
             other => Some(other),
         };
 
-        let vcs_repo = VcsRepository::new(repo.url.clone(), forced_type, config.clone());
+        // VCS repositories require `url`; skip silently if missing (Composer
+        // would reject this earlier in RepositoryFactory).
+        let Some(url) = repo.url.clone() else {
+            continue;
+        };
+
+        let vcs_repo = VcsRepository::new(url.clone(), forced_type, config.clone());
 
         match vcs_repo.scan().await {
             Ok(versions) => {
                 all_versions.extend(versions);
             }
             Err(e) => {
-                eprintln!("Warning: Failed to scan VCS repository {}: {}", repo.url, e,);
+                eprintln!("Warning: Failed to scan VCS repository {url}: {e}");
             }
         }
     }

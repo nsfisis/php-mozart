@@ -608,18 +608,22 @@ pub async fn install_from_lock(
                 continue;
             }
 
+            // A package with neither dist nor source has no install action.
+            // This covers Composer's `type: metapackage` (modeled explicitly
+            // as "no installer") and inline `type: package` definitions used
+            // in test fixtures that intentionally omit download metadata.
+            // Mozart records the operation and the installed.json entry but
+            // performs no filesystem work, mirroring Composer's
+            // MetapackageInstaller.
+            if pkg.dist.is_none() && pkg.source.is_none() {
+                continue;
+            }
+
             let dist = pkg.dist.as_ref().ok_or_else(|| {
-                if pkg.source.is_some() {
-                    anyhow::anyhow!(
-                        "Package {} has no dist information. Use --prefer-source to install from VCS.",
-                        pkg.name,
-                    )
-                } else {
-                    anyhow::anyhow!(
-                        "Package {} has no dist or source information",
-                        pkg.name,
-                    )
-                }
+                anyhow::anyhow!(
+                    "Package {} has no dist information. Use --prefer-source to install from VCS.",
+                    pkg.name,
+                )
             })?;
 
             let mut progress = make_progress(!config.no_progress, &pkg.name, &pkg.version);

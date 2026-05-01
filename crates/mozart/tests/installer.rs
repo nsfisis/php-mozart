@@ -66,10 +66,7 @@ macro_rules! installer_fixture {
     };
 }
 
-installer_fixture!(
-    abandoned_listed,
-    ignore = "mozart binary cannot yet run this fixture"
-);
+installer_fixture!(abandoned_listed);
 installer_fixture!(
     alias_in_complex_constraints,
     ignore = "mozart binary cannot yet run this fixture"
@@ -78,10 +75,7 @@ installer_fixture!(
     alias_in_lock,
     ignore = "mozart binary cannot yet run this fixture"
 );
-installer_fixture!(
-    alias_in_lock2,
-    ignore = "mozart binary cannot yet run this fixture"
-);
+installer_fixture!(alias_in_lock2);
 installer_fixture!(
     alias_on_unloadable_package,
     ignore = "mozart binary cannot yet run this fixture"
@@ -98,14 +92,8 @@ installer_fixture!(
     alias_with_reference,
     ignore = "mozart binary cannot yet run this fixture"
 );
-installer_fixture!(
-    aliased_priority,
-    ignore = "mozart binary cannot yet run this fixture"
-);
-installer_fixture!(
-    aliased_priority_conflicting,
-    ignore = "mozart binary cannot yet run this fixture"
-);
+installer_fixture!(aliased_priority);
+installer_fixture!(aliased_priority_conflicting);
 installer_fixture!(
     aliases_with_require_dev,
     ignore = "mozart binary cannot yet run this fixture"
@@ -122,18 +110,9 @@ installer_fixture!(
     circular_dependency2,
     ignore = "mozart binary cannot yet run this fixture"
 );
-installer_fixture!(
-    circular_dependency_errors,
-    ignore = "mozart binary cannot yet run this fixture"
-);
-installer_fixture!(
-    conflict_against_provided_by_dep_package_works,
-    ignore = "mozart binary cannot yet run this fixture"
-);
-installer_fixture!(
-    conflict_against_provided_package_works,
-    ignore = "mozart binary cannot yet run this fixture"
-);
+installer_fixture!(circular_dependency_errors);
+installer_fixture!(conflict_against_provided_by_dep_package_works);
+installer_fixture!(conflict_against_provided_package_works);
 installer_fixture!(
     conflict_against_replaced_by_dep_package_problem,
     ignore = "mozart binary cannot yet run this fixture"
@@ -142,22 +121,10 @@ installer_fixture!(
     conflict_against_replaced_package_problem,
     ignore = "mozart binary cannot yet run this fixture"
 );
-installer_fixture!(
-    conflict_between_dependents,
-    ignore = "mozart binary cannot yet run this fixture"
-);
-installer_fixture!(
-    conflict_between_root_and_dependent,
-    ignore = "mozart binary cannot yet run this fixture"
-);
-installer_fixture!(
-    conflict_downgrade,
-    ignore = "mozart binary cannot yet run this fixture"
-);
-installer_fixture!(
-    conflict_downgrade_nested,
-    ignore = "mozart binary cannot yet run this fixture"
-);
+installer_fixture!(conflict_between_dependents);
+installer_fixture!(conflict_between_root_and_dependent);
+installer_fixture!(conflict_downgrade);
+installer_fixture!(conflict_downgrade_nested);
 installer_fixture!(
     conflict_on_root_with_alias_prevents_update_if_not_required,
     ignore = "mozart binary cannot yet run this fixture"
@@ -166,10 +133,7 @@ installer_fixture!(
     conflict_with_alias_in_lock_does_prevents_install,
     ignore = "mozart binary cannot yet run this fixture"
 );
-installer_fixture!(
-    conflict_with_alias_prevents_update,
-    ignore = "mozart binary cannot yet run this fixture"
-);
+installer_fixture!(conflict_with_alias_prevents_update);
 installer_fixture!(
     conflict_with_alias_prevents_update_if_not_required,
     ignore = "mozart binary cannot yet run this fixture"
@@ -178,38 +142,20 @@ installer_fixture!(
     conflict_with_all_dependencies_option_dont_recommend_to_use_it,
     ignore = "mozart binary cannot yet run this fixture"
 );
-installer_fixture!(
-    deduplicate_solver_problems,
-    ignore = "mozart binary cannot yet run this fixture"
-);
-installer_fixture!(
-    disjunctive_multi_constraints,
-    ignore = "mozart binary cannot yet run this fixture"
-);
+installer_fixture!(deduplicate_solver_problems);
+installer_fixture!(disjunctive_multi_constraints);
 installer_fixture!(
     full_update_minimal_changes,
     ignore = "mozart binary cannot yet run this fixture"
 );
-installer_fixture!(
-    github_issues_4319,
-    ignore = "mozart binary cannot yet run this fixture"
-);
-installer_fixture!(
-    github_issues_4795,
-    ignore = "mozart binary cannot yet run this fixture"
-);
-installer_fixture!(
-    github_issues_4795_2,
-    ignore = "mozart binary cannot yet run this fixture"
-);
+installer_fixture!(github_issues_4319);
+installer_fixture!(github_issues_4795);
+installer_fixture!(github_issues_4795_2);
 installer_fixture!(
     github_issues_7051,
     ignore = "mozart binary cannot yet run this fixture"
 );
-installer_fixture!(
-    github_issues_8902,
-    ignore = "mozart binary cannot yet run this fixture"
-);
+installer_fixture!(github_issues_8902);
 installer_fixture!(
     github_issues_8903,
     ignore = "mozart binary cannot yet run this fixture"
@@ -226,51 +172,24 @@ installer_fixture!(
     hint_main_rename,
     ignore = "mozart binary cannot yet run this fixture"
 );
-installer_fixture!(
-    install_aliased_alias,
-    ignore = "mozart binary cannot yet run this fixture"
-);
+installer_fixture!(install_aliased_alias);
 installer_fixture!(
     install_branch_alias_composer_repo,
     ignore = "mozart binary cannot yet run this fixture"
 );
-installer_fixture!(
-    install_dev,
-    ignore = "mozart binary cannot yet run this fixture"
-);
-installer_fixture!(
-    install_dev_using_dist,
-    ignore = "mozart binary cannot yet run this fixture"
-);
+installer_fixture!(install_dev);
+installer_fixture!(install_dev_using_dist);
 installer_fixture!(install_forces_reinstall_if_abandon_changes);
-installer_fixture!(
-    install_from_incomplete_lock,
-    ignore = "mozart binary cannot yet run this fixture"
-);
+installer_fixture!(install_from_incomplete_lock);
 installer_fixture!(
     install_from_incomplete_lock_with_ignore,
     ignore = "mozart binary cannot yet run this fixture"
 );
-installer_fixture!(
-    install_from_lock_removes_package,
-    ignore = "mozart binary cannot yet run this fixture"
-);
-installer_fixture!(
-    install_funding_notice,
-    ignore = "mozart binary cannot yet run this fixture"
-);
-installer_fixture!(
-    install_funding_notice_env,
-    ignore = "mozart binary cannot yet run this fixture"
-);
-installer_fixture!(
-    install_funding_notice_not_displayed_env,
-    ignore = "mozart binary cannot yet run this fixture"
-);
-installer_fixture!(
-    install_ignore_platform_package_requirement_list,
-    ignore = "mozart binary cannot yet run this fixture"
-);
+installer_fixture!(install_from_lock_removes_package);
+installer_fixture!(install_funding_notice);
+installer_fixture!(install_funding_notice_env);
+installer_fixture!(install_funding_notice_not_displayed_env);
+installer_fixture!(install_ignore_platform_package_requirement_list);
 installer_fixture!(
     install_ignore_platform_package_requirement_wildcard,
     ignore = "mozart binary cannot yet run this fixture"
@@ -287,31 +206,16 @@ installer_fixture!(
     install_overridden_platform_packages,
     ignore = "mozart binary cannot yet run this fixture"
 );
-installer_fixture!(
-    install_package_and_its_provider_skips_original,
-    ignore = "mozart binary cannot yet run this fixture"
-);
-installer_fixture!(
-    install_prefers_repos_over_package_versions,
-    ignore = "mozart binary cannot yet run this fixture"
-);
-installer_fixture!(
-    install_reference,
-    ignore = "mozart binary cannot yet run this fixture"
-);
+installer_fixture!(install_package_and_its_provider_skips_original);
+installer_fixture!(install_prefers_repos_over_package_versions);
+installer_fixture!(install_reference);
 installer_fixture!(
     install_security_advisory_matching_dependency,
     ignore = "mozart binary cannot yet run this fixture"
 );
 installer_fixture!(install_self_from_root);
-installer_fixture!(
-    install_simple,
-    ignore = "mozart binary cannot yet run this fixture"
-);
-installer_fixture!(
-    install_without_lock,
-    ignore = "mozart binary cannot yet run this fixture"
-);
+installer_fixture!(install_simple);
+installer_fixture!(install_without_lock);
 installer_fixture!(
     load_replaced_package_if_replacer_dropped,
     ignore = "mozart binary cannot yet run this fixture"
@@ -326,22 +230,13 @@ installer_fixture!(
     partial_update_downgrades_non_allow_listed_unstable,
     ignore = "mozart binary cannot yet run this fixture"
 );
-installer_fixture!(
-    partial_update_forces_dev_reference_from_lock_for_non_updated_packages,
-    ignore = "mozart binary cannot yet run this fixture"
-);
+installer_fixture!(partial_update_forces_dev_reference_from_lock_for_non_updated_packages);
 installer_fixture!(
     partial_update_from_lock,
     ignore = "mozart binary cannot yet run this fixture"
 );
-installer_fixture!(
-    partial_update_from_lock_with_root_alias,
-    ignore = "mozart binary cannot yet run this fixture"
-);
-installer_fixture!(
-    partial_update_installs_from_lock_even_missing,
-    ignore = "mozart binary cannot yet run this fixture"
-);
+installer_fixture!(partial_update_from_lock_with_root_alias);
+installer_fixture!(partial_update_installs_from_lock_even_missing);
 installer_fixture!(
     partial_update_keeps_older_dep_if_still_required,
     ignore = "mozart binary cannot yet run this fixture"
@@ -374,42 +269,18 @@ installer_fixture!(
     partial_update_with_deps_warns_root,
     ignore = "mozart binary cannot yet run this fixture"
 );
-installer_fixture!(
-    partial_update_with_symlinked_path_repos,
-    ignore = "mozart binary cannot yet run this fixture"
-);
-installer_fixture!(
-    partial_update_without_lock,
-    ignore = "mozart binary cannot yet run this fixture"
-);
-installer_fixture!(
-    platform_ext_solver_problems,
-    ignore = "mozart binary cannot yet run this fixture"
-);
-installer_fixture!(
-    plugins_are_installed_first,
-    ignore = "mozart binary cannot yet run this fixture"
-);
-installer_fixture!(
-    prefer_lowest_branches,
-    ignore = "mozart binary cannot yet run this fixture"
-);
-installer_fixture!(
-    problems_reduce_versions,
-    ignore = "mozart binary cannot yet run this fixture"
-);
-installer_fixture!(
-    provider_can_coexist_with_other_version_of_provided,
-    ignore = "mozart binary cannot yet run this fixture"
-);
+installer_fixture!(partial_update_with_symlinked_path_repos);
+installer_fixture!(partial_update_without_lock);
+installer_fixture!(platform_ext_solver_problems);
+installer_fixture!(plugins_are_installed_first);
+installer_fixture!(prefer_lowest_branches);
+installer_fixture!(problems_reduce_versions);
+installer_fixture!(provider_can_coexist_with_other_version_of_provided);
 installer_fixture!(
     provider_conflicts,
     ignore = "mozart binary cannot yet run this fixture"
 );
-installer_fixture!(
-    provider_conflicts2,
-    ignore = "mozart binary cannot yet run this fixture"
-);
+installer_fixture!(provider_conflicts2);
 installer_fixture!(
     provider_conflicts3,
     ignore = "mozart binary cannot yet run this fixture"
@@ -418,22 +289,13 @@ installer_fixture!(
     provider_dev_require_can_satisfy_require,
     ignore = "mozart binary cannot yet run this fixture"
 );
-installer_fixture!(
-    provider_gets_picked_together_with_other_version_of_provided,
-    ignore = "mozart binary cannot yet run this fixture"
-);
+installer_fixture!(provider_gets_picked_together_with_other_version_of_provided);
 installer_fixture!(
     provider_gets_picked_together_with_other_version_of_provided_conflict,
     ignore = "mozart binary cannot yet run this fixture"
 );
-installer_fixture!(
-    provider_gets_picked_together_with_other_version_of_provided_indirect,
-    ignore = "mozart binary cannot yet run this fixture"
-);
-installer_fixture!(
-    provider_packages_can_be_installed_if_selected,
-    ignore = "mozart binary cannot yet run this fixture"
-);
+installer_fixture!(provider_gets_picked_together_with_other_version_of_provided_indirect);
+installer_fixture!(provider_packages_can_be_installed_if_selected);
 installer_fixture!(
     provider_packages_can_be_installed_together_with_provided_if_both_installable,
     ignore = "mozart binary cannot yet run this fixture"
@@ -442,10 +304,7 @@ installer_fixture!(
     provider_packages_can_not_be_installed_unless_selected,
     ignore = "mozart binary cannot yet run this fixture"
 );
-installer_fixture!(
-    provider_satisfies_its_own_requirement,
-    ignore = "mozart binary cannot yet run this fixture"
-);
+installer_fixture!(provider_satisfies_its_own_requirement);
 installer_fixture!(
     remove_deletes_unused_deps,
     ignore = "mozart binary cannot yet run this fixture"
@@ -458,18 +317,9 @@ installer_fixture!(
     replace_alias,
     ignore = "mozart binary cannot yet run this fixture"
 );
-installer_fixture!(
-    replace_priorities,
-    ignore = "mozart binary cannot yet run this fixture"
-);
-installer_fixture!(
-    replace_range_require_single_version,
-    ignore = "mozart binary cannot yet run this fixture"
-);
-installer_fixture!(
-    replace_root_require,
-    ignore = "mozart binary cannot yet run this fixture"
-);
+installer_fixture!(replace_priorities);
+installer_fixture!(replace_range_require_single_version);
+installer_fixture!(replace_root_require);
 installer_fixture!(
     replaced_packages_should_not_be_installed,
     ignore = "mozart binary cannot yet run this fixture"
@@ -478,22 +328,13 @@ installer_fixture!(
     replaced_packages_should_not_be_installed_when_installing_from_lock,
     ignore = "mozart binary cannot yet run this fixture"
 );
-installer_fixture!(
-    replacer_satisfies_its_own_requirement,
-    ignore = "mozart binary cannot yet run this fixture"
-);
+installer_fixture!(replacer_satisfies_its_own_requirement);
 installer_fixture!(
     repositories_priorities,
     ignore = "mozart binary cannot yet run this fixture"
 );
-installer_fixture!(
-    repositories_priorities2,
-    ignore = "mozart binary cannot yet run this fixture"
-);
-installer_fixture!(
-    repositories_priorities3,
-    ignore = "mozart binary cannot yet run this fixture"
-);
+installer_fixture!(repositories_priorities2);
+installer_fixture!(repositories_priorities3);
 installer_fixture!(
     repositories_priorities4,
     ignore = "mozart binary cannot yet run this fixture"
@@ -506,54 +347,24 @@ installer_fixture!(
     root_alias_change_with_circular_dep,
     ignore = "mozart binary cannot yet run this fixture"
 );
-installer_fixture!(
-    root_alias_gets_loaded_for_locked_pkgs,
-    ignore = "mozart binary cannot yet run this fixture"
-);
-installer_fixture!(
-    root_requirements_do_not_affect_locked_versions,
-    ignore = "mozart binary cannot yet run this fixture"
-);
+installer_fixture!(root_alias_gets_loaded_for_locked_pkgs);
+installer_fixture!(root_requirements_do_not_affect_locked_versions);
 installer_fixture!(
     solver_problem_with_hash_in_branch,
     ignore = "mozart binary cannot yet run this fixture"
 );
-installer_fixture!(
-    solver_problems,
-    ignore = "mozart binary cannot yet run this fixture"
-);
-installer_fixture!(
-    solver_problems_with_disabled_platform,
-    ignore = "mozart binary cannot yet run this fixture"
-);
-installer_fixture!(
-    suggest_installed,
-    ignore = "mozart binary cannot yet run this fixture"
-);
-installer_fixture!(
-    suggest_prod,
-    ignore = "mozart binary cannot yet run this fixture"
-);
-installer_fixture!(
-    suggest_prod_nolock,
-    ignore = "mozart binary cannot yet run this fixture"
-);
-installer_fixture!(
-    suggest_replaced,
-    ignore = "mozart binary cannot yet run this fixture"
-);
-installer_fixture!(
-    suggest_uninstalled,
-    ignore = "mozart binary cannot yet run this fixture"
-);
+installer_fixture!(solver_problems);
+installer_fixture!(solver_problems_with_disabled_platform);
+installer_fixture!(suggest_installed);
+installer_fixture!(suggest_prod);
+installer_fixture!(suggest_prod_nolock);
+installer_fixture!(suggest_replaced);
+installer_fixture!(suggest_uninstalled);
 installer_fixture!(
     unbounded_conflict_does_not_match_default_branch_with_branch_alias,
     ignore = "mozart binary cannot yet run this fixture"
 );
-installer_fixture!(
-    unbounded_conflict_does_not_match_default_branch_with_numeric_branch,
-    ignore = "mozart binary cannot yet run this fixture"
-);
+installer_fixture!(unbounded_conflict_does_not_match_default_branch_with_numeric_branch);
 installer_fixture!(
     unbounded_conflict_matches_default_branch,
     ignore = "mozart binary cannot yet run this fixture"
@@ -562,26 +373,11 @@ installer_fixture!(
     update_abandoned_package_required_but_blocked_via_audit_config,
     ignore = "mozart binary cannot yet run this fixture"
 );
-installer_fixture!(
-    update_alias,
-    ignore = "mozart binary cannot yet run this fixture"
-);
-installer_fixture!(
-    update_alias_lock,
-    ignore = "mozart binary cannot yet run this fixture"
-);
-installer_fixture!(
-    update_alias_lock2,
-    ignore = "mozart binary cannot yet run this fixture"
-);
-installer_fixture!(
-    update_all,
-    ignore = "mozart binary cannot yet run this fixture"
-);
-installer_fixture!(
-    update_all_dry_run,
-    ignore = "mozart binary cannot yet run this fixture"
-);
+installer_fixture!(update_alias);
+installer_fixture!(update_alias_lock);
+installer_fixture!(update_alias_lock2);
+installer_fixture!(update_all);
+installer_fixture!(update_all_dry_run);
 installer_fixture!(
     update_allow_list,
     ignore = "mozart binary cannot yet run this fixture"
@@ -594,10 +390,7 @@ installer_fixture!(
     update_allow_list_minimal_changes,
     ignore = "mozart binary cannot yet run this fixture"
 );
-installer_fixture!(
-    update_allow_list_patterns,
-    ignore = "mozart binary cannot yet run this fixture"
-);
+installer_fixture!(update_allow_list_patterns);
 installer_fixture!(
     update_allow_list_patterns_with_all_dependencies,
     ignore = "mozart binary cannot yet run this fixture"
@@ -618,10 +411,7 @@ installer_fixture!(
     update_allow_list_reads_lock,
     ignore = "mozart binary cannot yet run this fixture"
 );
-installer_fixture!(
-    update_allow_list_removes_unused,
-    ignore = "mozart binary cannot yet run this fixture"
-);
+installer_fixture!(update_allow_list_removes_unused);
 installer_fixture!(
     update_allow_list_require_new_replace,
     ignore = "mozart binary cannot yet run this fixture"
@@ -662,30 +452,15 @@ installer_fixture!(
     update_changes_url,
     ignore = "mozart binary cannot yet run this fixture"
 );
-installer_fixture!(
-    update_dev_ignores_providers,
-    ignore = "mozart binary cannot yet run this fixture"
-);
-installer_fixture!(
-    update_dev_packages_updates_repo_url,
-    ignore = "mozart binary cannot yet run this fixture"
-);
-installer_fixture!(
-    update_dev_to_new_ref_picks_up_changes,
-    ignore = "mozart binary cannot yet run this fixture"
-);
+installer_fixture!(update_dev_ignores_providers);
+installer_fixture!(update_dev_packages_updates_repo_url);
+installer_fixture!(update_dev_to_new_ref_picks_up_changes);
 installer_fixture!(
     update_downgrades_unstable_packages,
     ignore = "mozart binary cannot yet run this fixture"
 );
-installer_fixture!(
-    update_ignore_platform_package_requirement_list,
-    ignore = "mozart binary cannot yet run this fixture"
-);
-installer_fixture!(
-    update_ignore_platform_package_requirement_list_upper_bounds,
-    ignore = "mozart binary cannot yet run this fixture"
-);
+installer_fixture!(update_ignore_platform_package_requirement_list);
+installer_fixture!(update_ignore_platform_package_requirement_list_upper_bounds);
 installer_fixture!(
     update_ignore_platform_package_requirement_wildcard,
     ignore = "mozart binary cannot yet run this fixture"
@@ -694,78 +469,27 @@ installer_fixture!(
     update_ignore_platform_package_requirements,
     ignore = "mozart binary cannot yet run this fixture"
 );
-installer_fixture!(
-    update_installed_alias,
-    ignore = "mozart binary cannot yet run this fixture"
-);
-installer_fixture!(
-    update_installed_alias_dry_run,
-    ignore = "mozart binary cannot yet run this fixture"
-);
-installer_fixture!(
-    update_installed_reference,
-    ignore = "mozart binary cannot yet run this fixture"
-);
-installer_fixture!(
-    update_installed_reference_dry_run,
-    ignore = "mozart binary cannot yet run this fixture"
-);
-installer_fixture!(
-    update_mirrors_changes_url,
-    ignore = "mozart binary cannot yet run this fixture"
-);
-installer_fixture!(
-    update_mirrors_fails_with_new_req,
-    ignore = "mozart binary cannot yet run this fixture"
-);
-installer_fixture!(
-    update_no_dev_still_resolves_dev,
-    ignore = "mozart binary cannot yet run this fixture"
-);
-installer_fixture!(
-    update_no_install,
-    ignore = "mozart binary cannot yet run this fixture"
-);
-installer_fixture!(
-    update_package_present_in_lock_but_not_at_all_in_remote,
-    ignore = "mozart binary cannot yet run this fixture"
-);
-installer_fixture!(
-    update_package_present_in_lock_but_not_in_remote,
-    ignore = "mozart binary cannot yet run this fixture"
-);
-installer_fixture!(
-    update_package_present_in_lock_but_not_in_remote_due_to_min_stability,
-    ignore = "mozart binary cannot yet run this fixture"
-);
+installer_fixture!(update_installed_alias);
+installer_fixture!(update_installed_alias_dry_run);
+installer_fixture!(update_installed_reference);
+installer_fixture!(update_installed_reference_dry_run);
+installer_fixture!(update_mirrors_changes_url);
+installer_fixture!(update_mirrors_fails_with_new_req);
+installer_fixture!(update_no_dev_still_resolves_dev);
+installer_fixture!(update_no_install);
+installer_fixture!(update_package_present_in_lock_but_not_at_all_in_remote);
+installer_fixture!(update_package_present_in_lock_but_not_in_remote);
+installer_fixture!(update_package_present_in_lock_but_not_in_remote_due_to_min_stability);
 installer_fixture!(
     update_package_present_in_lower_repo_prio_but_not_main_due_to_min_stability,
     ignore = "mozart binary cannot yet run this fixture"
 );
-installer_fixture!(
-    update_picks_up_change_of_vcs_type,
-    ignore = "mozart binary cannot yet run this fixture"
-);
-installer_fixture!(
-    update_prefer_lowest_stable,
-    ignore = "mozart binary cannot yet run this fixture"
-);
-installer_fixture!(
-    update_reference,
-    ignore = "mozart binary cannot yet run this fixture"
-);
-installer_fixture!(
-    update_reference_picks_latest,
-    ignore = "mozart binary cannot yet run this fixture"
-);
-installer_fixture!(
-    update_removes_unused_locked_dep,
-    ignore = "mozart binary cannot yet run this fixture"
-);
-installer_fixture!(
-    update_requiring_decision_reverts_and_learning_positive_literals,
-    ignore = "mozart binary cannot yet run this fixture"
-);
+installer_fixture!(update_picks_up_change_of_vcs_type);
+installer_fixture!(update_prefer_lowest_stable);
+installer_fixture!(update_reference);
+installer_fixture!(update_reference_picks_latest);
+installer_fixture!(update_removes_unused_locked_dep);
+installer_fixture!(update_requiring_decision_reverts_and_learning_positive_literals);
 installer_fixture!(
     update_security_advisory_matching_direct_dependency,
     ignore = "mozart binary cannot yet run this fixture"
@@ -774,22 +498,10 @@ installer_fixture!(
     update_security_advisory_matching_indirect_dependency,
     ignore = "mozart binary cannot yet run this fixture"
 );
-installer_fixture!(
-    update_syncs_outdated,
-    ignore = "mozart binary cannot yet run this fixture"
-);
+installer_fixture!(update_syncs_outdated);
 installer_fixture!(update_to_empty_from_blank);
 installer_fixture!(update_to_empty_from_locked);
-installer_fixture!(
-    update_with_all_dependencies,
-    ignore = "mozart binary cannot yet run this fixture"
-);
-installer_fixture!(
-    update_without_lock,
-    ignore = "mozart binary cannot yet run this fixture"
-);
+installer_fixture!(update_with_all_dependencies);
+installer_fixture!(update_without_lock);
 installer_fixture!(updating_dev_from_lock_removes_old_deps);
-installer_fixture!(
-    updating_dev_updates_url_and_reference,
-    ignore = "mozart binary cannot yet run this fixture"
-);
+installer_fixture!(updating_dev_updates_url_and_reference);

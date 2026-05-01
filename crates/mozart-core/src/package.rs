@@ -529,7 +529,19 @@ pub struct RawAutoload {
 pub struct RawRepository {
     #[serde(rename = "type")]
     pub repo_type: String,
-    pub url: String,
+
+    /// Required for VCS / composer / artifact / path types; absent for inline
+    /// `package` repositories. Modeled as Option to mirror Composer's
+    /// per-type schema (Composer enforces presence in `RepositoryFactory`,
+    /// not at the JSON-parse step).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
+
+    /// Inline package definition(s) for `type: package` repositories. Either
+    /// a single object or an array of objects, mirroring
+    /// `Composer\Repository\PackageRepository`'s schema.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub package: Option<serde_json::Value>,
 }
 
 /// Default root-package name when `composer.json` omits the `name` field.
@@ -635,7 +647,8 @@ mod tests {
             .insert("phpunit/phpunit".to_string(), "^10.0".to_string());
         raw.repositories = vec![RawRepository {
             repo_type: "vcs".to_string(),
-            url: "https://github.com/acme/repo".to_string(),
+            url: Some("https://github.com/acme/repo".to_string()),
+            package: None,
         }];
 
         let mut psr4 = BTreeMap::new();

@@ -354,6 +354,19 @@ pub struct LockFileGenerationRequest {
     pub repo_cache: Cache,
 }
 
+impl LockFileGenerationRequest {
+    /// Look up an inline `type: package` definition for `name` (if any).
+    /// Returns the matching `PackagistVersion` so callers can short-circuit
+    /// the Packagist fetch for resolved packages that came from a `type:
+    /// package` repository.
+    fn inline_lookup(&self, name: &str, version_normalized: &str) -> Option<PackagistVersion> {
+        crate::inline_package::collect_inline_packages(&self.composer_json.repositories)
+            .into_iter()
+            .find(|ipkg| ipkg.name == name && ipkg.version.version_normalized == version_normalized)
+            .map(|ipkg| ipkg.version)
+    }
+}
+
 /// Convert a `PackagistSource` to a `LockedSource`.
 fn packagist_source_to_locked(ps: &PackagistSource) -> LockedSource {
     LockedSource {
@@ -504,6 +517,13 @@ pub async fn generate_lock_file(request: &LockFileGenerationRequest) -> anyhow::
     // 1. Fetch full metadata for all resolved packages
     let mut package_metadata: HashMap<String, PackagistVersion> = HashMap::new();
     for pkg in &request.resolved_packages {
+        // Inline `type: package` repositories carry full metadata in
+        // composer.json — use it directly instead of hitting Packagist.
+        if let Some(inline) = request.inline_lookup(&pkg.name, &pkg.version_normalized) {
+            package_metadata.insert(pkg.name.clone(), inline);
+            continue;
+        }
+
         let versions = packagist::fetch_package_versions(&pkg.name, &request.repo_cache).await?;
         // Find the exact version matching pkg.version_normalized
         let matching = versions

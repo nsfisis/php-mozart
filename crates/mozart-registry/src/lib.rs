@@ -1,5 +1,6 @@
 pub mod cache;
 pub mod downloader;
+pub mod inline_package;
 pub mod installed;
 pub mod lockfile;
 pub mod packagist;

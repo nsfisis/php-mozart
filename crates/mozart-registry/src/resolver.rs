@@ -463,14 +463,32 @@ pub async fn resolve(request: &ResolveRequest) -> Result<Vec<ResolvedPackage>, R
         }
     }
 
+    // Collect inline `type: package` repositories. These don't require any
+    // network fetch; they go straight into the pool and are also tracked by
+    // name so the Packagist seed/transitive loops below skip them.
+    let inline_packages = crate::inline_package::collect_inline_packages(&request.repositories);
+    let mut inline_package_names: HashSet<String> = HashSet::new();
+    for ipkg in &inline_packages {
+        inline_package_names.insert(ipkg.name.clone());
+        let inputs = packagist_to_pool_inputs(
+            &ipkg.name,
+            &ipkg.version,
+            request.minimum_stability,
+            &request.stability_flags,
+        );
+        for input in inputs {
+            builder.add_package(input);
+        }
+    }
+
     // Seed the builder with packages for root requirements
     for name in root_requires.keys() {
         if PackageName(name.clone()).is_platform() {
             continue; // platform packages already added
         }
 
-        // Skip packages already provided by VCS repositories
-        if vcs_package_names.contains(name) {
+        // Skip packages already provided by VCS or inline-package repositories
+        if vcs_package_names.contains(name) || inline_package_names.contains(name) {
             continue;
         }
 
@@ -500,8 +518,8 @@ pub async fn resolve(request: &ResolveRequest) -> Result<Vec<ResolvedPackage>, R
             continue;
         }
 
-        // Skip packages already provided by VCS repositories
-        if vcs_package_names.contains(&name) {
+        // Skip packages already provided by VCS or inline-package repositories
+        if vcs_package_names.contains(&name) || inline_package_names.contains(&name) {
             continue;
         }
 
