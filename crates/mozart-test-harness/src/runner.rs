@@ -20,6 +20,11 @@ pub struct RunResult {
 
 /// Set up a temp project from the parsed test, invoke `mozart` with the
 /// `--RUN--` command, and capture the result.
+///
+/// `--INSTALLED--` is written verbatim to `vendor/composer/installed.json`.
+/// Composer's fixtures use the v1 plain-array shape (`[{...}]`), which
+/// `FilesystemRepository::initialize` accepts alongside the v2 object shape;
+/// Mozart's reader is expected to do the same. Do not pre-wrap here.
 pub fn run_test(test: &ParsedTest, mozart_bin: &Path) -> Result<RunResult> {
     let working_dir = TempDir::new().context("failed to create tempdir")?;
     let root = working_dir.path();

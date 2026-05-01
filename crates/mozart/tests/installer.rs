@@ -766,10 +766,7 @@ installer_fixture!(
     ignore = "mozart binary cannot yet run this fixture"
 );
 installer_fixture!(update_to_empty_from_blank);
-installer_fixture!(
-    update_to_empty_from_locked,
-    ignore = "mozart binary cannot yet run this fixture"
-);
+installer_fixture!(update_to_empty_from_locked);
 installer_fixture!(
     update_with_all_dependencies,
     ignore = "mozart binary cannot yet run this fixture"

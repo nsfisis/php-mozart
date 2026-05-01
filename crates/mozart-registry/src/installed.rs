@@ -70,14 +70,67 @@ impl InstalledPackages {
 
     /// Read installed.json from `vendor/composer/installed.json`.
     /// If the file does not exist, returns an empty registry.
+    ///
+    /// Accepts both Composer formats, mirroring `FilesystemRepository::initialize`:
+    /// - **v2** — object with a `packages` array, plus optional `dev-package-names`/`dev`
+    ///   (the shape Composer 2.x writes).
+    /// - **v1** — bare array of package entries (older shape; still legal input).
     pub fn read(vendor_dir: &Path) -> anyhow::Result<InstalledPackages> {
         let path = vendor_dir.join("composer/installed.json");
         if !path.exists() {
             return Ok(InstalledPackages::new());
         }
         let content = fs::read_to_string(&path)?;
-        let installed: InstalledPackages = serde_json::from_str(&content)?;
-        Ok(installed)
+        Self::from_json_str(&content)
+    }
+
+    /// Parse an installed.json document. See [`Self::read`] for the accepted shapes.
+    pub fn from_json_str(content: &str) -> anyhow::Result<InstalledPackages> {
+        use anyhow::{Context, anyhow};
+
+        let value: serde_json::Value =
+            serde_json::from_str(content).context("invalid installed.json")?;
+
+        match value {
+            serde_json::Value::Object(mut obj) => {
+                let packages_value = obj.remove("packages").ok_or_else(|| {
+                    anyhow!("Could not parse package list from installed.json (missing `packages`)")
+                })?;
+                let packages: Vec<InstalledPackageEntry> =
+                    serde_json::from_value(packages_value)
+                        .context("invalid `packages` array in installed.json")?;
+
+                let dev_package_names: Vec<String> = match obj.remove("dev-package-names") {
+                    Some(v) => serde_json::from_value(v)
+                        .context("invalid `dev-package-names` in installed.json")?,
+                    None => Vec::new(),
+                };
+                let dev: bool = match obj.remove("dev") {
+                    Some(v) => {
+                        serde_json::from_value(v).context("invalid `dev` flag in installed.json")?
+                    }
+                    None => true,
+                };
+
+                Ok(InstalledPackages {
+                    packages,
+                    dev_package_names,
+                    dev,
+                })
+            }
+            serde_json::Value::Array(_) => {
+                let packages: Vec<InstalledPackageEntry> = serde_json::from_value(value)
+                    .context("invalid v1 installed.json package array")?;
+                Ok(InstalledPackages {
+                    packages,
+                    dev_package_names: Vec::new(),
+                    dev: true,
+                })
+            }
+            _ => Err(anyhow!(
+                "Could not parse package list from installed.json (expected object or array)"
+            )),
+        }
     }
 
     /// Write installed.json to `vendor/composer/installed.json`.
@@ -203,6 +256,56 @@ mod tests {
         assert_eq!(installed.packages.len(), 1);
         assert_eq!(installed.packages[0].name, "psr/log");
         assert!(installed.dev_package_names.is_empty());
+    }
+
+    #[test]
+    fn test_reads_v2_object_form() {
+        let json = r#"{
+            "packages": [
+                {"name": "a/a", "version": "1.0.0"}
+            ],
+            "dev-package-names": ["a/a"],
+            "dev": false
+        }"#;
+        let installed = InstalledPackages::from_json_str(json).unwrap();
+        assert_eq!(installed.packages.len(), 1);
+        assert_eq!(installed.packages[0].name, "a/a");
+        assert_eq!(installed.dev_package_names, vec!["a/a".to_string()]);
+        assert!(!installed.dev);
+    }
+
+    #[test]
+    fn test_reads_v1_array_form() {
+        // Composer 1.x / fixture-style: bare array of packages.
+        // FilesystemRepository::initialize accepts this; so must Mozart.
+        let json = r#"[
+            {"name": "a/a", "version": "1.0.0"},
+            {"name": "b/b", "version": "2.0.0"}
+        ]"#;
+        let installed = InstalledPackages::from_json_str(json).unwrap();
+        assert_eq!(installed.packages.len(), 2);
+        assert_eq!(installed.packages[0].name, "a/a");
+        assert_eq!(installed.packages[1].name, "b/b");
+        assert!(installed.dev_package_names.is_empty());
+        assert!(installed.dev);
+    }
+
+    #[test]
+    fn test_v2_defaults_when_optional_fields_missing() {
+        let json = r#"{"packages": []}"#;
+        let installed = InstalledPackages::from_json_str(json).unwrap();
+        assert!(installed.packages.is_empty());
+        assert!(installed.dev_package_names.is_empty());
+        assert!(installed.dev);
+    }
+
+    #[test]
+    fn test_rejects_non_object_non_array() {
+        let err = InstalledPackages::from_json_str("\"oops\"").unwrap_err();
+        assert!(
+            err.to_string().contains("expected object or array"),
+            "{err}"
+        );
     }
 
     #[test]
