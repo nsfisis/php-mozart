@@ -639,7 +639,7 @@ mod tests {
 
     #[test]
     fn test_filter_removes_installed_targets() {
-        let suggestions = vec![
+        let suggestions = [
             make_suggestion("vendor/a", "ext-intl", "for internationalization"),
             make_suggestion("vendor/b", "vendor/optional", "for extra features"),
             make_suggestion("vendor/c", "ext-mbstring", "for string processing"),
@@ -662,7 +662,7 @@ mod tests {
 
     #[test]
     fn test_filter_by_package_names() {
-        let suggestions = vec![
+        let suggestions = [
             make_suggestion("vendor/a", "vendor/x", "reason"),
             make_suggestion("vendor/b", "vendor/y", "reason"),
             make_suggestion("vendor/c", "vendor/z", "reason"),
@@ -686,7 +686,7 @@ mod tests {
 
     #[test]
     fn test_filter_direct_deps_only() {
-        let suggestions = vec![
+        let suggestions = [
             make_suggestion("vendor/direct", "vendor/x", "reason"),
             make_suggestion("vendor/transitive", "vendor/y", "reason"),
         ];
@@ -707,7 +707,7 @@ mod tests {
 
     #[test]
     fn test_filter_no_filter() {
-        let suggestions = vec![
+        let suggestions = [
             make_suggestion("vendor/a", "vendor/x", ""),
             make_suggestion("vendor/b", "vendor/y", ""),
             make_suggestion("vendor/c", "vendor/z", ""),

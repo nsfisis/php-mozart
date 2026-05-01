@@ -780,7 +780,7 @@ mod tests {
 
     #[test]
     fn test_compute_operations_all_new() {
-        let locked = vec![
+        let locked = [
             make_locked_package("psr/log", "3.0.0"),
             make_locked_package("monolog/monolog", "3.8.0"),
         ];
@@ -797,7 +797,7 @@ mod tests {
 
     #[test]
     fn test_compute_operations_all_skipped() {
-        let locked = vec![make_locked_package("psr/log", "3.0.0")];
+        let locked = [make_locked_package("psr/log", "3.0.0")];
         let locked_refs: Vec<&lockfile::LockedPackage> = locked.iter().collect();
         let mut installed = installed::InstalledPackages::new();
         installed.upsert(make_installed_entry("psr/log", "3.0.0"));
@@ -811,7 +811,7 @@ mod tests {
 
     #[test]
     fn test_compute_operations_update_needed() {
-        let locked = vec![make_locked_package("psr/log", "3.0.1")];
+        let locked = [make_locked_package("psr/log", "3.0.1")];
         let locked_refs: Vec<&lockfile::LockedPackage> = locked.iter().collect();
         let mut installed = installed::InstalledPackages::new();
         installed.upsert(make_installed_entry("psr/log", "3.0.0"));
@@ -825,7 +825,7 @@ mod tests {
 
     #[test]
     fn test_compute_operations_removals() {
-        let locked = vec![make_locked_package("psr/log", "3.0.0")];
+        let locked = [make_locked_package("psr/log", "3.0.0")];
         let locked_refs: Vec<&lockfile::LockedPackage> = locked.iter().collect();
         let mut installed = installed::InstalledPackages::new();
         installed.upsert(make_installed_entry("psr/log", "3.0.0"));
@@ -841,7 +841,7 @@ mod tests {
 
     #[test]
     fn test_compute_operations_mixed() {
-        let locked = vec![
+        let locked = [
             make_locked_package("psr/log", "3.0.0"),
             make_locked_package("symfony/console", "7.2.3"),
             make_locked_package("monolog/monolog", "3.8.1"),
@@ -881,7 +881,7 @@ mod tests {
 
     #[test]
     fn test_compute_operations_case_insensitive() {
-        let locked = vec![make_locked_package("Monolog/Monolog", "3.8.0")];
+        let locked = [make_locked_package("Monolog/Monolog", "3.8.0")];
         let locked_refs: Vec<&lockfile::LockedPackage> = locked.iter().collect();
         let mut installed = installed::InstalledPackages::new();
         installed.upsert(make_installed_entry("monolog/monolog", "3.8.0"));

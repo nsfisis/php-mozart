@@ -508,7 +508,7 @@ mod tests {
 
     #[test]
     fn test_only_vendor_deduplicates_vendor_names() {
-        let results = vec![
+        let results = [
             make_result("monolog/monolog"),
             make_result("monolog/handler"),
             make_result("monolog/formatter"),

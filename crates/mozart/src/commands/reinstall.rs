@@ -507,7 +507,7 @@ mod tests {
 
     #[test]
     fn test_find_locked_package_found() {
-        let pkgs = vec![
+        let pkgs = [
             make_locked_package("psr/log", "3.0.0"),
             make_locked_package("monolog/monolog", "3.8.0"),
         ];
@@ -520,7 +520,7 @@ mod tests {
 
     #[test]
     fn test_find_locked_package_case_insensitive() {
-        let pkgs = vec![make_locked_package("Monolog/Monolog", "3.8.0")];
+        let pkgs = [make_locked_package("Monolog/Monolog", "3.8.0")];
         let refs: Vec<&mozart_registry::lockfile::LockedPackage> = pkgs.iter().collect();
 
         let result = find_locked_package(&refs, "monolog/monolog");
@@ -529,7 +529,7 @@ mod tests {
 
     #[test]
     fn test_find_locked_package_not_found() {
-        let pkgs = vec![make_locked_package("psr/log", "3.0.0")];
+        let pkgs = [make_locked_package("psr/log", "3.0.0")];
         let refs: Vec<&mozart_registry::lockfile::LockedPackage> = pkgs.iter().collect();
 
         let result = find_locked_package(&refs, "monolog/monolog");

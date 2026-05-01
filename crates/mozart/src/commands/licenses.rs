@@ -722,7 +722,7 @@ mod tests {
         let entries: Vec<LicenseEntry> = vec![];
 
         // Single license string becomes a one-element array in JSON output
-        let root_licenses = vec!["MIT".to_string()];
+        let root_licenses = ["MIT".to_string()];
         let root_license_arr: Vec<serde_json::Value> = root_licenses
             .iter()
             .map(|s| serde_json::Value::String(s.clone()))
@@ -737,7 +737,7 @@ mod tests {
         assert_eq!(output["license"][0], "MIT");
 
         // Multiple licenses are also emitted as an array
-        let root_licenses_multi = vec!["MIT".to_string(), "Apache-2.0".to_string()];
+        let root_licenses_multi = ["MIT".to_string(), "Apache-2.0".to_string()];
         let root_license_arr_multi: Vec<serde_json::Value> = root_licenses_multi
             .iter()
             .map(|s| serde_json::Value::String(s.clone()))

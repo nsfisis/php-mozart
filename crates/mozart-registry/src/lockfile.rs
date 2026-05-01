@@ -661,7 +661,7 @@ mod tests {
             Some(vec!["MIT".to_string()].as_slice())
         );
         assert_eq!(
-            locked.keywords.as_ref().map(|k| k.as_slice()),
+            locked.keywords.as_deref(),
             Some(["example".to_string(), "test".to_string()].as_slice())
         );
         assert_eq!(locked.package_type.as_deref(), Some("library"));
@@ -954,7 +954,7 @@ mod tests {
         // Verify that packages are sorted alphabetically when assembled in generate_lock_file
         // We test this by constructing two LockedPackages and sorting them the same way
 
-        let mut packages = vec![
+        let mut packages = [
             LockedPackage {
                 name: "vendor/zebra".to_string(),
                 version: "1.0.0".to_string(),

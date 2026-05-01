@@ -807,7 +807,7 @@ mod tests {
 
     #[test]
     fn test_output_json_format() {
-        let results = vec![
+        let results = [
             CheckResult {
                 name: "php".to_string(),
                 version: "8.2.1".to_string(),

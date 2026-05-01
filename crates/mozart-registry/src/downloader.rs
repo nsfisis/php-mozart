@@ -170,12 +170,8 @@ fn find_top_level_dir(entries: &[String]) -> Option<String> {
 
     let mut prefixes: HashSet<String> = HashSet::new();
     for entry in entries {
-        if let Some(slash_pos) = entry.find('/') {
-            prefixes.insert(entry[..slash_pos + 1].to_string());
-        } else {
-            // Entry at root level — no common prefix to strip
-            return None;
-        }
+        let slash_pos = entry.find('/')?;
+        prefixes.insert(entry[..slash_pos + 1].to_string());
     }
 
     if prefixes.len() == 1 {
