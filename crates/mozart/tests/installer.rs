@@ -242,10 +242,7 @@ installer_fixture!(
     install_dev_using_dist,
     ignore = "mozart binary cannot yet run this fixture"
 );
-installer_fixture!(
-    install_forces_reinstall_if_abandon_changes,
-    ignore = "mozart binary cannot yet run this fixture"
-);
+installer_fixture!(install_forces_reinstall_if_abandon_changes);
 installer_fixture!(
     install_from_incomplete_lock,
     ignore = "mozart binary cannot yet run this fixture"

@@ -204,6 +204,11 @@ pub fn compute_operations<'a>(
 }
 
 /// Convert a LockedPackage to an InstalledPackageEntry.
+///
+/// `LockedPackage::extra_fields` is forwarded verbatim so flags like
+/// `abandoned` and `default-branch` survive the lock → installed.json round
+/// trip, matching Composer's `InstalledFilesystemRepository::write()` (which
+/// dumps the full package via `ArrayDumper`).
 pub fn locked_to_installed_entry(
     pkg: &lockfile::LockedPackage,
     _vendor_dir: &Path,
@@ -227,7 +232,7 @@ pub fn locked_to_installed_entry(
         install_path: Some(install_path),
         autoload: pkg.autoload.clone(),
         aliases: vec![],
-        extra_fields: BTreeMap::new(),
+        extra_fields: pkg.extra_fields.clone(),
     }
 }
 
@@ -1120,6 +1125,34 @@ mod tests {
         assert_eq!(entry.name, "monolog/monolog");
         assert_eq!(entry.install_path.as_deref(), Some("../monolog/monolog"));
         assert!(entry.dist.is_some());
+    }
+
+    #[test]
+    fn test_locked_to_installed_entry_propagates_extra_fields() {
+        // Composer's installed.json carries package flags like `abandoned` and
+        // `default-branch` that LockedPackage stores in extra_fields. Make sure
+        // they survive the conversion so we don't strip them on rewrite.
+        let dir = tempdir().unwrap();
+        let vendor_dir = dir.path().join("vendor");
+
+        let mut pkg = make_locked_package("a/a", "1.0.0");
+        pkg.extra_fields.insert(
+            "abandoned".to_string(),
+            serde_json::Value::String("replacement".to_string()),
+        );
+        pkg.extra_fields
+            .insert("default-branch".to_string(), serde_json::Value::Bool(true));
+
+        let entry = locked_to_installed_entry(&pkg, &vendor_dir);
+
+        assert_eq!(
+            entry.extra_fields.get("abandoned"),
+            Some(&serde_json::Value::String("replacement".to_string()))
+        );
+        assert_eq!(
+            entry.extra_fields.get("default-branch"),
+            Some(&serde_json::Value::Bool(true))
+        );
     }
 
     // -----------------------------------------------------------------------
