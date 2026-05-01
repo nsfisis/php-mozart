@@ -263,6 +263,134 @@ fn is_platform_package(name: &str) -> bool {
         || lower.starts_with("lib-")
 }
 
+/// Verify root + lock platform requirements against the detected platform.
+///
+/// Mirrors the platform checks Composer performs in `Installer::doInstall()`
+/// when installing from an existing lock: every platform requirement that
+/// appears in either the root `composer.json` (`require`/`require-dev`) or the
+/// lock's `platform`/`platform-dev` field must be satisfied by the current
+/// system. composer.json takes precedence over the lock on duplicate keys.
+///
+/// Returns the list of "Root composer.json requires …" diagnostic lines (one
+/// per failing requirement). An empty vec means everything is satisfied.
+fn collect_install_platform_problems(
+    root: &mozart_core::package::RawPackageData,
+    lock: &lockfile::LockFile,
+    dev_mode: bool,
+    ignore_platform_reqs: bool,
+    ignore_platform_req: &[String],
+) -> Vec<String> {
+    let combined = combine_platform_requirements(root, lock, dev_mode);
+    if combined.is_empty() {
+        return Vec::new();
+    }
+    let platform = mozart_core::platform::detect_platform();
+    check_platform_requirements_against(
+        &combined,
+        &platform,
+        ignore_platform_reqs,
+        ignore_platform_req,
+    )
+}
+
+/// Merge platform requirements from the lock's `platform`/`platform-dev`
+/// fields and the root composer.json's `require`/`require-dev`. Root
+/// composer.json overrides the lock on duplicate keys (matching Composer's
+/// "composer.json as source of truth" rule for shared platform reqs).
+fn combine_platform_requirements(
+    root: &mozart_core::package::RawPackageData,
+    lock: &lockfile::LockFile,
+    dev_mode: bool,
+) -> BTreeMap<String, String> {
+    let mut combined: BTreeMap<String, String> = BTreeMap::new();
+
+    if let Some(obj) = lock.platform.as_object() {
+        for (name, val) in obj {
+            if let Some(s) = val.as_str() {
+                combined.insert(name.to_lowercase(), s.to_string());
+            }
+        }
+    }
+    if dev_mode && let Some(obj) = lock.platform_dev.as_object() {
+        for (name, val) in obj {
+            if let Some(s) = val.as_str() {
+                combined.insert(name.to_lowercase(), s.to_string());
+            }
+        }
+    }
+
+    for (name, constraint) in &root.require {
+        let lower = name.to_lowercase();
+        if is_platform_package(&lower) {
+            combined.insert(lower, constraint.clone());
+        }
+    }
+    if dev_mode {
+        for (name, constraint) in &root.require_dev {
+            let lower = name.to_lowercase();
+            if is_platform_package(&lower) {
+                combined.insert(lower, constraint.clone());
+            }
+        }
+    }
+
+    combined
+}
+
+fn check_platform_requirements_against(
+    combined: &BTreeMap<String, String>,
+    platform: &[mozart_core::platform::PlatformPackage],
+    ignore_platform_reqs: bool,
+    ignore_platform_req: &[String],
+) -> Vec<String> {
+    if ignore_platform_reqs {
+        return Vec::new();
+    }
+
+    let ignored: HashSet<String> = ignore_platform_req
+        .iter()
+        .map(|s| s.to_lowercase())
+        .collect();
+
+    let mut messages = Vec::new();
+    for (name, constraint_str) in combined {
+        if ignored.contains(name) {
+            continue;
+        }
+
+        let constraint = match mozart_semver::VersionConstraint::parse(constraint_str) {
+            Ok(c) => c,
+            Err(_) => continue,
+        };
+
+        match platform.iter().find(|p| p.name == *name) {
+            None => {
+                if let Some(ext_name) = name.strip_prefix("ext-") {
+                    messages.push(format!(
+                        "- Root composer.json requires PHP extension {name} {constraint_str} but it is missing from your system. Install or enable PHP's {ext_name} extension."
+                    ));
+                } else {
+                    messages.push(format!(
+                        "- Root composer.json requires {name} {constraint_str} but it is not present on your system."
+                    ));
+                }
+            }
+            Some(detected) => {
+                if let Ok(version) = mozart_semver::Version::parse(&detected.version)
+                    && !constraint.matches(&version)
+                {
+                    messages.push(format!(
+                        "- Root composer.json requires {name} {constraint_str} but your {name} version ({}) does not satisfy that requirement.",
+                        detected.version
+                    ));
+                }
+            }
+        }
+    }
+
+    messages
+}
+
 /// Warn about platform requirements found in locked packages.
 ///
 /// Iterates all locked packages' `require` fields, filters for platform entries,
@@ -690,6 +818,27 @@ pub async fn execute(
                 mozart_core::exit_code::LOCK_FILE_INVALID,
             ));
         }
+
+        let platform_problems = collect_install_platform_problems(
+            &root_pkg,
+            &lock,
+            dev_mode,
+            args.ignore_platform_reqs,
+            &args.ignore_platform_req,
+        );
+        if !platform_problems.is_empty() {
+            console.info(
+                "Your lock file does not contain a compatible set of packages. Please run composer update.",
+            );
+            console.info("");
+            for (i, msg) in platform_problems.iter().enumerate() {
+                console.info(&format!("  Problem {}", i + 1));
+                console.info(&format!("    {msg}"));
+            }
+            return Err(mozart_core::exit_code::bail_silent(
+                mozart_core::exit_code::DEPENDENCY_RESOLUTION_FAILED,
+            ));
+        }
     }
 
     // Step 6: Determine if prefer-source is enabled
@@ -1094,5 +1243,163 @@ mod tests {
             bin_dir.exists(),
             "bin dir should be preserved even if empty"
         );
+    }
+
+    // -----------------------------------------------------------------------
+    // Platform requirement check tests
+    // -----------------------------------------------------------------------
+
+    fn root_with_require(
+        require: &[(&str, &str)],
+        require_dev: &[(&str, &str)],
+    ) -> mozart_core::package::RawPackageData {
+        let mut root = mozart_core::package::RawPackageData::new("__root__".to_string());
+        for (k, v) in require {
+            root.require.insert((*k).to_string(), (*v).to_string());
+        }
+        for (k, v) in require_dev {
+            root.require_dev.insert((*k).to_string(), (*v).to_string());
+        }
+        root
+    }
+
+    fn lock_with_platform(
+        platform: serde_json::Value,
+        platform_dev: serde_json::Value,
+    ) -> lockfile::LockFile {
+        let mut lock = minimal_lock(vec![]);
+        lock.platform = platform;
+        lock.platform_dev = platform_dev;
+        lock
+    }
+
+    fn pp(name: &str, version: &str) -> mozart_core::platform::PlatformPackage {
+        mozart_core::platform::PlatformPackage {
+            name: name.to_string(),
+            version: version.to_string(),
+        }
+    }
+
+    #[test]
+    fn combine_platform_requirements_root_overrides_lock() {
+        let lock = lock_with_platform(
+            serde_json::json!({"php": "^7.4", "ext-foo": "^5"}),
+            serde_json::json!({}),
+        );
+        let root = root_with_require(&[("ext-foo", "^10")], &[]);
+        let combined = combine_platform_requirements(&root, &lock, true);
+
+        // Root composer.json wins for ext-foo, lock contributes plain php.
+        assert_eq!(combined.get("ext-foo").map(String::as_str), Some("^10"));
+        assert_eq!(combined.get("php").map(String::as_str), Some("^7.4"));
+    }
+
+    #[test]
+    fn combine_platform_requirements_skips_non_platform_requires() {
+        let lock = lock_with_platform(serde_json::json!({}), serde_json::json!({}));
+        let root = root_with_require(&[("vendor/pkg", "^1.0"), ("php", "^8.0")], &[]);
+        let combined = combine_platform_requirements(&root, &lock, true);
+
+        assert_eq!(combined.len(), 1);
+        assert_eq!(combined.get("php").map(String::as_str), Some("^8.0"));
+    }
+
+    #[test]
+    fn combine_platform_requirements_includes_dev_only_when_dev_mode() {
+        let lock = lock_with_platform(
+            serde_json::json!({}),
+            serde_json::json!({"ext-only-dev": "^1"}),
+        );
+        let root = root_with_require(&[], &[("ext-from-dev-require", "^1")]);
+
+        let with_dev = combine_platform_requirements(&root, &lock, true);
+        assert!(with_dev.contains_key("ext-only-dev"));
+        assert!(with_dev.contains_key("ext-from-dev-require"));
+
+        let no_dev = combine_platform_requirements(&root, &lock, false);
+        assert!(!no_dev.contains_key("ext-only-dev"));
+        assert!(!no_dev.contains_key("ext-from-dev-require"));
+    }
+
+    #[test]
+    fn check_platform_requirements_reports_missing_extension() {
+        let combined: BTreeMap<String, String> = [("ext-foo".to_string(), "^10".to_string())]
+            .into_iter()
+            .collect();
+        let platform = vec![pp("php", "8.2.0")];
+        let problems = check_platform_requirements_against(&combined, &platform, false, &[]);
+
+        assert_eq!(problems.len(), 1);
+        assert_eq!(
+            problems[0],
+            "- Root composer.json requires PHP extension ext-foo ^10 but it is missing from your system. Install or enable PHP's foo extension."
+        );
+    }
+
+    #[test]
+    fn check_platform_requirements_reports_unsatisfied_php() {
+        let combined: BTreeMap<String, String> = [("php".to_string(), "^20".to_string())]
+            .into_iter()
+            .collect();
+        let platform = vec![pp("php", "8.2.0")];
+        let problems = check_platform_requirements_against(&combined, &platform, false, &[]);
+
+        assert_eq!(problems.len(), 1);
+        assert_eq!(
+            problems[0],
+            "- Root composer.json requires php ^20 but your php version (8.2.0) does not satisfy that requirement."
+        );
+    }
+
+    #[test]
+    fn check_platform_requirements_satisfied_returns_empty() {
+        let combined: BTreeMap<String, String> = [("php".to_string(), "^8.0".to_string())]
+            .into_iter()
+            .collect();
+        let platform = vec![pp("php", "8.2.0")];
+        let problems = check_platform_requirements_against(&combined, &platform, false, &[]);
+
+        assert!(problems.is_empty());
+    }
+
+    #[test]
+    fn check_platform_requirements_ignore_platform_reqs_short_circuits() {
+        let combined: BTreeMap<String, String> = [("ext-foo".to_string(), "^10".to_string())]
+            .into_iter()
+            .collect();
+        let platform: Vec<mozart_core::platform::PlatformPackage> = vec![];
+        let problems = check_platform_requirements_against(&combined, &platform, true, &[]);
+
+        assert!(problems.is_empty());
+    }
+
+    #[test]
+    fn check_platform_requirements_specific_ignore_filters_named_packages() {
+        let combined: BTreeMap<String, String> = [
+            ("ext-foo".to_string(), "^10".to_string()),
+            ("ext-bar".to_string(), "^10".to_string()),
+        ]
+        .into_iter()
+        .collect();
+        let platform = vec![pp("php", "8.2.0")];
+        let problems = check_platform_requirements_against(
+            &combined,
+            &platform,
+            false,
+            &["ext-foo".to_string()],
+        );
+
+        assert_eq!(problems.len(), 1);
+        assert!(problems[0].contains("ext-bar"));
+    }
+
+    #[test]
+    fn collect_install_platform_problems_returns_empty_when_no_reqs() {
+        // No platform reqs anywhere → returns empty without invoking detect_platform.
+        let lock = lock_with_platform(serde_json::json!({}), serde_json::json!({}));
+        let root = root_with_require(&[("vendor/pkg", "^1.0")], &[]);
+        let problems = collect_install_platform_problems(&root, &lock, true, false, &[]);
+
+        assert!(problems.is_empty());
     }
 }

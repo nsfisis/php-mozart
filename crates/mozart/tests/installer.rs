@@ -298,10 +298,7 @@ installer_fixture!(
     ignore = "mozart binary cannot yet run this fixture"
 );
 installer_fixture!(outdated_lock_file_fails_install);
-installer_fixture!(
-    outdated_lock_file_with_new_platform_reqs_fails,
-    ignore = "mozart binary cannot yet run this fixture"
-);
+installer_fixture!(outdated_lock_file_with_new_platform_reqs_fails);
 installer_fixture!(
     partial_update_always_updates_symlinked_path_repos,
     ignore = "mozart binary cannot yet run this fixture"
