@@ -28,5 +28,6 @@ tracing-subscriber.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]
+mozart-test-harness.workspace = true
 assert_cmd.workspace = true
 predicates.workspace = true

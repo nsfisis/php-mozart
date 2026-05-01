@@ -1081,6 +1081,7 @@ dependencies = [
  "mozart-core",
  "mozart-registry",
  "mozart-semver",
+ "mozart-test-harness",
  "mozart-vcs",
  "predicates",
  "regex",
