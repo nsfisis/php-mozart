@@ -559,6 +559,22 @@ impl RawPackageData {
             extra_fields: BTreeMap::new(),
         }
     }
+
+    /// Reject root composer.json that requires its own package name.
+    ///
+    /// Mirrors the check in Composer's
+    /// `Composer\Package\Loader\RootPackageLoader::load()` (RuntimeException
+    /// thrown for `$config['require'][$config['name']]` /
+    /// `$config['require-dev'][$config['name']]`).
+    pub fn validate_root_does_not_self_require(&self) -> anyhow::Result<()> {
+        if self.require.contains_key(&self.name) || self.require_dev.contains_key(&self.name) {
+            anyhow::bail!(
+                "Root package '{}' cannot require itself in its composer.json\nDid you accidentally name your root package after an external package?",
+                self.name
+            );
+        }
+        Ok(())
+    }
 }
 
 pub fn read_from_file(path: &Path) -> anyhow::Result<RawPackageData> {
@@ -718,5 +734,43 @@ mod tests {
         assert!(!json.contains("\"require-dev\""));
         assert!(!json.contains("\"repositories\""));
         assert!(!json.contains("\"autoload\""));
+    }
+
+    #[test]
+    fn validate_root_self_require_rejects_self_in_require() {
+        let mut raw = RawPackageData::new("foo/bar".to_string());
+        raw.require
+            .insert("foo/bar".to_string(), "@dev".to_string());
+        let err = raw.validate_root_does_not_self_require().unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("Root package 'foo/bar' cannot require itself"),
+            "{msg}"
+        );
+        assert!(msg.contains("accidentally name your root package"), "{msg}");
+    }
+
+    #[test]
+    fn validate_root_self_require_rejects_self_in_require_dev() {
+        let mut raw = RawPackageData::new("foo/bar".to_string());
+        raw.require_dev
+            .insert("foo/bar".to_string(), "@dev".to_string());
+        assert!(raw.validate_root_does_not_self_require().is_err());
+    }
+
+    #[test]
+    fn validate_root_self_require_accepts_other_packages() {
+        let mut raw = RawPackageData::new("foo/bar".to_string());
+        raw.require
+            .insert("vendor/lib".to_string(), "^1.0".to_string());
+        raw.require_dev
+            .insert("vendor/dev-tool".to_string(), "^2.0".to_string());
+        assert!(raw.validate_root_does_not_self_require().is_ok());
+    }
+
+    #[test]
+    fn validate_root_self_require_accepts_empty_requires() {
+        let raw = RawPackageData::new("foo/bar".to_string());
+        assert!(raw.validate_root_does_not_self_require().is_ok());
     }
 }

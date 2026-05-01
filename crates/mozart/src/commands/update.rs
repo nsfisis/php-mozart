@@ -747,6 +747,7 @@ pub async fn execute(
         ));
     }
     let composer_json = package::read_from_file(&composer_json_path)?;
+    composer_json.validate_root_does_not_self_require()?;
     let composer_json_content = std::fs::read_to_string(&composer_json_path)?;
 
     let lock_path = working_dir.join("composer.lock");

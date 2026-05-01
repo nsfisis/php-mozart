@@ -14,15 +14,40 @@ fn run_installer_fixture(ident: &str) {
     let mozart_bin: &Path = assert_cmd::cargo::cargo_bin!("mozart");
     let result = run_test(&parsed, mozart_bin)
         .unwrap_or_else(|e| panic!("failed to run {}: {:#}", path.display(), e));
-    let expected = parsed.expect_exit_code.unwrap_or(0);
-    assert_eq!(
-        result.exit_code,
-        expected,
-        "exit code mismatch for {}\n--- stdout ---\n{}\n--- stderr ---\n{}",
-        path.display(),
-        result.stdout,
-        result.stderr,
-    );
+
+    // Composer's `.test` format uses EXPECT-EXCEPTION to assert that the run
+    // throws an exception. PHP propagates uncaught exceptions as a non-zero
+    // exit; we don't yet match the exception class, but we do require Mozart
+    // to exit non-zero when the fixture expects an exception (and no explicit
+    // EXPECT-EXIT-CODE has been pinned).
+    if let Some(code) = parsed.expect_exit_code {
+        assert_eq!(
+            result.exit_code,
+            code,
+            "exit code mismatch for {}\n--- stdout ---\n{}\n--- stderr ---\n{}",
+            path.display(),
+            result.stdout,
+            result.stderr,
+        );
+    } else if parsed.expect_exception.is_some() {
+        assert_ne!(
+            result.exit_code,
+            0,
+            "expected non-zero exit (EXPECT-EXCEPTION) for {}\n--- stdout ---\n{}\n--- stderr ---\n{}",
+            path.display(),
+            result.stdout,
+            result.stderr,
+        );
+    } else {
+        assert_eq!(
+            result.exit_code,
+            0,
+            "exit code mismatch for {}\n--- stdout ---\n{}\n--- stderr ---\n{}",
+            path.display(),
+            result.stdout,
+            result.stderr,
+        );
+    }
 }
 
 macro_rules! installer_fixture {
@@ -281,10 +306,7 @@ installer_fixture!(
     install_security_advisory_matching_dependency,
     ignore = "mozart binary cannot yet run this fixture"
 );
-installer_fixture!(
-    install_self_from_root,
-    ignore = "mozart binary cannot yet run this fixture"
-);
+installer_fixture!(install_self_from_root);
 installer_fixture!(
     install_simple,
     ignore = "mozart binary cannot yet run this fixture"

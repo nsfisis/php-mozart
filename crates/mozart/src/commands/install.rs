@@ -809,6 +809,7 @@ pub async fn execute(
         }
 
         let root_pkg = mozart_core::package::read_from_file(&composer_json_path)?;
+        root_pkg.validate_root_does_not_self_require()?;
         let missing = lock.get_missing_requirement_info(&root_pkg, dev_mode);
         if !missing.is_empty() {
             for line in &missing {
