@@ -522,7 +522,6 @@ pub async fn execute(
             apcu_autoloader_prefix: None,
             download_only: false,
             prefer_source: args.prefer_source,
-            no_cache: cli.no_cache,
         },
         console,
         &mut executor,

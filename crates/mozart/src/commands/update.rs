@@ -720,17 +720,39 @@ fn major_minor(version: &str) -> (u64, u64) {
 // Main execute function
 // ─────────────────────────────────────────────────────────────────────────────
 
+/// CLI entry point. Builds production [`RepositorySet`] (Packagist) and
+/// [`FilesystemExecutor`] from `cli`, then dispatches to [`run`].
 pub async fn execute(
     args: &UpdateArgs,
     cli: &super::Cli,
     console: &mozart_core::console::Console,
 ) -> anyhow::Result<()> {
     let cache_config = mozart_registry::cache::build_cache_config(cli.no_cache);
-    let repo_cache = mozart_registry::cache::Cache::repo(&cache_config);
-
-    // Step 1: Resolve the working directory
+    let repositories = std::sync::Arc::new(
+        mozart_registry::repository::RepositorySet::with_packagist(
+            mozart_registry::cache::Cache::repo(&cache_config),
+        ),
+    );
+    let mut executor = mozart_registry::installer_executor::FilesystemExecutor::new(
+        mozart_registry::cache::Cache::files(&cache_config),
+    );
     let working_dir = super::install::resolve_working_dir(cli);
+    run(&working_dir, args, console, repositories, &mut executor).await
+}
 
+/// Library entry point — pure logic, no CLI / Cli access.
+///
+/// In-process tests construct a `RepositorySet` without `PackagistRepository`
+/// (Composer's `'packagist' => false` test config) and a tracing
+/// `InstallerExecutor`, then call this function directly to exercise the
+/// update flow without spawning the binary.
+pub async fn run(
+    working_dir: &std::path::Path,
+    args: &UpdateArgs,
+    console: &mozart_core::console::Console,
+    repositories: std::sync::Arc<mozart_registry::repository::RepositorySet>,
+    executor: &mut dyn mozart_registry::installer_executor::InstallerExecutor,
+) -> anyhow::Result<()> {
     // Step 2: Handle deprecated flags
     if args.dev {
         console.info(&console_format!(
@@ -863,9 +885,7 @@ pub async fn execute(
         platform: PlatformConfig::new(),
         ignore_platform_reqs: args.ignore_platform_reqs,
         ignore_platform_req_list: args.ignore_platform_req.clone(),
-        repositories: std::sync::Arc::new(
-            mozart_registry::repository::RepositorySet::with_packagist(repo_cache.clone()),
-        ),
+        repositories: repositories.clone(),
         temporary_constraints,
         raw_repositories: composer_json.repositories.clone(),
     };
@@ -1023,9 +1043,7 @@ pub async fn execute(
         composer_json_content: composer_json_content.clone(),
         composer_json: composer_json.clone(),
         include_dev: dev_mode,
-        repositories: std::sync::Arc::new(
-            mozart_registry::repository::RepositorySet::with_packagist(repo_cache.clone()),
-        ),
+        repositories: repositories.clone(),
     })
     .await?;
 
@@ -1222,13 +1240,9 @@ pub async fn execute(
                 .map(|s| s.eq_ignore_ascii_case("source"))
                 .unwrap_or(false);
 
-        let cache_config = mozart_registry::cache::build_cache_config(cli.no_cache);
-        let files_cache = mozart_registry::cache::Cache::files(&cache_config);
-        let mut executor =
-            mozart_registry::installer_executor::FilesystemExecutor::new(files_cache);
         super::install::install_from_lock(
             &new_lock,
-            &working_dir,
+            working_dir,
             &vendor_dir,
             &super::install::InstallConfig {
                 dev_mode,
@@ -1243,10 +1257,9 @@ pub async fn execute(
                 apcu_autoloader_prefix: args.apcu_autoloader_prefix.clone(),
                 download_only: false,
                 prefer_source,
-                no_cache: cli.no_cache,
             },
             console,
-            &mut executor,
+            executor,
         )
         .await?;
     }

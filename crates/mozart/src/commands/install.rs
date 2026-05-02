@@ -121,8 +121,6 @@ pub struct InstallConfig {
     pub download_only: bool,
     /// Prefer installing from VCS source rather than dist archives.
     pub prefer_source: bool,
-    /// Disable the files cache entirely.
-    pub no_cache: bool,
 }
 
 impl Default for InstallConfig {
@@ -140,7 +138,6 @@ impl Default for InstallConfig {
             apcu_autoloader_prefix: None,
             download_only: false,
             prefer_source: false,
-            no_cache: false,
         }
     }
 }
@@ -606,14 +603,37 @@ pub async fn install_from_lock(
     Ok(())
 }
 
+/// CLI entry point. Builds production [`mozart_registry::repository::RepositorySet`]
+/// (Packagist) and [`FilesystemExecutor`] from `cli`, then dispatches to [`run`].
 pub async fn execute(
     args: &InstallArgs,
     cli: &super::Cli,
     console: &mozart_core::console::Console,
 ) -> anyhow::Result<()> {
-    // Step 1: Resolve the working directory
+    let cache_config = mozart_registry::cache::build_cache_config(cli.no_cache);
+    let repositories = std::sync::Arc::new(
+        mozart_registry::repository::RepositorySet::with_packagist(
+            mozart_registry::cache::Cache::repo(&cache_config),
+        ),
+    );
+    let mut executor = FilesystemExecutor::new(mozart_registry::cache::Cache::files(&cache_config));
     let working_dir = resolve_working_dir(cli);
+    run(&working_dir, args, console, repositories, &mut executor).await
+}
 
+/// Library entry point — pure logic, no `Cli` access.
+///
+/// In-process tests construct an empty `RepositorySet` (Composer's
+/// `'packagist' => false` test config) and a tracing `InstallerExecutor`,
+/// then call this function directly to exercise the install flow without
+/// spawning the binary.
+pub async fn run(
+    working_dir: &Path,
+    args: &InstallArgs,
+    console: &mozart_core::console::Console,
+    repositories: std::sync::Arc<mozart_registry::repository::RepositorySet>,
+    executor: &mut dyn InstallerExecutor,
+) -> anyhow::Result<()> {
     // Step 2: Validate arguments
     if args.prefer_install.is_some() && (args.prefer_source || args.prefer_dist) {
         return Err(mozart_core::exit_code::bail(
@@ -691,7 +711,10 @@ pub async fn execute(
             root_reqs: false,
             bump_after_update: None,
         };
-        return super::update::execute(&update_args, cli, console).await;
+        // Forward the caller's repositories + executor so in-process tests
+        // see their mocks honored across the install→update fallback edge.
+        return super::update::run(working_dir, &update_args, console, repositories, executor)
+            .await;
     }
     let lock = lockfile::LockFile::read_from_file(&lock_path)?;
 
@@ -758,12 +781,10 @@ pub async fn execute(
     let vendor_dir = working_dir.join("vendor");
 
     // Step 7: Delegate to shared install_from_lock()
-    let cache_config = mozart_registry::cache::build_cache_config(cli.no_cache);
-    let files_cache = mozart_registry::cache::Cache::files(&cache_config);
-    let mut executor = FilesystemExecutor::new(files_cache);
+    let _ = repositories; // unused — install_from_lock has no resolver phase
     install_from_lock(
         &lock,
-        &working_dir,
+        working_dir,
         &vendor_dir,
         &InstallConfig {
             dev_mode,
@@ -778,10 +799,9 @@ pub async fn execute(
             apcu_autoloader_prefix: args.apcu_autoloader_prefix.clone(),
             download_only: args.download_only,
             prefer_source,
-            no_cache: cli.no_cache,
         },
         console,
-        &mut executor,
+        executor,
     )
     .await
 }
