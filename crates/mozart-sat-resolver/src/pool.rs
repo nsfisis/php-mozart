@@ -53,6 +53,13 @@ pub struct PoolPackage {
     pub conflicts: Vec<PoolLink>,
     /// Whether this is a fixed/locked package.
     pub is_fixed: bool,
+    /// If `Some`, this package is an `AliasPackage` whose target is the
+    /// other pool entry with the given ID. Composer creates these for
+    /// `extra.branch-alias` entries (dev branch → numeric alias). When set,
+    /// the rule generator emits `PackageAlias`/`PackageInverseAlias` rules
+    /// instead of regular requires; same-name conflict rules also skip
+    /// alias packages.
+    pub is_alias_of: Option<PackageId>,
 }
 
 impl PoolPackage {
@@ -99,6 +106,12 @@ pub struct PoolPackageInput {
     pub provides: Vec<PoolLink>,
     pub conflicts: Vec<PoolLink>,
     pub is_fixed: bool,
+    /// When `Some`, the value is the **normalized** version of another input
+    /// in this build batch with the same `name`; the pool will resolve it to
+    /// that input's [`PackageId`] in [`PoolPackage::is_alias_of`]. Used by
+    /// the registry layer to materialize Composer's `AliasPackage` for
+    /// `extra.branch-alias` entries.
+    pub is_alias_of: Option<String>,
 }
 
 /// The package pool: contains all candidate packages for dependency resolution.
@@ -119,11 +132,17 @@ pub struct Pool {
 impl Pool {
     /// Create a new pool from a list of package inputs.
     pub fn new(inputs: Vec<PoolPackageInput>, unacceptable_fixed_ids: Vec<PackageId>) -> Self {
-        let mut packages = Vec::with_capacity(inputs.len());
+        let mut packages: Vec<PoolPackage> = Vec::with_capacity(inputs.len());
         let mut package_by_name: HashMap<String, Vec<PackageId>> = HashMap::new();
+        // Collect alias links (alias_idx, target_name, target_normalized) for
+        // a second pass once every input has a stable ID.
+        let mut pending_aliases: Vec<(usize, String, String)> = Vec::new();
 
         for (idx, input) in inputs.into_iter().enumerate() {
             let id = (idx as PackageId) + 1;
+            if let Some(target) = input.is_alias_of.clone() {
+                pending_aliases.push((idx, input.name.clone(), target));
+            }
             let pkg = PoolPackage {
                 id,
                 name: input.name,
@@ -134,6 +153,7 @@ impl Pool {
                 provides: input.provides,
                 conflicts: input.conflicts,
                 is_fixed: input.is_fixed,
+                is_alias_of: None,
             };
 
             // Index by all names this package provides
@@ -145,6 +165,25 @@ impl Pool {
             }
 
             packages.push(pkg);
+        }
+
+        // Resolve alias targets: for each alias input, find the matching
+        // (name, normalized version) entry and store its ID. Mirrors the
+        // post-construction wiring Composer does in
+        // `RepositorySet::createAliasPackage` / `addPackage`.
+        for (alias_idx, name, target_normalized) in pending_aliases {
+            if let Some(ids) = package_by_name.get(&name) {
+                let target_id = ids.iter().copied().find(|&id| {
+                    let candidate = &packages[(id - 1) as usize];
+                    !candidate.name.is_empty()
+                        && candidate.name == name
+                        && candidate.version == target_normalized
+                        && candidate.is_alias_of.is_none()
+                });
+                if let Some(tid) = target_id {
+                    packages[alias_idx].is_alias_of = Some(tid);
+                }
+            }
         }
 
         Pool {
@@ -317,6 +356,7 @@ mod tests {
             provides: vec![],
             conflicts: vec![],
             is_fixed: false,
+            is_alias_of: None,
         }
     }
 

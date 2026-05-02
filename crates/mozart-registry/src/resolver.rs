@@ -21,6 +21,37 @@ use mozart_semver::Version;
 // Version helpers
 // ─────────────────────────────────────────────────────────────────────────────
 
+/// Strip a `@stability` suffix from a constraint string and return the
+/// cleaned constraint plus the parsed stability. Mirrors Composer's
+/// `RootPackageLoader::extractStabilityFlags` (single-constraint case):
+/// `"3.2.*@dev"` → (`"3.2.*"`, `Some(Stability::Dev)`).
+pub(crate) fn extract_stability_suffix(constraint: &str) -> (String, Option<Stability>) {
+    let trimmed = constraint.trim();
+    if let Some(at_pos) = trimmed.rfind('@') {
+        let suffix = &trimmed[at_pos + 1..];
+        let stability = match suffix.to_lowercase().as_str() {
+            "dev" => Some(Stability::Dev),
+            "alpha" => Some(Stability::Alpha),
+            "beta" => Some(Stability::Beta),
+            "rc" => Some(Stability::RC),
+            "stable" => Some(Stability::Stable),
+            _ => None,
+        };
+        if let Some(s) = stability {
+            let cleaned = trimmed[..at_pos].trim().to_string();
+            // An empty constraint left after the strip means "any version" —
+            // mirrors Composer's `@dev` shorthand (no version constraint).
+            let cleaned = if cleaned.is_empty() {
+                "*".to_string()
+            } else {
+                cleaned
+            };
+            return (cleaned, Some(s));
+        }
+    }
+    (trimmed.to_string(), None)
+}
+
 /// Determine the `Stability` of a `Version` from its pre_release string.
 pub(crate) fn version_stability(v: &Version) -> Stability {
     match &v.pre_release {
@@ -86,6 +117,49 @@ fn parse_branch_alias_target(alias_target: &str) -> Option<Version> {
         is_dev_branch: false,
         dev_branch_name: None,
     })
+}
+
+/// Mirror Composer's `VersionParser::normalizeBranch` for branch-alias
+/// targets: turn a string like `"3.2.x-dev"` into the canonical numeric form
+/// `"3.2.9999999.9999999-dev"`. Returns `None` if the input is not a numeric
+/// branch (i.e. cannot be expanded to a four-segment numeric version).
+///
+/// Composer's flow for an `extra.branch-alias` value:
+/// 1. Strip the trailing `-dev`.
+/// 2. Pad missing segments with `.x`.
+/// 3. Replace each `x` with `9999999`.
+/// 4. Re-append `-dev`.
+///
+/// This is the form Composer's `Locker::lockPackages` writes into the
+/// `aliases` block of `composer.lock` and the form `Pool` indexes for
+/// constraint matching, so Mozart needs to use it too.
+pub(crate) fn normalize_branch_alias_target(alias_target: &str) -> Option<String> {
+    let trimmed = alias_target.trim();
+    let lower = trimmed.to_lowercase();
+    let base = lower.strip_suffix("-dev")?;
+    // Strip leading v/V before normalizing, mirroring Composer's regex
+    let base = base.strip_prefix('v').unwrap_or(base);
+    let mut segments: Vec<String> = Vec::with_capacity(4);
+    for seg in base.split('.') {
+        if seg == "x" || seg == "X" || seg == "*" {
+            segments.push("x".to_string());
+        } else if seg.chars().all(|c| c.is_ascii_digit()) && !seg.is_empty() {
+            segments.push(seg.to_string());
+        } else {
+            return None;
+        }
+    }
+    if segments.is_empty() {
+        return None;
+    }
+    while segments.len() < 4 {
+        segments.push("x".to_string());
+    }
+    let expanded: Vec<String> = segments
+        .into_iter()
+        .map(|s| if s == "x" { "9999999".to_string() } else { s })
+        .collect();
+    Some(format!("{}-dev", expanded.join(".")))
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -251,7 +325,10 @@ fn packagist_to_pool_inputs(
 ) -> Vec<PoolPackageInput> {
     let mut results = Vec::new();
 
-    let make_input = |version_str: &str, version_normalized: &str| -> PoolPackageInput {
+    let make_input = |version_str: &str,
+                      version_normalized: &str,
+                      is_alias_of: Option<String>|
+     -> PoolPackageInput {
         PoolPackageInput {
             name: package_name.to_string(),
             version: version_normalized.to_string(),
@@ -285,32 +362,57 @@ fn packagist_to_pool_inputs(
                     .collect::<Vec<_>>(),
             ),
             is_fixed: false,
+            is_alias_of,
         }
     };
 
     match parse_normalized(&pv.version_normalized) {
         Some(v) => {
             if passes_stability_filter(package_name, &v, minimum_stability, stability_flags) {
-                results.push(make_input(&pv.version, &pv.version_normalized));
+                results.push(make_input(&pv.version, &pv.version_normalized, None));
             }
         }
         None => {
-            // Dev branch — check for branch aliases
+            // Dev branch — emit the original entry (so the alias has a target
+            // to point at) and one alias entry per matching `extra.branch-alias`.
+            // Mirrors Composer's `ArrayRepository::addPackage` which adds the
+            // base package and then calls `createAliasPackage` for each
+            // branch-alias declaration on it.
+            let original_passes = passes_stability_filter(
+                package_name,
+                &Version {
+                    major: 0,
+                    minor: 0,
+                    patch: 0,
+                    build: 0,
+                    pre_release: Some("dev".to_string()),
+                    is_dev_branch: true,
+                    dev_branch_name: None,
+                },
+                minimum_stability,
+                stability_flags,
+            );
+            if !original_passes {
+                return results;
+            }
+            results.push(make_input(&pv.version, &pv.version_normalized, None));
+
             let aliases = pv.branch_aliases();
             for (branch, alias_target) in &aliases {
                 if branch.to_lowercase() != pv.version.to_lowercase() {
                     continue;
                 }
-                if let Some(alias_v) = parse_branch_alias_target(alias_target)
-                    && passes_stability_filter(
-                        package_name,
-                        &alias_v,
-                        minimum_stability,
-                        stability_flags,
-                    )
-                {
-                    results.push(make_input(&pv.version, alias_target));
+                if parse_branch_alias_target(alias_target).is_none() {
+                    continue;
                 }
+                let Some(alias_normalized) = normalize_branch_alias_target(alias_target) else {
+                    continue;
+                };
+                results.push(make_input(
+                    alias_target,
+                    &alias_normalized,
+                    Some(pv.version_normalized.clone()),
+                ));
             }
         }
     }
@@ -372,6 +474,12 @@ pub struct ResolvedPackage {
     pub version_normalized: String,
     /// True if the resolved version is a dev/pre-release version.
     pub is_dev: bool,
+    /// When `Some`, this entry is an `AliasPackage` rather than a real
+    /// install target. The value is the target's normalized version, used
+    /// by lock-file generation to populate the `aliases[]` block (and by
+    /// the installer to emit `Marking ... as installed, alias of ...`
+    /// trace lines). Real packages have `alias_of: None`.
+    pub alias_of_normalized: Option<String>,
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -385,6 +493,23 @@ pub struct ResolvedPackage {
 pub async fn resolve(request: &ResolveRequest) -> Result<Vec<ResolvedPackage>, ResolveError> {
     // 1. Build root requirements
     let mut root_requires: HashMap<String, Option<String>> = HashMap::new();
+    // Per-package stability overrides extracted from `@dev`/`@beta`/etc.
+    // suffixes on root constraints. Mirrors Composer's
+    // `RootPackageLoader::extractStabilityFlags`. Merged on top of the
+    // request's caller-supplied flags (which today are usually empty).
+    let mut stability_flags: HashMap<String, Stability> = request.stability_flags.clone();
+
+    let mut insert_root_require = |name: &str, constraint: &str| {
+        let (clean, stability) = extract_stability_suffix(constraint);
+        let lower = name.to_lowercase();
+        if let Some(s) = stability {
+            let entry = stability_flags.entry(lower.clone()).or_insert(s);
+            if (*entry as u8) > (s as u8) {
+                *entry = s;
+            }
+        }
+        root_requires.insert(lower, Some(clean));
+    };
 
     for (name, constraint) in &request.require {
         if should_skip_platform_dep(
@@ -394,7 +519,7 @@ pub async fn resolve(request: &ResolveRequest) -> Result<Vec<ResolvedPackage>, R
         ) {
             continue;
         }
-        root_requires.insert(name.to_lowercase(), Some(constraint.clone()));
+        insert_root_require(name, constraint);
     }
 
     if request.include_dev {
@@ -406,14 +531,14 @@ pub async fn resolve(request: &ResolveRequest) -> Result<Vec<ResolvedPackage>, R
             ) {
                 continue;
             }
-            root_requires.insert(name.to_lowercase(), Some(constraint.clone()));
+            insert_root_require(name, constraint);
         }
     }
 
     // Apply temporary constraints (from --with flag or inline shorthand).
     // These override existing root constraints or add new ones for transitive deps.
     for (name, constraint) in &request.temporary_constraints {
-        root_requires.insert(name.clone(), Some(constraint.clone()));
+        insert_root_require(name, constraint);
     }
 
     // 2. Build pool, generate rules, and solve
@@ -447,6 +572,7 @@ pub async fn resolve(request: &ResolveRequest) -> Result<Vec<ResolvedPackage>, R
             provides: vec![],
             conflicts: vec![],
             is_fixed: true,
+            is_alias_of: None,
         };
         builder.add_package(input);
     }
@@ -460,11 +586,8 @@ pub async fn resolve(request: &ResolveRequest) -> Result<Vec<ResolvedPackage>, R
 
     // Add VCS packages to the pool
     for vpkg in &vcs_packages {
-        let inputs = vcs_bridge::vcs_to_pool_inputs(
-            vpkg,
-            request.minimum_stability,
-            &request.stability_flags,
-        );
+        let inputs =
+            vcs_bridge::vcs_to_pool_inputs(vpkg, request.minimum_stability, &stability_flags);
         for input in inputs {
             builder.add_package(input);
         }
@@ -481,7 +604,28 @@ pub async fn resolve(request: &ResolveRequest) -> Result<Vec<ResolvedPackage>, R
             &ipkg.name,
             &ipkg.version,
             request.minimum_stability,
-            &request.stability_flags,
+            &stability_flags,
+        );
+        for input in inputs {
+            builder.add_package(input);
+        }
+    }
+
+    // Collect packages from `type: composer` repositories with file:// URLs.
+    // The harness rewrites `file://foobar` to `file:///abs/path` before this
+    // call so the read can be a plain `std::fs::read_to_string`. Same idea
+    // as inline packages — they bypass the RepositorySet and go straight
+    // into the pool, with names recorded so Packagist loops skip them.
+    let composer_repo_packages =
+        crate::composer_repo::collect_composer_packages(&request.raw_repositories);
+    let mut composer_repo_names: HashSet<String> = HashSet::new();
+    for cpkg in &composer_repo_packages {
+        composer_repo_names.insert(cpkg.name.clone());
+        let inputs = packagist_to_pool_inputs(
+            &cpkg.name,
+            &cpkg.version,
+            request.minimum_stability,
+            &stability_flags,
         );
         for input in inputs {
             builder.add_package(input);
@@ -499,7 +643,11 @@ pub async fn resolve(request: &ResolveRequest) -> Result<Vec<ResolvedPackage>, R
     let seed_names: Vec<String> = root_requires
         .keys()
         .filter(|name| !PackageName((*name).clone()).is_platform())
-        .filter(|name| !vcs_package_names.contains(*name) && !inline_package_names.contains(*name))
+        .filter(|name| {
+            !vcs_package_names.contains(*name)
+                && !inline_package_names.contains(*name)
+                && !composer_repo_names.contains(*name)
+        })
         .cloned()
         .collect();
     let seed_queries: Vec<PackageQuery<'_>> = seed_names
@@ -518,7 +666,7 @@ pub async fn resolve(request: &ResolveRequest) -> Result<Vec<ResolvedPackage>, R
             &r.name,
             &r.version,
             request.minimum_stability,
-            &request.stability_flags,
+            &stability_flags,
         );
         for input in inputs {
             builder.add_package(input);
@@ -532,7 +680,10 @@ pub async fn resolve(request: &ResolveRequest) -> Result<Vec<ResolvedPackage>, R
         }
 
         // Skip packages already provided by VCS or inline-package repositories
-        if vcs_package_names.contains(&name) || inline_package_names.contains(&name) {
+        if vcs_package_names.contains(&name)
+            || inline_package_names.contains(&name)
+            || composer_repo_names.contains(&name)
+        {
             continue;
         }
 
@@ -601,11 +752,16 @@ pub async fn resolve(request: &ResolveRequest) -> Result<Vec<ResolvedPackage>, R
                     false
                 };
 
+                let alias_of_normalized = pkg
+                    .is_alias_of
+                    .map(|tid| pool.package_by_id(tid).version.clone());
+
                 resolved.push(ResolvedPackage {
                     name: pkg.name.clone(),
                     version: pkg.pretty_version.clone(),
                     version_normalized: pkg.version.clone(),
                     is_dev,
+                    alias_of_normalized,
                 });
             }
             Ok(resolved)
@@ -950,6 +1106,7 @@ mod tests {
                     provides: vec![],
                     conflicts: vec![],
                     is_fixed: false,
+                    is_alias_of: None,
                 },
                 PoolPackageInput {
                     name: "bar/bar".to_string(),
@@ -960,6 +1117,7 @@ mod tests {
                     provides: vec![],
                     conflicts: vec![],
                     is_fixed: false,
+                    is_alias_of: None,
                 },
             ],
             vec![],

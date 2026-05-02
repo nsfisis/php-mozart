@@ -827,6 +827,7 @@ mod tests {
             provides: vec![],
             conflicts: vec![],
             is_fixed: false,
+            is_alias_of: None,
         }
     }
 

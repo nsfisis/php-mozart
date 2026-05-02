@@ -175,16 +175,14 @@ impl Version {
             });
         }
 
-        // Handle *-dev suffix (e.g., "2.1.x-dev" or "2.x-dev")
+        // Handle wildcard branch versions like "2.x-dev" / "2.1.x-dev". A
+        // pure-numeric `-dev` (e.g. `1.0.0-dev` or `3.2.9999999.9999999-dev`,
+        // the form Composer's `normalizeBranch` emits for `3.2.x`) is NOT a
+        // branch — it falls through to classical parsing where `-dev` is just
+        // a regular pre-release stability and `is_dev_branch` stays false.
         let s_lower = s.to_lowercase();
-        if s_lower.ends_with("-dev") || s_lower.ends_with(".x-dev") {
-            let base = if s_lower.ends_with("-dev") {
-                &s[..s.len() - 4]
-            } else {
-                s
-            };
-            // Replace any trailing .x with nothing, parse numeric parts
-            let base = base.trim_end_matches(".x").trim_end_matches("-dev");
+        if s_lower.ends_with(".x-dev") {
+            let base = &s[..s.len() - ".x-dev".len()];
             let parts: Vec<&str> = base.split('.').collect();
             let major = parts.first().and_then(|p| p.parse().ok()).unwrap_or(0);
             let minor = parts.get(1).and_then(|p| p.parse().ok()).unwrap_or(0);
@@ -1340,11 +1338,14 @@ mod tests {
 
     #[test]
     fn test_parse_numeric_dev_suffix() {
-        // "2.1-dev" — ends with -dev, treated as *-dev suffix branch
+        // Pure-numeric `-dev` (no `.x`) — a regular dev-stability version,
+        // not a wildcard branch. Mirrors the form Composer's `normalizeBranch`
+        // emits for branch aliases like `3.2.x` → `3.2.9999999.9999999-dev`.
         let v = Version::parse("2.1-dev").unwrap();
-        assert!(v.is_dev_branch);
+        assert!(!v.is_dev_branch);
         assert_eq!(v.major, 2);
         assert_eq!(v.minor, 1);
+        assert_eq!(v.pre_release.as_deref(), Some("dev"));
     }
 
     #[test]
@@ -1447,15 +1448,13 @@ mod tests {
 
     #[test]
     fn test_ordering_dev_branch_lt_dev_prerelease() {
-        // "1.0.0-dev" ends with "-dev", so the parser treats it as a *-dev suffix branch
-        // (is_dev_branch=true, dev_branch_name=None, major=1, minor=0, patch=9999999).
-        // "dev-master" is also is_dev_branch=true with dev_branch_name=Some("master").
-        // When both are dev branches, they compare by dev_branch_name:
-        // Some("master") vs None → Some > None, so dev-master > 1.0.0-dev (x-dev form).
+        // "dev-master" is a named dev branch (is_dev_branch=true), which sorts
+        // below every non-branch version. "1.0.0-dev" is a regular numeric
+        // version with `dev` stability — same form Composer's `normalizeBranch`
+        // produces for branch aliases like `3.2.x` → `3.2.9999999.9999999-dev`.
         let dev_branch = Version::parse("dev-master").unwrap();
         let dev_prerelease = Version::parse("1.0.0-dev").unwrap();
-        // Both are dev branches; "master" branch name > None → dev-master is Greater
-        assert!(dev_branch > dev_prerelease);
+        assert!(dev_branch < dev_prerelease);
     }
 
     #[test]
@@ -1535,23 +1534,18 @@ mod tests {
 
     #[test]
     fn test_ordering_comprehensive_chain() {
-        // Note: "1.0.0-dev" is parsed as a *-dev suffix branch (is_dev_branch=true,
-        // dev_branch_name=None) due to the "-dev" suffix rule in Version::parse.
-        // "dev-foo" is also a dev branch (is_dev_branch=true, dev_branch_name=Some("foo")).
-        // Comparing two dev branches uses dev_branch_name: None < Some("foo"), so
-        // the *-dev form (None) < "dev-foo" (Some("foo")).
-        // For "1.0.0-alpha1", "1.0.0-beta1", "1.0.0-RC1", "1.0.0": normal numeric ordering.
-        let dev_x_dev = Version::parse("1.0.0-dev").unwrap(); // *-dev branch, name=None
-        let dev_branch = Version::parse("dev-foo").unwrap(); // named branch, name=Some("foo")
+        // "dev-foo" is a named branch (is_dev_branch=true) — sorts below every
+        // non-branch. "1.0.0-dev" is a regular numeric `dev`-stability version,
+        // which sorts below alpha/beta/rc/stable but above named branches.
+        let dev_branch = Version::parse("dev-foo").unwrap();
+        let dev_prerelease = Version::parse("1.0.0-dev").unwrap();
         let alpha = Version::parse("1.0.0-alpha1").unwrap();
         let beta = Version::parse("1.0.0-beta1").unwrap();
         let rc = Version::parse("1.0.0-RC1").unwrap();
         let stable = Version::parse("1.0.0").unwrap();
 
-        // Both dev branches; dev_branch_name None < Some("foo")
-        assert!(dev_x_dev < dev_branch);
-        // dev_branch (is_dev_branch=true) < alpha (is_dev_branch=false)
-        assert!(dev_branch < alpha);
+        assert!(dev_branch < dev_prerelease);
+        assert!(dev_prerelease < alpha);
         assert!(alpha < beta);
         assert!(beta < rc);
         assert!(rc < stable);

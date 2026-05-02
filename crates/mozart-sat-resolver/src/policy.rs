@@ -64,8 +64,20 @@ impl DefaultPolicy {
         let pkg_a = pool.literal_to_package(a);
         let pkg_b = pool.literal_to_package(b);
 
-        // If same name, prefer higher version (or lower if prefer_lowest)
+        // If same name, apply Composer's policy ordering. Mirrors
+        // `DefaultPolicy::versionCompare`: when `prefer_stable` is on and
+        // the two candidates have different stabilities, the more-stable
+        // one wins outright — `prefer_lowest` only kicks in within the same
+        // stability tier. Otherwise sort by version (asc for prefer_lowest,
+        // desc otherwise).
         if pkg_a.name == pkg_b.name {
+            if self.prefer_stable {
+                let stab_a = stability_priority(&pkg_a.version);
+                let stab_b = stability_priority(&pkg_b.version);
+                if stab_a != stab_b {
+                    return stab_a.cmp(&stab_b);
+                }
+            }
             let cmp = self.compare_versions(&pkg_a.version, &pkg_b.version);
             return if self.prefer_lowest {
                 cmp
@@ -111,6 +123,37 @@ impl Default for DefaultPolicy {
     }
 }
 
+/// Map a normalized version string to Composer's stability priority
+/// (`BasePackage::STABILITIES`). Lower = more stable. Stable=0, RC=5, beta=10,
+/// alpha=15, dev=20. Mirrors `DefaultPolicy::versionCompare`'s comparison
+/// when `prefer_stable` is set.
+fn stability_priority(version: &str) -> u8 {
+    let Ok(v) = mozart_semver::Version::parse(version) else {
+        return 0;
+    };
+    if v.is_dev_branch {
+        return 20;
+    }
+    match v.pre_release.as_deref() {
+        None => 0,
+        Some(pre) => {
+            let lower = pre.to_lowercase();
+            if lower.starts_with("dev") {
+                20
+            } else if lower.starts_with("alpha") || lower == "a" {
+                15
+            } else if lower.starts_with("beta") || lower == "b" {
+                10
+            } else if lower.starts_with("rc") {
+                5
+            } else {
+                // patch/pl/p / unknown → stable
+                0
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -126,6 +169,7 @@ mod tests {
             provides: vec![],
             conflicts: vec![],
             is_fixed: false,
+            is_alias_of: None,
         }
     }
 

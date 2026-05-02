@@ -100,6 +100,7 @@ pub fn vcs_to_pool_inputs(
                 .collect::<Vec<_>>(),
         ),
         is_fixed: false,
+        is_alias_of: None,
     };
 
     // Apply stability filtering

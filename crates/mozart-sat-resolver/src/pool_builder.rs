@@ -151,6 +151,7 @@ mod tests {
             provides: vec![],
             conflicts: vec![],
             is_fixed: false,
+            is_alias_of: None,
         });
 
         // Should have b/b pending
@@ -166,6 +167,7 @@ mod tests {
             provides: vec![],
             conflicts: vec![],
             is_fixed: false,
+            is_alias_of: None,
         });
 
         // No more pending
@@ -188,6 +190,7 @@ mod tests {
             provides: vec![],
             conflicts: vec![],
             is_fixed: false,
+            is_alias_of: None,
         };
 
         assert!(builder.add_package(input.clone()));

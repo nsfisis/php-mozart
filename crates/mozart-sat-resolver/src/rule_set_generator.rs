@@ -128,6 +128,37 @@ impl<'a> RuleSetGenerator<'a> {
             let conflict_names: Vec<String> =
                 pkg.conflict_names().into_iter().map(String::from).collect();
             let requires = pkg.requires.clone();
+            let alias_target = pkg.is_alias_of;
+
+            if let Some(target_id) = alias_target {
+                // Mirror Composer's RuleSetGenerator::addRulesForPackage alias
+                // branch: enqueue the target, emit `(-alias | target)` so the
+                // alias forces the target, and `(-target | alias)` so the
+                // target forces the alias (they install together). The alias
+                // is NOT indexed under its name for same-name conflicts —
+                // Composer skips that for aliases too.
+                work_queue.push_back(target_id);
+
+                let alias_rule = Rule::two_literals(
+                    -(current_id as Literal),
+                    target_id as Literal,
+                    RuleReason::PackageAlias,
+                    ReasonData::AliasPackage(current_id),
+                );
+                self.rules.add(alias_rule, RuleType::Package);
+
+                let inverse_rule = Rule::two_literals(
+                    -(target_id as Literal),
+                    current_id as Literal,
+                    RuleReason::PackageInverseAlias,
+                    ReasonData::AliasPackage(current_id),
+                );
+                self.rules.add(inverse_rule, RuleType::Package);
+
+                // The aliased target carries the actual requires; skip
+                // alias's own (link-rewritten copy) to avoid duplicates.
+                continue;
+            }
 
             // Index by every name this package fully claims (own name +
             // `replace` targets). Same-name conflict rules (below) then
@@ -135,7 +166,8 @@ impl<'a> RuleSetGenerator<'a> {
             // identity. Mirrors `BasePackage::getNames(false)` indexing in
             // Composer's RuleSetGenerator::addRulesForPackage — `provide`
             // targets are intentionally omitted so that providers can
-            // coexist with the package they provide.
+            // coexist with the package they provide. Alias packages are
+            // skipped because the target package's name already covers them.
             for name in conflict_names {
                 self.added_packages_by_name
                     .entry(name)
@@ -270,6 +302,7 @@ mod tests {
             provides: vec![],
             conflicts: vec![],
             is_fixed: false,
+            is_alias_of: None,
         }
     }
 
@@ -313,6 +346,7 @@ mod tests {
                     provides: vec![],
                     conflicts: vec![],
                     is_fixed: false,
+                    is_alias_of: None,
                 },
                 make_input("b/b", "1.0.0.0"),
             ],

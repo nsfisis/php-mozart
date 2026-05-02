@@ -29,7 +29,13 @@ impl InstallerExecutor for FilesystemExecutor {
         op: PackageOperation<'_>,
         ctx: &ExecuteContext,
     ) -> anyhow::Result<()> {
-        let pkg = op.package();
+        // Marking an alias as installed has no filesystem side effects —
+        // the target package's files are already in vendor/. Mirrors
+        // Composer's `MarkAliasInstalledOperation` which the installation
+        // manager only uses to update the in-memory installed repository.
+        let Some(pkg) = op.package() else {
+            return Ok(());
+        };
 
         // Try source install if --prefer-source and source info is available.
         if ctx.prefer_source

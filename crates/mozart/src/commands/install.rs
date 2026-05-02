@@ -670,6 +670,22 @@ pub async fn install_from_lock(
                 }
             };
             executor.install_package(op, &exec_ctx).await?;
+
+            // After the target install/update, emit MarkAliasInstalled for any
+            // aliases whose `package`+`version` (the target's pretty version)
+            // match. Mirrors Composer's `Transaction::calculateOperations` DFS
+            // which pushes alias targets first and emits MarkAliasInstalled
+            // when the alias itself is processed.
+            for alias in &lock.aliases {
+                if alias.package.eq_ignore_ascii_case(&pkg.name) && alias.version == pkg.version {
+                    executor
+                        .install_package(
+                            PackageOperation::MarkAliasInstalled { alias, target: pkg },
+                            &exec_ctx,
+                        )
+                        .await?;
+                }
+            }
         }
 
         // Step 8: Write updated vendor/composer/installed.json (unless download_only)

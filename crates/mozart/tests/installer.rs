@@ -25,6 +25,47 @@ fn fixtures_dir() -> PathBuf {
         .join("../../composer/tests/Composer/Test/Fixtures/installer")
 }
 
+/// Rewrite `file://foobar` URLs in COMPOSER content to absolute fixture
+/// paths. Mirrors `composer/tests/Composer/Test/InstallerTest.php:540-542`:
+/// when a fixture's repository entry uses a relative `file://` URL, anchor
+/// it to the fixtures directory so the on-disk `packages.json` is reachable.
+fn rewrite_fixture_file_urls(input: &str) -> String {
+    let fixtures = fixtures_dir();
+    let canonical = fixtures
+        .canonicalize()
+        .unwrap_or(fixtures)
+        .display()
+        .to_string()
+        .replace('\\', "/");
+    // Match `"file://X"` where X does not start with `/` — those are the
+    // fixture-relative form. Absolute URLs (`file:///abs/...`) are passed
+    // through.
+    let mut out = String::with_capacity(input.len());
+    let mut rest = input;
+    while let Some(idx) = rest.find("file://") {
+        out.push_str(&rest[..idx]);
+        let after = &rest[idx + "file://".len()..];
+        let first_byte = after.as_bytes().first().copied();
+        if first_byte == Some(b'/') {
+            out.push_str("file://");
+            rest = after;
+            continue;
+        }
+        // Read the rest of the URL until a `"` or whitespace.
+        let end = after
+            .find(|c: char| c == '"' || c.is_whitespace())
+            .unwrap_or(after.len());
+        let target = &after[..end];
+        out.push_str("file://");
+        out.push_str(&canonical);
+        out.push('/');
+        out.push_str(target);
+        rest = &after[end..];
+    }
+    out.push_str(rest);
+    out
+}
+
 struct InProcessRunResult {
     _working_dir: TempDir,
     trace: Vec<String>,
@@ -37,7 +78,8 @@ async fn run_fixture_in_process(test: &ParsedTest) -> anyhow::Result<InProcessRu
     let working_dir = TempDir::new()?;
     let root = working_dir.path();
 
-    std::fs::write(root.join("composer.json"), &test.composer)?;
+    let composer_json = rewrite_fixture_file_urls(&test.composer);
+    std::fs::write(root.join("composer.json"), &composer_json)?;
     if let Some(lock) = &test.lock {
         std::fs::write(root.join("composer.lock"), lock)?;
     }
@@ -178,8 +220,8 @@ installer_fixture!(alias_in_complex_constraints, ignore);
 installer_fixture!(alias_in_lock, ignore);
 installer_fixture!(alias_in_lock2, ignore);
 installer_fixture!(alias_on_unloadable_package, ignore);
-installer_fixture!(alias_solver_problems, ignore);
-installer_fixture!(alias_solver_problems2, ignore);
+installer_fixture!(alias_solver_problems);
+installer_fixture!(alias_solver_problems2);
 installer_fixture!(alias_with_reference, ignore);
 installer_fixture!(aliased_priority, ignore);
 installer_fixture!(aliased_priority_conflicting, ignore);
@@ -203,10 +245,7 @@ installer_fixture!(
 installer_fixture!(conflict_with_alias_in_lock_does_prevents_install, ignore);
 installer_fixture!(conflict_with_alias_prevents_update, ignore);
 installer_fixture!(conflict_with_alias_prevents_update_if_not_required, ignore);
-installer_fixture!(
-    conflict_with_all_dependencies_option_dont_recommend_to_use_it,
-    ignore
-);
+installer_fixture!(conflict_with_all_dependencies_option_dont_recommend_to_use_it);
 installer_fixture!(deduplicate_solver_problems);
 installer_fixture!(disjunctive_multi_constraints);
 installer_fixture!(full_update_minimal_changes, ignore);
@@ -220,7 +259,7 @@ installer_fixture!(github_issues_9012, ignore);
 installer_fixture!(github_issues_9290, ignore);
 installer_fixture!(hint_main_rename, ignore);
 installer_fixture!(install_aliased_alias, ignore);
-installer_fixture!(install_branch_alias_composer_repo, ignore);
+installer_fixture!(install_branch_alias_composer_repo);
 installer_fixture!(install_dev);
 installer_fixture!(install_dev_using_dist, ignore);
 installer_fixture!(install_forces_reinstall_if_abandon_changes, ignore);
@@ -320,14 +359,8 @@ installer_fixture!(suggest_prod);
 installer_fixture!(suggest_prod_nolock);
 installer_fixture!(suggest_replaced);
 installer_fixture!(suggest_uninstalled);
-installer_fixture!(
-    unbounded_conflict_does_not_match_default_branch_with_branch_alias,
-    ignore
-);
-installer_fixture!(
-    unbounded_conflict_does_not_match_default_branch_with_numeric_branch,
-    ignore
-);
+installer_fixture!(unbounded_conflict_does_not_match_default_branch_with_branch_alias);
+installer_fixture!(unbounded_conflict_does_not_match_default_branch_with_numeric_branch);
 installer_fixture!(unbounded_conflict_matches_default_branch, ignore);
 installer_fixture!(
     update_abandoned_package_required_but_blocked_via_audit_config,
@@ -369,7 +402,7 @@ installer_fixture!(update_ignore_platform_package_requirement_list);
 installer_fixture!(update_ignore_platform_package_requirement_list_upper_bounds);
 installer_fixture!(update_ignore_platform_package_requirement_wildcard);
 installer_fixture!(update_ignore_platform_package_requirements);
-installer_fixture!(update_installed_alias, ignore);
+installer_fixture!(update_installed_alias);
 installer_fixture!(update_installed_alias_dry_run);
 installer_fixture!(update_installed_reference, ignore);
 installer_fixture!(update_installed_reference_dry_run);

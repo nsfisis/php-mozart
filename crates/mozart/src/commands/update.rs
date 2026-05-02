@@ -1370,6 +1370,7 @@ mod tests {
             version: version.to_string(),
             version_normalized: format!("{}.0", version),
             is_dev: false,
+            alias_of_normalized: None,
         }
     }
 

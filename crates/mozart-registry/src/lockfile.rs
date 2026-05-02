@@ -372,6 +372,20 @@ impl LockFileGenerationRequest {
             .find(|ipkg| ipkg.name == name && ipkg.version.version_normalized == version_normalized)
             .map(|ipkg| ipkg.version)
     }
+
+    /// Look up a `type: composer` repository entry for `name@version_normalized`.
+    /// Used to short-circuit the Packagist fetch when the resolved package came
+    /// from a local Composer repo (the test fixtures' file:// case).
+    fn composer_repo_lookup(
+        &self,
+        name: &str,
+        version_normalized: &str,
+    ) -> Option<PackagistVersion> {
+        crate::composer_repo::collect_composer_packages(&self.composer_json.repositories)
+            .into_iter()
+            .find(|cpkg| cpkg.name == name && cpkg.version.version_normalized == version_normalized)
+            .map(|cpkg| cpkg.version)
+    }
 }
 
 /// Convert a `PackagistSource` to a `LockedSource`.
@@ -523,7 +537,15 @@ fn extract_platform_requirements(requirements: &BTreeMap<String, String>) -> ser
 /// 3. Computes the content-hash
 /// 4. Assembles the complete `LockFile` struct
 pub async fn generate_lock_file(request: &LockFileGenerationRequest) -> anyhow::Result<LockFile> {
-    // 1. Fetch full metadata for all resolved packages.
+    // Split the resolved set into real packages and alias entries up front.
+    // Aliases get emitted as a separate `aliases[]` block and never enter the
+    // metadata fetch loop — their target package carries the real metadata.
+    let (real_resolved, alias_resolved): (Vec<&ResolvedPackage>, Vec<&ResolvedPackage>) = request
+        .resolved_packages
+        .iter()
+        .partition(|p| p.alias_of_normalized.is_none());
+
+    // 1. Fetch full metadata for real (non-alias) packages.
     //
     // Inline `type: package` repositories carry full metadata in composer.json
     // — short-circuit those before hitting the network. Everything else goes
@@ -531,9 +553,14 @@ pub async fn generate_lock_file(request: &LockFileGenerationRequest) -> anyhow::
     // steps will move VCS / inline through the same set.
     let mut package_metadata: HashMap<String, PackagistVersion> = HashMap::new();
     let repo_set = &request.repositories;
-    for pkg in &request.resolved_packages {
+    for pkg in &real_resolved {
         if let Some(inline) = request.inline_lookup(&pkg.name, &pkg.version_normalized) {
             package_metadata.insert(pkg.name.clone(), inline);
+            continue;
+        }
+
+        if let Some(cv) = request.composer_repo_lookup(&pkg.name, &pkg.version_normalized) {
+            package_metadata.insert(pkg.name.clone(), cv);
             continue;
         }
 
@@ -555,9 +582,19 @@ pub async fn generate_lock_file(request: &LockFileGenerationRequest) -> anyhow::
         package_metadata.insert(pkg.name.clone(), matching.version);
     }
 
-    // 2. Classify dev vs non-dev packages
+    // 2. Classify dev vs non-dev packages (real packages only).
+    let real_owned: Vec<ResolvedPackage> = real_resolved
+        .iter()
+        .map(|p| ResolvedPackage {
+            name: p.name.clone(),
+            version: p.version.clone(),
+            version_normalized: p.version_normalized.clone(),
+            is_dev: p.is_dev,
+            alias_of_normalized: None,
+        })
+        .collect();
     let dev_only = classify_dev_packages(
-        &request.resolved_packages,
+        &real_owned,
         &request.composer_json.require,
         &request.composer_json.require_dev,
         &package_metadata,
@@ -566,7 +603,7 @@ pub async fn generate_lock_file(request: &LockFileGenerationRequest) -> anyhow::
     // 3. Build LockedPackage lists
     let mut packages: Vec<LockedPackage> = Vec::new();
     let mut packages_dev: Vec<LockedPackage> = Vec::new();
-    for pkg in &request.resolved_packages {
+    for pkg in &real_resolved {
         let pv = &package_metadata[&pkg.name];
         let locked = packagist_version_to_locked_package(&pkg.name, pv);
         if dev_only.contains(&pkg.name) {
@@ -580,14 +617,38 @@ pub async fn generate_lock_file(request: &LockFileGenerationRequest) -> anyhow::
     packages.sort_by(|a, b| a.name.cmp(&b.name));
     packages_dev.sort_by(|a, b| a.name.cmp(&b.name));
 
-    // 5. Compute content-hash
+    // 5. Build the aliases[] block. Each alias entry references the target
+    // package (`package` + `version`) and carries the alias's pretty/normalized
+    // form (`alias` + `alias_normalized`). Mirrors Composer's
+    // `Locker::lockPackages` alias dump.
+    let mut alias_blocks: Vec<LockAlias> = Vec::new();
+    for alias in &alias_resolved {
+        let target_normalized = match &alias.alias_of_normalized {
+            Some(t) => t.clone(),
+            None => continue,
+        };
+        let target_pretty = real_resolved
+            .iter()
+            .find(|p| p.name == alias.name && p.version_normalized == target_normalized)
+            .map(|p| p.version.clone())
+            .unwrap_or_else(|| target_normalized.clone());
+        alias_blocks.push(LockAlias {
+            package: alias.name.clone(),
+            version: target_pretty,
+            alias: alias.version.clone(),
+            alias_normalized: alias.version_normalized.clone(),
+        });
+    }
+    alias_blocks.sort_by(|a, b| a.package.cmp(&b.package).then(a.alias.cmp(&b.alias)));
+
+    // 6. Compute content-hash
     let content_hash = LockFile::compute_content_hash(&request.composer_json_content)?;
 
-    // 6. Extract platform requirements
+    // 7. Extract platform requirements
     let platform = extract_platform_requirements(&request.composer_json.require);
     let platform_dev = extract_platform_requirements(&request.composer_json.require_dev);
 
-    // 7. Determine minimum-stability and prefer-stable
+    // 8. Determine minimum-stability and prefer-stable
     let minimum_stability = request
         .composer_json
         .minimum_stability
@@ -601,7 +662,7 @@ pub async fn generate_lock_file(request: &LockFileGenerationRequest) -> anyhow::
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
 
-    // 8. Assemble LockFile
+    // 9. Assemble LockFile
     Ok(LockFile {
         readme: LockFile::default_readme(),
         content_hash,
@@ -611,7 +672,7 @@ pub async fn generate_lock_file(request: &LockFileGenerationRequest) -> anyhow::
         } else {
             Some(vec![])
         },
-        aliases: vec![],
+        aliases: alias_blocks,
         minimum_stability,
         stability_flags: serde_json::json!({}),
         prefer_stable,
@@ -904,24 +965,28 @@ mod tests {
                 version: "1.0.0".to_string(),
                 version_normalized: "1.0.0.0".to_string(),
                 is_dev: false,
+                alias_of_normalized: None,
             },
             ResolvedPackage {
                 name: "vendor/b".to_string(),
                 version: "1.0.0".to_string(),
                 version_normalized: "1.0.0.0".to_string(),
                 is_dev: false,
+                alias_of_normalized: None,
             },
             ResolvedPackage {
                 name: "vendor/c".to_string(),
                 version: "1.0.0".to_string(),
                 version_normalized: "1.0.0.0".to_string(),
                 is_dev: false,
+                alias_of_normalized: None,
             },
             ResolvedPackage {
                 name: "vendor/d".to_string(),
                 version: "1.0.0".to_string(),
                 version_normalized: "1.0.0.0".to_string(),
                 is_dev: false,
+                alias_of_normalized: None,
             },
         ];
 
@@ -983,18 +1048,21 @@ mod tests {
                 version: "1.0.0".to_string(),
                 version_normalized: "1.0.0.0".to_string(),
                 is_dev: false,
+                alias_of_normalized: None,
             },
             ResolvedPackage {
                 name: "vendor/b".to_string(),
                 version: "1.0.0".to_string(),
                 version_normalized: "1.0.0.0".to_string(),
                 is_dev: false,
+                alias_of_normalized: None,
             },
             ResolvedPackage {
                 name: "vendor/c".to_string(),
                 version: "1.0.0".to_string(),
                 version_normalized: "1.0.0.0".to_string(),
                 is_dev: false,
+                alias_of_normalized: None,
             },
         ];
 

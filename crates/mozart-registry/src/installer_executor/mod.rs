@@ -15,7 +15,7 @@
 
 use std::path::PathBuf;
 
-use crate::lockfile::LockedPackage;
+use crate::lockfile::{LockAlias, LockedPackage};
 
 pub mod filesystem;
 pub mod trace_recorder;
@@ -35,15 +35,72 @@ pub enum PackageOperation<'a> {
         from_version: &'a str,
         package: &'a LockedPackage,
     },
+    /// Mark an alias of a real package as installed. No filesystem effects —
+    /// only the trace recorder needs this. Mirrors Composer's
+    /// `MarkAliasInstalledOperation`.
+    MarkAliasInstalled {
+        /// The alias entry from `composer.lock`'s `aliases[]` block. Carries
+        /// pretty + normalized alias version and the target's pretty version.
+        alias: &'a LockAlias,
+        /// The target package the alias points at — used to source the
+        /// reference suffix for the trace line.
+        target: &'a LockedPackage,
+    },
 }
 
 impl<'a> PackageOperation<'a> {
-    pub fn package(&self) -> &'a LockedPackage {
+    pub fn package(&self) -> Option<&'a LockedPackage> {
         match self {
             PackageOperation::Install { package } | PackageOperation::Update { package, .. } => {
-                package
+                Some(package)
             }
+            PackageOperation::MarkAliasInstalled { .. } => None,
         }
+    }
+}
+
+/// Mirror Composer's `BasePackage::getFullPrettyVersion()` for a `LockedPackage`.
+///
+/// For dev-stability versions backed by a git/hg source, append the reference
+/// (truncated to 7 chars when it looks like a 40-char sha1). Otherwise return
+/// the pretty version unchanged.
+pub fn format_full_pretty_version(pkg: &LockedPackage) -> String {
+    format_full_pretty_with_pretty(&pkg.version, pkg)
+}
+
+/// Same as [`format_full_pretty_version`] but lets the caller supply an
+/// alternate pretty version (used by `MarkAliasInstalled` so the alias's
+/// `3.2.x-dev` text is rendered with the *target's* reference).
+pub fn format_full_pretty_with_pretty(pretty_version: &str, pkg: &LockedPackage) -> String {
+    let is_dev = mozart_semver::Version::parse(&pkg.version)
+        .map(|v| matches!(v.pre_release.as_deref(), Some("dev")) || v.is_dev_branch)
+        .unwrap_or(false);
+    if !is_dev {
+        return pretty_version.to_string();
+    }
+    let source_ref = pkg.source.as_ref().and_then(|s| s.reference.as_deref());
+    let dist_ref = pkg.dist.as_ref().and_then(|d| d.reference.as_deref());
+    let source_type = pkg.source.as_ref().map(|s| s.source_type.as_str());
+    // Composer falls back to dist reference only when no source type is set
+    // (or the package isn't git/hg — in which case the dev display is skipped
+    // entirely above).
+    let reference = source_ref.or(match source_type {
+        Some("git") | Some("hg") => None,
+        _ => dist_ref,
+    });
+    let Some(reference) = reference else {
+        return pretty_version.to_string();
+    };
+    if matches!(source_type, Some("git") | Some("hg")) && reference.len() == 40 {
+        format!("{} {}", pretty_version, &reference[..7])
+    } else if matches!(source_type, Some("svn")) {
+        // svn references are revision numbers, never truncated
+        format!("{} {}", pretty_version, reference)
+    } else if reference.len() == 40 {
+        // dist-ref fallback (no git/hg source) — Composer truncates here too
+        format!("{} {}", pretty_version, &reference[..7])
+    } else {
+        format!("{} {}", pretty_version, reference)
     }
 }
 
