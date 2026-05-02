@@ -419,9 +419,11 @@ pub async fn execute(
         platform: PlatformConfig::new(),
         ignore_platform_reqs: args.ignore_platform_reqs,
         ignore_platform_req_list: args.ignore_platform_req.clone(),
-        repo_cache: repo_cache.clone(),
+        repositories: std::sync::Arc::new(
+            mozart_registry::repository::RepositorySet::with_packagist(repo_cache.clone()),
+        ),
         temporary_constraints: HashMap::new(),
-        repositories: raw.repositories.clone(),
+        raw_repositories: raw.repositories.clone(),
     };
 
     console.info("Resolving dependencies...");
@@ -440,7 +442,9 @@ pub async fn execute(
         composer_json_content: composer_json_content.clone(),
         composer_json: raw.clone(),
         include_dev: dev_mode,
-        repo_cache: repo_cache.clone(),
+        repositories: std::sync::Arc::new(
+            mozart_registry::repository::RepositorySet::with_packagist(repo_cache.clone()),
+        ),
     })
     .await?;
 
@@ -497,6 +501,9 @@ pub async fn execute(
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
 
+    let cache_config = mozart_registry::cache::build_cache_config(cli.no_cache);
+    let files_cache = mozart_registry::cache::Cache::files(&cache_config);
+    let mut executor = mozart_registry::installer_executor::FilesystemExecutor::new(files_cache);
     super::install::install_from_lock(
         &new_lock,
         &target_dir,
@@ -514,9 +521,9 @@ pub async fn execute(
             apcu_autoloader_prefix: None,
             download_only: false,
             prefer_source: args.prefer_source,
-            no_cache: cli.no_cache,
         },
         console,
+        &mut executor,
     )
     .await?;
 

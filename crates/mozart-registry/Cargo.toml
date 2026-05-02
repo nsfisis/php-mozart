@@ -10,6 +10,7 @@ mozart-sat-resolver.workspace = true
 mozart-semver.workspace = true
 mozart-vcs.workspace = true
 anyhow.workspace = true
+async-trait.workspace = true
 filetime.workspace = true
 flate2.workspace = true
 md5.workspace = true

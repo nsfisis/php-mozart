@@ -1,5 +1,5 @@
-use crate::cache::Cache;
-use crate::packagist::{self, PackagistDist, PackagistSource, PackagistVersion};
+use crate::packagist::{PackagistDist, PackagistSource, PackagistVersion};
+use crate::repository::RepositorySet;
 use crate::resolver::ResolvedPackage;
 use mozart_core::package::{RawPackageData, to_json_pretty};
 use serde::{Deserialize, Serialize};
@@ -350,8 +350,9 @@ pub struct LockFileGenerationRequest {
     pub composer_json: RawPackageData,
     /// Whether require-dev was included in resolution.
     pub include_dev: bool,
-    /// Repo cache for Packagist API calls made during generation.
-    pub repo_cache: Cache,
+    /// Repository set used to fetch full metadata for resolved packages
+    /// that aren't already covered by inline `type: package` repositories.
+    pub repositories: std::sync::Arc<RepositorySet>,
 }
 
 impl LockFileGenerationRequest {
@@ -514,21 +515,28 @@ fn extract_platform_requirements(requirements: &BTreeMap<String, String>) -> ser
 /// 3. Computes the content-hash
 /// 4. Assembles the complete `LockFile` struct
 pub async fn generate_lock_file(request: &LockFileGenerationRequest) -> anyhow::Result<LockFile> {
-    // 1. Fetch full metadata for all resolved packages
+    // 1. Fetch full metadata for all resolved packages.
+    //
+    // Inline `type: package` repositories carry full metadata in composer.json
+    // — short-circuit those before hitting the network. Everything else goes
+    // through `RepositorySet`, which today contains only Packagist; future
+    // steps will move VCS / inline through the same set.
     let mut package_metadata: HashMap<String, PackagistVersion> = HashMap::new();
+    let repo_set = &request.repositories;
     for pkg in &request.resolved_packages {
-        // Inline `type: package` repositories carry full metadata in
-        // composer.json — use it directly instead of hitting Packagist.
         if let Some(inline) = request.inline_lookup(&pkg.name, &pkg.version_normalized) {
             package_metadata.insert(pkg.name.clone(), inline);
             continue;
         }
 
-        let versions = packagist::fetch_package_versions(&pkg.name, &request.repo_cache).await?;
-        // Find the exact version matching pkg.version_normalized
-        let matching = versions
+        let queries = [crate::repository::PackageQuery {
+            name: pkg.name.as_str(),
+            constraint: None,
+        }];
+        let results = repo_set.load_packages(&queries).await?;
+        let matching = results
             .into_iter()
-            .find(|v| v.version_normalized == pkg.version_normalized)
+            .find(|r| r.version.version_normalized == pkg.version_normalized)
             .ok_or_else(|| {
                 anyhow::anyhow!(
                     "Could not find version {} for package {} in Packagist response",
@@ -536,7 +544,7 @@ pub async fn generate_lock_file(request: &LockFileGenerationRequest) -> anyhow::
                     pkg.name
                 )
             })?;
-        package_metadata.insert(pkg.name.clone(), matching);
+        package_metadata.insert(pkg.name.clone(), matching.version);
     }
 
     // 2. Classify dev vs non-dev packages
@@ -1071,7 +1079,9 @@ mod tests {
             composer_json_content: composer_json_content.clone(),
             composer_json,
             include_dev: true,
-            repo_cache: Cache::new(std::env::temp_dir().join("mozart-test-cache"), false),
+            repositories: std::sync::Arc::new(RepositorySet::with_packagist(
+                crate::cache::Cache::new(std::env::temp_dir().join("mozart-test-cache"), false),
+            )),
         };
 
         let lock = generate_lock_file(&request).await.unwrap();
@@ -1159,9 +1169,11 @@ mod tests {
     #[tokio::test]
     #[ignore]
     async fn test_generate_lock_file_monolog() {
+        use crate::cache::Cache;
         use crate::resolver::PlatformConfig;
         use crate::resolver::{ResolveRequest, resolve};
         use mozart_core::package::Stability;
+        use std::sync::Arc;
 
         // Resolve monolog/monolog ^3.0
         let resolve_request = ResolveRequest {
@@ -1176,9 +1188,12 @@ mod tests {
             platform: PlatformConfig::new(),
             ignore_platform_reqs: false,
             ignore_platform_req_list: vec![],
-            repo_cache: Cache::new(std::env::temp_dir().join("mozart-test-cache"), false),
+            repositories: Arc::new(RepositorySet::with_packagist(Cache::new(
+                std::env::temp_dir().join("mozart-test-cache"),
+                false,
+            ))),
             temporary_constraints: HashMap::new(),
-            repositories: vec![],
+            raw_repositories: vec![],
         };
 
         let resolved = resolve(&resolve_request)
@@ -1195,7 +1210,10 @@ mod tests {
             composer_json_content: composer_json_content.clone(),
             composer_json,
             include_dev: false,
-            repo_cache: Cache::new(std::env::temp_dir().join("mozart-test-cache"), false),
+            repositories: Arc::new(RepositorySet::with_packagist(Cache::new(
+                std::env::temp_dir().join("mozart-test-cache"),
+                false,
+            ))),
         };
 
         let lock = generate_lock_file(&gen_request)

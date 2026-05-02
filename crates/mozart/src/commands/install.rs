@@ -1,8 +1,10 @@
 use clap::Args;
 use mozart_core::console;
 use mozart_core::console_format;
-use mozart_registry::downloader;
 use mozart_registry::installed;
+use mozart_registry::installer_executor::{
+    ExecuteContext, FilesystemExecutor, InstallerExecutor, PackageOperation,
+};
 use mozart_registry::lockfile;
 use std::collections::{BTreeMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -119,8 +121,6 @@ pub struct InstallConfig {
     pub download_only: bool,
     /// Prefer installing from VCS source rather than dist archives.
     pub prefer_source: bool,
-    /// Disable the files cache entirely.
-    pub no_cache: bool,
 }
 
 impl Default for InstallConfig {
@@ -138,7 +138,6 @@ impl Default for InstallConfig {
             apcu_autoloader_prefix: None,
             download_only: false,
             prefer_source: false,
-            no_cache: false,
         }
     }
 }
@@ -168,15 +167,23 @@ pub fn resolve_working_dir(cli: &super::Cli) -> PathBuf {
 /// Compute install operations by comparing locked packages against installed packages.
 ///
 /// Returns a tuple of (ops, removals) where:
-/// - ops: list of (package, action) for each locked package
+/// - ops: list of (package, action) ordered topologically — every package's
+///   lock-internal `require` deps appear before it, so installs run in
+///   dependency-first order to match Composer's `Transaction::calculateOperations`.
 /// - removals: list of package names that are installed but not locked
 pub fn compute_operations<'a>(
     locked: &[&'a lockfile::LockedPackage],
     installed: &installed::InstalledPackages,
 ) -> (Vec<(&'a lockfile::LockedPackage, Action)>, Vec<String>) {
-    let mut ops: Vec<(&'a lockfile::LockedPackage, Action)> = Vec::new();
+    // Topo-sort `locked` so each package's deps (within the lock set) come
+    // before it. Composer's solver yields operations in this order via the
+    // Transaction; Mozart writes the lock alphabetically, so the install
+    // loop must re-order before emitting trace lines or invoking the
+    // executor.
+    let ordered = topological_sort(locked);
 
-    for pkg in locked {
+    let mut ops: Vec<(&'a lockfile::LockedPackage, Action)> = Vec::new();
+    for pkg in ordered {
         if installed.is_installed(&pkg.name, &pkg.version) {
             ops.push((pkg, Action::Skip));
         } else if installed
@@ -201,6 +208,72 @@ pub fn compute_operations<'a>(
         .collect();
 
     (ops, removals)
+}
+
+/// Order a slice of locked packages so every package's `require` deps that
+/// are present in the same slice come before it. Cycles fall back to the
+/// input order (Composer rejects cycles earlier in the resolver, so Mozart
+/// shouldn't see them here in practice). Mirrors the topological sort
+/// inside `Composer\DependencyResolver\Transaction::calculateOperations`.
+fn topological_sort<'a>(
+    packages: &[&'a lockfile::LockedPackage],
+) -> Vec<&'a lockfile::LockedPackage> {
+    use std::collections::BTreeMap;
+
+    let names: HashSet<String> = packages.iter().map(|p| p.name.to_lowercase()).collect();
+    let mut by_name: BTreeMap<String, &'a lockfile::LockedPackage> = BTreeMap::new();
+    for pkg in packages {
+        by_name.insert(pkg.name.to_lowercase(), *pkg);
+    }
+
+    let mut visited: HashSet<String> = HashSet::new();
+    let mut on_stack: HashSet<String> = HashSet::new();
+    let mut ordered: Vec<&'a lockfile::LockedPackage> = Vec::with_capacity(packages.len());
+
+    fn visit<'b>(
+        name: &str,
+        names: &HashSet<String>,
+        by_name: &BTreeMap<String, &'b lockfile::LockedPackage>,
+        visited: &mut HashSet<String>,
+        on_stack: &mut HashSet<String>,
+        ordered: &mut Vec<&'b lockfile::LockedPackage>,
+    ) {
+        if visited.contains(name) || on_stack.contains(name) {
+            return;
+        }
+        let Some(pkg) = by_name.get(name) else {
+            return;
+        };
+        on_stack.insert(name.to_string());
+        for dep in pkg.require.keys() {
+            let dep_lower = dep.to_lowercase();
+            if names.contains(&dep_lower) {
+                visit(&dep_lower, names, by_name, visited, on_stack, ordered);
+            }
+        }
+        on_stack.remove(name);
+        visited.insert(name.to_string());
+        ordered.push(*pkg);
+    }
+
+    // Seed iteration in the input order so two packages with no relation
+    // come out in the order Mozart's lock writer produced them
+    // (alphabetical), matching Composer's deterministic output.
+    for pkg in packages {
+        let lower = pkg.name.to_lowercase();
+        if !visited.contains(&lower) {
+            visit(
+                &lower,
+                &names,
+                &by_name,
+                &mut visited,
+                &mut on_stack,
+                &mut ordered,
+            );
+        }
+    }
+
+    ordered
 }
 
 /// Convert a LockedPackage to an InstalledPackageEntry.
@@ -234,27 +307,6 @@ pub fn locked_to_installed_entry(
         aliases: vec![],
         extra_fields: pkg.extra_fields.clone(),
     }
-}
-
-/// Clean up empty vendor namespace directories after removals.
-pub fn cleanup_empty_vendor_dirs(vendor_dir: &Path) -> anyhow::Result<()> {
-    if let Ok(entries) = std::fs::read_dir(vendor_dir) {
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.is_dir() {
-                let name = entry.file_name().to_string_lossy().to_string();
-                // Skip "composer" dir and "bin" dir
-                if name == "composer" || name == "bin" {
-                    continue;
-                }
-                // If the namespace dir is empty, remove it
-                if std::fs::read_dir(&path)?.next().is_none() {
-                    std::fs::remove_dir(&path)?;
-                }
-            }
-        }
-    }
-    Ok(())
 }
 
 /// Check whether a package name refers to a platform package.
@@ -435,66 +487,14 @@ fn warn_platform_requirements(
     }
 }
 
-/// Create a download progress tracker for a package.
-fn make_progress(show: bool, pkg_name: &str, version: &str) -> downloader::DownloadProgress {
-    downloader::DownloadProgress::new(show, format!("{pkg_name} ({version})"))
-}
-
-/// Install a package from VCS source (git/svn/hg).
-fn install_from_source(
-    source_type: &str,
-    url: &str,
-    reference: &str,
-    vendor_dir: &Path,
-    package_name: &str,
-) -> anyhow::Result<()> {
-    let target = vendor_dir.join(package_name);
-    if target.exists() {
-        std::fs::remove_dir_all(&target)?;
-    }
-
-    match source_type {
-        "git" => {
-            let process = mozart_vcs::process::ProcessExecutor::new();
-            let git_util =
-                mozart_vcs::util::git::GitUtil::new(process, vendor_dir.join(".cache").join("git"));
-            let downloader = mozart_vcs::downloader::git::GitDownloader::new(git_util);
-            use mozart_vcs::downloader::VcsDownloader;
-            downloader.download(url, reference, &target)?;
-            downloader.install(url, reference, &target)?;
-        }
-        "svn" => {
-            let process = mozart_vcs::process::ProcessExecutor::new();
-            let svn_util = mozart_vcs::util::svn::SvnUtil::new(process);
-            let downloader = mozart_vcs::downloader::svn::SvnDownloader::new(svn_util);
-            use mozart_vcs::downloader::VcsDownloader;
-            downloader.install(url, reference, &target)?;
-        }
-        "hg" => {
-            let process = mozart_vcs::process::ProcessExecutor::new();
-            let hg_util = mozart_vcs::util::hg::HgUtil::new(process);
-            let downloader = mozart_vcs::downloader::hg::HgDownloader::new(hg_util);
-            use mozart_vcs::downloader::VcsDownloader;
-            downloader.install(url, reference, &target)?;
-        }
-        _ => {
-            anyhow::bail!("Unsupported source type for VCS install: {}", source_type);
-        }
-    }
-
-    Ok(())
-}
-
 pub async fn install_from_lock(
     lock: &lockfile::LockFile,
     working_dir: &Path,
     vendor_dir: &Path,
     config: &InstallConfig,
     console: &mozart_core::console::Console,
+    executor: &mut dyn InstallerExecutor,
 ) -> anyhow::Result<()> {
-    let cache_config = mozart_registry::cache::build_cache_config(config.no_cache);
-    let files_cache = mozart_registry::cache::Cache::files(&cache_config);
-
     let dev_mode = config.dev_mode;
 
     // Step 1: Determine which packages to install
@@ -575,8 +575,14 @@ pub async fn install_from_lock(
             console.info(&console_format!("  - Would remove <info>{}</info>", name));
         }
     } else {
+        let exec_ctx = ExecuteContext {
+            vendor_dir: vendor_dir.to_path_buf(),
+            no_progress: config.no_progress,
+            prefer_source: config.prefer_source,
+        };
+
         for (pkg, action) in &ops {
-            match action {
+            let op = match action {
                 Action::Skip => continue,
                 Action::Install => {
                     console.info(&console_format!(
@@ -584,6 +590,7 @@ pub async fn install_from_lock(
                         pkg.name,
                         pkg.version
                     ));
+                    PackageOperation::Install { package: pkg }
                 }
                 Action::Update => {
                     console.info(&console_format!(
@@ -591,69 +598,39 @@ pub async fn install_from_lock(
                         pkg.name,
                         pkg.version
                     ));
+                    // Pull the previously-installed version from installed.json
+                    // so the trace recorder can format
+                    // `Upgrading pkg (oldVersion => newVersion)`.
+                    let from_version = installed
+                        .packages
+                        .iter()
+                        .find(|p| p.name.eq_ignore_ascii_case(&pkg.name))
+                        .map(|p| p.version.as_str())
+                        .unwrap_or("");
+                    PackageOperation::Update {
+                        from_version,
+                        package: pkg,
+                    }
                 }
-            }
-
-            // Try source install if --prefer-source and source info is available
-            if config.prefer_source
-                && let Some(source) = &pkg.source
-            {
-                install_from_source(
-                    &source.source_type,
-                    &source.url,
-                    source.reference.as_deref().unwrap_or("HEAD"),
-                    vendor_dir,
-                    &pkg.name,
-                )?;
-                continue;
-            }
-
-            // A package with neither dist nor source has no install action.
-            // This covers Composer's `type: metapackage` (modeled explicitly
-            // as "no installer") and inline `type: package` definitions used
-            // in test fixtures that intentionally omit download metadata.
-            // Mozart records the operation and the installed.json entry but
-            // performs no filesystem work, mirroring Composer's
-            // MetapackageInstaller.
-            if pkg.dist.is_none() && pkg.source.is_none() {
-                continue;
-            }
-
-            let dist = pkg.dist.as_ref().ok_or_else(|| {
-                anyhow::anyhow!(
-                    "Package {} has no dist information. Use --prefer-source to install from VCS.",
-                    pkg.name,
-                )
-            })?;
-
-            let mut progress = make_progress(!config.no_progress, &pkg.name, &pkg.version);
-
-            downloader::install_package(
-                &dist.url,
-                &dist.dist_type,
-                dist.shasum.as_deref(),
-                vendor_dir,
-                &pkg.name,
-                Some(&mut progress),
-                &files_cache,
-            )
-            .await?;
-
-            progress.finish();
+            };
+            executor.install_package(op, &exec_ctx).await?;
         }
 
         // Handle removals
         for name in &removals {
             console.info(&console_format!("  - Removing <info>{}</info>", name));
-            let pkg_dir = vendor_dir.join(name);
-            if pkg_dir.exists() {
-                std::fs::remove_dir_all(&pkg_dir)?;
-            }
+            let from_version = installed
+                .packages
+                .iter()
+                .find(|p| p.name.eq_ignore_ascii_case(name))
+                .map(|p| p.version.as_str())
+                .unwrap_or("");
+            executor.uninstall_package(name, from_version, &exec_ctx)?;
         }
 
         // Step 7: Clean up empty vendor namespace directories
         if !removals.is_empty() {
-            cleanup_empty_vendor_dirs(vendor_dir)?;
+            executor.cleanup_after_uninstalls(&exec_ctx)?;
         }
 
         // Step 8: Write updated vendor/composer/installed.json (unless download_only)
@@ -710,14 +687,36 @@ pub async fn install_from_lock(
     Ok(())
 }
 
+/// CLI entry point. Builds production [`mozart_registry::repository::RepositorySet`]
+/// (Packagist) and [`FilesystemExecutor`] from `cli`, then dispatches to [`run`].
 pub async fn execute(
     args: &InstallArgs,
     cli: &super::Cli,
     console: &mozart_core::console::Console,
 ) -> anyhow::Result<()> {
-    // Step 1: Resolve the working directory
+    let cache_config = mozart_registry::cache::build_cache_config(cli.no_cache);
+    let repositories =
+        std::sync::Arc::new(mozart_registry::repository::RepositorySet::with_packagist(
+            mozart_registry::cache::Cache::repo(&cache_config),
+        ));
+    let mut executor = FilesystemExecutor::new(mozart_registry::cache::Cache::files(&cache_config));
     let working_dir = resolve_working_dir(cli);
+    run(&working_dir, args, console, repositories, &mut executor).await
+}
 
+/// Library entry point — pure logic, no `Cli` access.
+///
+/// In-process tests construct an empty `RepositorySet` (Composer's
+/// `'packagist' => false` test config) and a tracing `InstallerExecutor`,
+/// then call this function directly to exercise the install flow without
+/// spawning the binary.
+pub async fn run(
+    working_dir: &Path,
+    args: &InstallArgs,
+    console: &mozart_core::console::Console,
+    repositories: std::sync::Arc<mozart_registry::repository::RepositorySet>,
+    executor: &mut dyn InstallerExecutor,
+) -> anyhow::Result<()> {
     // Step 2: Validate arguments
     if args.prefer_install.is_some() && (args.prefer_source || args.prefer_dist) {
         return Err(mozart_core::exit_code::bail(
@@ -795,7 +794,10 @@ pub async fn execute(
             root_reqs: false,
             bump_after_update: None,
         };
-        return super::update::execute(&update_args, cli, console).await;
+        // Forward the caller's repositories + executor so in-process tests
+        // see their mocks honored across the install→update fallback edge.
+        return super::update::run(working_dir, &update_args, console, repositories, executor)
+            .await;
     }
     let lock = lockfile::LockFile::read_from_file(&lock_path)?;
 
@@ -862,9 +864,10 @@ pub async fn execute(
     let vendor_dir = working_dir.join("vendor");
 
     // Step 7: Delegate to shared install_from_lock()
+    let _ = repositories; // unused — install_from_lock has no resolver phase
     install_from_lock(
         &lock,
-        &working_dir,
+        working_dir,
         &vendor_dir,
         &InstallConfig {
             dev_mode,
@@ -879,9 +882,9 @@ pub async fn execute(
             apcu_autoloader_prefix: args.apcu_autoloader_prefix.clone(),
             download_only: args.download_only,
             prefer_source,
-            no_cache: cli.no_cache,
         },
         console,
+        executor,
     )
     .await
 }
@@ -1230,57 +1233,6 @@ mod tests {
         assert_eq!(loaded.packages.len(), 2);
         assert!(loaded.dev);
         assert_eq!(loaded.dev_package_names, vec!["phpunit/phpunit"]);
-    }
-
-    // -----------------------------------------------------------------------
-    // cleanup_empty_vendor_dirs tests
-    // -----------------------------------------------------------------------
-
-    #[test]
-    fn test_cleanup_empty_vendor_dirs_removes_empty() {
-        let dir = tempdir().unwrap();
-        let vendor_dir = dir.path().join("vendor");
-        std::fs::create_dir_all(&vendor_dir).unwrap();
-
-        // Create an empty namespace dir
-        let empty_ns = vendor_dir.join("old-vendor");
-        std::fs::create_dir_all(&empty_ns).unwrap();
-
-        // Create a non-empty namespace dir
-        let nonempty_ns = vendor_dir.join("psr");
-        std::fs::create_dir_all(nonempty_ns.join("log")).unwrap();
-
-        // Create the composer dir (should be skipped)
-        std::fs::create_dir_all(vendor_dir.join("composer")).unwrap();
-
-        cleanup_empty_vendor_dirs(&vendor_dir).unwrap();
-
-        assert!(!empty_ns.exists(), "empty namespace dir should be removed");
-        assert!(
-            vendor_dir.join("psr").exists(),
-            "non-empty namespace dir should remain"
-        );
-        assert!(
-            vendor_dir.join("composer").exists(),
-            "composer dir should be preserved"
-        );
-    }
-
-    #[test]
-    fn test_cleanup_empty_vendor_dirs_skips_bin() {
-        let dir = tempdir().unwrap();
-        let vendor_dir = dir.path().join("vendor");
-        std::fs::create_dir_all(&vendor_dir).unwrap();
-
-        let bin_dir = vendor_dir.join("bin");
-        std::fs::create_dir_all(&bin_dir).unwrap();
-
-        cleanup_empty_vendor_dirs(&vendor_dir).unwrap();
-
-        assert!(
-            bin_dir.exists(),
-            "bin dir should be preserved even if empty"
-        );
     }
 
     // -----------------------------------------------------------------------
