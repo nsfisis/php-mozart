@@ -40,8 +40,9 @@ pub enum PackageOperation<'a> {
 impl<'a> PackageOperation<'a> {
     pub fn package(&self) -> &'a LockedPackage {
         match self {
-            PackageOperation::Install { package }
-            | PackageOperation::Update { package, .. } => package,
+            PackageOperation::Install { package } | PackageOperation::Update { package, .. } => {
+                package
+            }
         }
     }
 }

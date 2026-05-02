@@ -138,10 +138,8 @@ fn install_from_source(
     match source_type {
         "git" => {
             let process = mozart_vcs::process::ProcessExecutor::new();
-            let git_util = mozart_vcs::util::git::GitUtil::new(
-                process,
-                vendor_dir.join(".cache").join("git"),
-            );
+            let git_util =
+                mozart_vcs::util::git::GitUtil::new(process, vendor_dir.join(".cache").join("git"));
             let downloader = mozart_vcs::downloader::git::GitDownloader::new(git_util);
             use mozart_vcs::downloader::VcsDownloader;
             downloader.download(url, reference, &target)?;

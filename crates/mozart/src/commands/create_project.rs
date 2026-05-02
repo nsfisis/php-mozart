@@ -503,8 +503,7 @@ pub async fn execute(
 
     let cache_config = mozart_registry::cache::build_cache_config(cli.no_cache);
     let files_cache = mozart_registry::cache::Cache::files(&cache_config);
-    let mut executor =
-        mozart_registry::installer_executor::FilesystemExecutor::new(files_cache);
+    let mut executor = mozart_registry::installer_executor::FilesystemExecutor::new(files_cache);
     super::install::install_from_lock(
         &new_lock,
         &target_dir,

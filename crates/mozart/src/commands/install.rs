@@ -695,11 +695,10 @@ pub async fn execute(
     console: &mozart_core::console::Console,
 ) -> anyhow::Result<()> {
     let cache_config = mozart_registry::cache::build_cache_config(cli.no_cache);
-    let repositories = std::sync::Arc::new(
-        mozart_registry::repository::RepositorySet::with_packagist(
+    let repositories =
+        std::sync::Arc::new(mozart_registry::repository::RepositorySet::with_packagist(
             mozart_registry::cache::Cache::repo(&cache_config),
-        ),
-    );
+        ));
     let mut executor = FilesystemExecutor::new(mozart_registry::cache::Cache::files(&cache_config));
     let working_dir = resolve_working_dir(cli);
     run(&working_dir, args, console, repositories, &mut executor).await

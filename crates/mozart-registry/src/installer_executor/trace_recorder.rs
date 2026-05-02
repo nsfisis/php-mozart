@@ -58,10 +58,8 @@ impl InstallerExecutor for TraceRecorderExecutor {
     ) -> anyhow::Result<()> {
         match op {
             PackageOperation::Install { package } => {
-                self.trace.push(format!(
-                    "Installing {} ({})",
-                    package.name, package.version
-                ));
+                self.trace
+                    .push(format!("Installing {} ({})", package.name, package.version));
             }
             PackageOperation::Update {
                 from_version,

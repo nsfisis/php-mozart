@@ -39,8 +39,7 @@ impl Repository for PackagistRepository {
             // that distinction, so for now both surface as `Err` and the
             // caller decides whether the loop wants to continue (transitive
             // exploration) or abort (seed-time fetch failure).
-            let versions =
-                packagist::fetch_package_versions(query.name, &self.cache).await?;
+            let versions = packagist::fetch_package_versions(query.name, &self.cache).await?;
             // A successful fetch counts as "this repo authoritatively knows
             // the name", even if the version list is empty — mirrors
             // Composer's `ArrayRepository::loadPackages` which adds the
