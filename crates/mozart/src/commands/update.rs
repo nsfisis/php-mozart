@@ -267,6 +267,25 @@ pub fn compute_update_changes(
 // Helper: apply partial update filter
 // ─────────────────────────────────────────────────────────────────────────────
 
+/// Resolve a `LockedPackage`'s normalized version, falling back to the
+/// canonical 4-segment form derived from the pretty version when the lock
+/// omits `version_normalized`.
+///
+/// Lock files written by Composer always include the field, but hand-written
+/// fixtures (and `.test` LOCK sections) often only carry `version`. Returning
+/// the raw pretty version here would break downstream consumers that compare
+/// against `mozart_semver::Version::to_string()` output — most importantly
+/// `lockfile::LockFileGenerationRequest::inline_lookup`, which would then miss
+/// inline `type: package` entries on partial updates and trigger a Packagist
+/// fetch for a package that should never need one.
+fn locked_version_normalized(pkg: &lockfile::LockedPackage) -> String {
+    pkg.version_normalized.clone().unwrap_or_else(|| {
+        mozart_semver::Version::parse(&pkg.version)
+            .map(|v| v.to_string())
+            .unwrap_or_else(|_| pkg.version.clone())
+    })
+}
+
 /// For a partial update (when specific packages are named on the CLI), swap back
 /// the versions of packages that were NOT requested to be updated.
 ///
@@ -307,10 +326,7 @@ pub fn apply_partial_update(
                 && let Some(old_pkg) = old_pkg_map.get(&name_lower)
             {
                 pkg.version = old_pkg.version.clone();
-                pkg.version_normalized = old_pkg
-                    .version_normalized
-                    .clone()
-                    .unwrap_or_else(|| old_pkg.version.clone());
+                pkg.version_normalized = locked_version_normalized(old_pkg);
                 pkg.is_dev = false; // preserve existing; lock file doesn't store this flag directly
             }
             pkg
@@ -664,18 +680,15 @@ pub fn apply_patch_only(
         .map(|mut pkg| {
             let name_lower = pkg.name.to_lowercase();
             if let Some(old_pkg) = old_pkg_map.get(&name_lower) {
-                let old_norm = old_pkg
-                    .version_normalized
-                    .as_deref()
-                    .unwrap_or(&old_pkg.version);
+                let old_norm = locked_version_normalized(old_pkg);
                 let new_norm = &pkg.version_normalized;
 
                 // Compare major.minor: if they differ, pin to old version
-                let old_mm = major_minor(old_norm);
+                let old_mm = major_minor(&old_norm);
                 let new_mm = major_minor(new_norm);
                 if old_mm != new_mm {
                     pkg.version = old_pkg.version.clone();
-                    pkg.version_normalized = old_norm.to_string();
+                    pkg.version_normalized = old_norm;
                 }
             }
             pkg
