@@ -1,8 +1,10 @@
 use clap::Args;
 use mozart_core::console;
 use mozart_core::console_format;
-use mozart_registry::downloader;
 use mozart_registry::installed;
+use mozart_registry::installer_executor::{
+    ExecuteContext, FilesystemExecutor, InstallerExecutor, PackageOperation,
+};
 use mozart_registry::lockfile;
 use std::collections::{BTreeMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -236,27 +238,6 @@ pub fn locked_to_installed_entry(
     }
 }
 
-/// Clean up empty vendor namespace directories after removals.
-pub fn cleanup_empty_vendor_dirs(vendor_dir: &Path) -> anyhow::Result<()> {
-    if let Ok(entries) = std::fs::read_dir(vendor_dir) {
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.is_dir() {
-                let name = entry.file_name().to_string_lossy().to_string();
-                // Skip "composer" dir and "bin" dir
-                if name == "composer" || name == "bin" {
-                    continue;
-                }
-                // If the namespace dir is empty, remove it
-                if std::fs::read_dir(&path)?.next().is_none() {
-                    std::fs::remove_dir(&path)?;
-                }
-            }
-        }
-    }
-    Ok(())
-}
-
 /// Check whether a package name refers to a platform package.
 ///
 /// Platform packages are: names starting with "php", "ext-", or "lib-".
@@ -435,56 +416,6 @@ fn warn_platform_requirements(
     }
 }
 
-/// Create a download progress tracker for a package.
-fn make_progress(show: bool, pkg_name: &str, version: &str) -> downloader::DownloadProgress {
-    downloader::DownloadProgress::new(show, format!("{pkg_name} ({version})"))
-}
-
-/// Install a package from VCS source (git/svn/hg).
-fn install_from_source(
-    source_type: &str,
-    url: &str,
-    reference: &str,
-    vendor_dir: &Path,
-    package_name: &str,
-) -> anyhow::Result<()> {
-    let target = vendor_dir.join(package_name);
-    if target.exists() {
-        std::fs::remove_dir_all(&target)?;
-    }
-
-    match source_type {
-        "git" => {
-            let process = mozart_vcs::process::ProcessExecutor::new();
-            let git_util =
-                mozart_vcs::util::git::GitUtil::new(process, vendor_dir.join(".cache").join("git"));
-            let downloader = mozart_vcs::downloader::git::GitDownloader::new(git_util);
-            use mozart_vcs::downloader::VcsDownloader;
-            downloader.download(url, reference, &target)?;
-            downloader.install(url, reference, &target)?;
-        }
-        "svn" => {
-            let process = mozart_vcs::process::ProcessExecutor::new();
-            let svn_util = mozart_vcs::util::svn::SvnUtil::new(process);
-            let downloader = mozart_vcs::downloader::svn::SvnDownloader::new(svn_util);
-            use mozart_vcs::downloader::VcsDownloader;
-            downloader.install(url, reference, &target)?;
-        }
-        "hg" => {
-            let process = mozart_vcs::process::ProcessExecutor::new();
-            let hg_util = mozart_vcs::util::hg::HgUtil::new(process);
-            let downloader = mozart_vcs::downloader::hg::HgDownloader::new(hg_util);
-            use mozart_vcs::downloader::VcsDownloader;
-            downloader.install(url, reference, &target)?;
-        }
-        _ => {
-            anyhow::bail!("Unsupported source type for VCS install: {}", source_type);
-        }
-    }
-
-    Ok(())
-}
-
 pub async fn install_from_lock(
     lock: &lockfile::LockFile,
     working_dir: &Path,
@@ -575,8 +506,15 @@ pub async fn install_from_lock(
             console.info(&console_format!("  - Would remove <info>{}</info>", name));
         }
     } else {
+        let mut executor = FilesystemExecutor::new(files_cache);
+        let exec_ctx = ExecuteContext {
+            vendor_dir: vendor_dir.to_path_buf(),
+            no_progress: config.no_progress,
+            prefer_source: config.prefer_source,
+        };
+
         for (pkg, action) in &ops {
-            match action {
+            let op = match action {
                 Action::Skip => continue,
                 Action::Install => {
                     console.info(&console_format!(
@@ -584,6 +522,7 @@ pub async fn install_from_lock(
                         pkg.name,
                         pkg.version
                     ));
+                    PackageOperation::Install { package: pkg }
                 }
                 Action::Update => {
                     console.info(&console_format!(
@@ -591,69 +530,29 @@ pub async fn install_from_lock(
                         pkg.name,
                         pkg.version
                     ));
+                    // The previous-version string is unknown to install_from_lock
+                    // (it only sees the post-update lock). Pass the new version
+                    // as a placeholder; this path is unused by the recorder, and
+                    // Composer's `Upgrading` trace string is generated upstream
+                    // by the resolver, not by InstallationManager itself.
+                    PackageOperation::Update {
+                        from_version: &pkg.version,
+                        package: pkg,
+                    }
                 }
-            }
-
-            // Try source install if --prefer-source and source info is available
-            if config.prefer_source
-                && let Some(source) = &pkg.source
-            {
-                install_from_source(
-                    &source.source_type,
-                    &source.url,
-                    source.reference.as_deref().unwrap_or("HEAD"),
-                    vendor_dir,
-                    &pkg.name,
-                )?;
-                continue;
-            }
-
-            // A package with neither dist nor source has no install action.
-            // This covers Composer's `type: metapackage` (modeled explicitly
-            // as "no installer") and inline `type: package` definitions used
-            // in test fixtures that intentionally omit download metadata.
-            // Mozart records the operation and the installed.json entry but
-            // performs no filesystem work, mirroring Composer's
-            // MetapackageInstaller.
-            if pkg.dist.is_none() && pkg.source.is_none() {
-                continue;
-            }
-
-            let dist = pkg.dist.as_ref().ok_or_else(|| {
-                anyhow::anyhow!(
-                    "Package {} has no dist information. Use --prefer-source to install from VCS.",
-                    pkg.name,
-                )
-            })?;
-
-            let mut progress = make_progress(!config.no_progress, &pkg.name, &pkg.version);
-
-            downloader::install_package(
-                &dist.url,
-                &dist.dist_type,
-                dist.shasum.as_deref(),
-                vendor_dir,
-                &pkg.name,
-                Some(&mut progress),
-                &files_cache,
-            )
-            .await?;
-
-            progress.finish();
+            };
+            executor.install_package(op, &exec_ctx).await?;
         }
 
         // Handle removals
         for name in &removals {
             console.info(&console_format!("  - Removing <info>{}</info>", name));
-            let pkg_dir = vendor_dir.join(name);
-            if pkg_dir.exists() {
-                std::fs::remove_dir_all(&pkg_dir)?;
-            }
+            executor.uninstall_package(name, &exec_ctx)?;
         }
 
         // Step 7: Clean up empty vendor namespace directories
         if !removals.is_empty() {
-            cleanup_empty_vendor_dirs(vendor_dir)?;
+            executor.cleanup_after_uninstalls(&exec_ctx)?;
         }
 
         // Step 8: Write updated vendor/composer/installed.json (unless download_only)
@@ -1230,57 +1129,6 @@ mod tests {
         assert_eq!(loaded.packages.len(), 2);
         assert!(loaded.dev);
         assert_eq!(loaded.dev_package_names, vec!["phpunit/phpunit"]);
-    }
-
-    // -----------------------------------------------------------------------
-    // cleanup_empty_vendor_dirs tests
-    // -----------------------------------------------------------------------
-
-    #[test]
-    fn test_cleanup_empty_vendor_dirs_removes_empty() {
-        let dir = tempdir().unwrap();
-        let vendor_dir = dir.path().join("vendor");
-        std::fs::create_dir_all(&vendor_dir).unwrap();
-
-        // Create an empty namespace dir
-        let empty_ns = vendor_dir.join("old-vendor");
-        std::fs::create_dir_all(&empty_ns).unwrap();
-
-        // Create a non-empty namespace dir
-        let nonempty_ns = vendor_dir.join("psr");
-        std::fs::create_dir_all(nonempty_ns.join("log")).unwrap();
-
-        // Create the composer dir (should be skipped)
-        std::fs::create_dir_all(vendor_dir.join("composer")).unwrap();
-
-        cleanup_empty_vendor_dirs(&vendor_dir).unwrap();
-
-        assert!(!empty_ns.exists(), "empty namespace dir should be removed");
-        assert!(
-            vendor_dir.join("psr").exists(),
-            "non-empty namespace dir should remain"
-        );
-        assert!(
-            vendor_dir.join("composer").exists(),
-            "composer dir should be preserved"
-        );
-    }
-
-    #[test]
-    fn test_cleanup_empty_vendor_dirs_skips_bin() {
-        let dir = tempdir().unwrap();
-        let vendor_dir = dir.path().join("vendor");
-        std::fs::create_dir_all(&vendor_dir).unwrap();
-
-        let bin_dir = vendor_dir.join("bin");
-        std::fs::create_dir_all(&bin_dir).unwrap();
-
-        cleanup_empty_vendor_dirs(&vendor_dir).unwrap();
-
-        assert!(
-            bin_dir.exists(),
-            "bin dir should be preserved even if empty"
-        );
     }
 
     // -----------------------------------------------------------------------

@@ -20,6 +20,7 @@ mozart-test-harness = { path = "crates/mozart-test-harness" }
 mozart-vcs = { path = "crates/mozart-vcs" }
 anyhow = "1.0.102"
 assert_cmd = "2.1.2"
+async-trait = "0.1.83"
 base64 = "0.22.1"
 bzip2 = "0.5.2"
 clap = { version = "4.5.60", features = ["derive"] }
