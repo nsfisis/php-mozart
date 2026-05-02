@@ -182,6 +182,7 @@ pub fn vcs_to_packagist_version(vpkg: &VcsPackageVersion) -> PackagistVersion {
         time: vpkg.time.clone(),
         extra: vpkg.composer_json.get("extra").cloned(),
         notification_url: None,
+        default_branch: vpkg.is_default_branch,
     }
 }
 

@@ -669,11 +669,49 @@ fn split_and(s: &str) -> Vec<String> {
     parts
 }
 
+/// Strip `#ref` suffix from `dev-...#hex` / `....x-dev#hex` constraint
+/// strings. Mirrors Composer's
+/// `'{^(dev-[^,\s@]+?|[^,\s@]+?\.x-dev)#.+$}i'` regex strip in
+/// `VersionParser::parseConstraint`. Returns a `Cow` so callers that pass
+/// constraints without `#` see no allocation.
+fn strip_constraint_ref(s: &str) -> std::borrow::Cow<'_, str> {
+    let lower = s.to_lowercase();
+    let Some(hash_pos) = s.find('#') else {
+        return std::borrow::Cow::Borrowed(s);
+    };
+    let head = &lower[..hash_pos];
+    let rest = &s[hash_pos + 1..];
+    if rest.is_empty() {
+        return std::borrow::Cow::Borrowed(s);
+    }
+    // Accept `dev-foo` or `1.2.x-dev` style prefixes only, mirroring the
+    // Composer regex. Anything else (e.g. URLs, comments) is left alone.
+    let head_no_space = !head
+        .chars()
+        .any(|c: char| c.is_whitespace() || c == ',' || c == '@');
+    if !head_no_space {
+        return std::borrow::Cow::Borrowed(s);
+    }
+    let matches = head.starts_with("dev-") || head.ends_with(".x-dev");
+    if matches {
+        std::borrow::Cow::Owned(s[..hash_pos].to_string())
+    } else {
+        std::borrow::Cow::Borrowed(s)
+    }
+}
+
 /// Parse a single constraint part.
 fn parse_single(s: &str) -> Result<VersionConstraint, String> {
     if s == "*" || s.is_empty() {
         return Ok(VersionConstraint::Single(Constraint::Any));
     }
+
+    // Strip `#ref` suffixes from `dev-...#hex` / `....x-dev#hex` constraints —
+    // they pin a source reference at the root level (handled by the
+    // installer) and are not part of the version match. Mirrors Composer's
+    // `VersionParser::parseConstraint` `'{^(dev-[^,\s@]+?|[^,\s@]+?\.x-dev)#.+$}i'` strip.
+    let s = strip_constraint_ref(s);
+    let s = s.as_ref();
 
     // Caret: ^1.2.3
     if let Some(rest) = s.strip_prefix('^') {

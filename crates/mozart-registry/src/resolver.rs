@@ -52,6 +52,61 @@ pub(crate) fn extract_stability_suffix(constraint: &str) -> (String, Option<Stab
     (trimmed.to_string(), None)
 }
 
+/// Mirror Composer's `VersionParser::parseStability` for a single-atom
+/// constraint string (no `@flag` suffix). Returns `Some(stability)` for
+/// recognised non-stable constraints (`dev-foo`, `1.0.x-dev`, `1.0.0-beta1`,
+/// …), `None` for stable or unrecognised forms (in which case
+/// `minimum_stability` already applies).
+///
+/// Composer first strips a trailing `#hash` (handled here), then checks
+/// `dev-` prefix / `-dev` suffix / a `(stab)?\d*` modifier. We follow the
+/// same shape — the regex variant is overkill for inferring a flag.
+pub(crate) fn infer_constraint_stability(constraint: &str) -> Option<Stability> {
+    let s = constraint.trim();
+    // Strip `#ref` (matches Composer's `parseStability` line 54).
+    let s = match s.find('#') {
+        Some(p) => &s[..p],
+        None => s,
+    };
+    // Reject multi-atom constraints — extractStabilityFlags inspects each
+    // sub-constraint individually but the most common single-atom case is
+    // all we need for `dev-foo` / `1.0.x-dev` style root requires.
+    if s.contains([' ', ',']) || s.contains("||") {
+        return None;
+    }
+    // Strip a leading comparison operator (`>=1.0-beta` → `1.0-beta`).
+    let s = s
+        .strip_prefix(">=")
+        .or_else(|| s.strip_prefix("<="))
+        .or_else(|| s.strip_prefix("!="))
+        .or_else(|| s.strip_prefix("=="))
+        .or_else(|| s.strip_prefix('>'))
+        .or_else(|| s.strip_prefix('<'))
+        .or_else(|| s.strip_prefix('='))
+        .or_else(|| s.strip_prefix('^'))
+        .or_else(|| s.strip_prefix('~'))
+        .unwrap_or(s);
+    let lower = s.to_lowercase();
+    if lower.starts_with("dev-") || lower.ends_with("-dev") {
+        return Some(Stability::Dev);
+    }
+    // Match `<modifier><digits?>` at the end after the last `-`/`@`.
+    // Composer uses `{(stable|RC|beta|alpha|dev)([.-]?\d+)?(?:\+.*)?$}`.
+    let tail = lower
+        .rsplit_once('-')
+        .or_else(|| lower.rsplit_once('@'))
+        .map(|(_, t)| t)
+        .unwrap_or(&lower);
+    let tail_word: String = tail.chars().take_while(|c| c.is_alphabetic()).collect();
+    match tail_word.as_str() {
+        "alpha" | "a" => Some(Stability::Alpha),
+        "beta" | "b" => Some(Stability::Beta),
+        "rc" => Some(Stability::RC),
+        "patch" | "pl" | "p" | "stable" => Some(Stability::Stable),
+        _ => None,
+    }
+}
+
 /// Determine the `Stability` of a `Version` from its pre_release string.
 pub(crate) fn version_stability(v: &Version) -> Stability {
     match &v.pre_release {
@@ -117,6 +172,25 @@ fn parse_branch_alias_target(alias_target: &str) -> Option<Version> {
         is_dev_branch: false,
         dev_branch_name: None,
     })
+}
+
+/// Mirror Composer's `VersionParser::parseNumericAliasPrefix`: returns true
+/// when the input is a numeric branch like `1.2-dev` / `1.2.3-dev` /
+/// `1.2.x-dev` (i.e. the prefix is suitable for version comparison).
+/// Non-numeric branches like `dev-main` / `dev-feature/x` return false.
+fn has_numeric_alias_prefix(branch: &str) -> bool {
+    let lower = branch.trim().to_lowercase();
+    let lower = lower.strip_prefix('v').unwrap_or(&lower);
+    let Some(base) = lower.strip_suffix("-dev") else {
+        return false;
+    };
+    let base = base.strip_suffix(".x").unwrap_or(base);
+    if base.is_empty() {
+        return false;
+    }
+    // Allow only digit segments separated by `.`.
+    base.split('.')
+        .all(|seg| !seg.is_empty() && seg.chars().all(|c| c.is_ascii_digit()))
 }
 
 /// Mirror Composer's `VersionParser::normalizeBranch` for branch-alias
@@ -398,6 +472,7 @@ fn packagist_to_pool_inputs(
             results.push(make_input(&pv.version, &pv.version_normalized, None));
 
             let aliases = pv.branch_aliases();
+            let mut emitted_explicit_alias = false;
             for (branch, alias_target) in &aliases {
                 if branch.to_lowercase() != pv.version.to_lowercase() {
                     continue;
@@ -413,6 +488,37 @@ fn packagist_to_pool_inputs(
                     &alias_normalized,
                     Some(pv.version_normalized.clone()),
                 ));
+                emitted_explicit_alias = true;
+            }
+
+            // Mirror Composer's `ArrayLoader::getBranchAlias`: when a
+            // `dev-` package carries `default-branch: true` and the version
+            // has no numeric prefix (i.e. it isn't already a `1.0.x-dev` form
+            // that would be its own alias), synthesize the `9999999-dev`
+            // alias so root constraints like `dev-main` pick up a default
+            // branch surfaced as `9999999-dev` in the lock + trace output.
+            //
+            // `getBranchAlias` returns the *first* matching branch-alias when
+            // one exists — i.e. an explicit `branch-alias` entry takes
+            // precedence over the `default-branch` synthetic one. Skip the
+            // synthetic alias when an explicit one has already been emitted
+            // for this version.
+            if pv.default_branch
+                && !emitted_explicit_alias
+                && !has_numeric_alias_prefix(&pv.version)
+            {
+                let default_alias = "9999999-dev";
+                let default_normalized = "9999999.9999999.9999999.9999999-dev";
+                let already_present = results
+                    .iter()
+                    .any(|r| r.version == default_normalized && r.name == package_name);
+                if !already_present {
+                    results.push(make_input(
+                        default_alias,
+                        default_normalized,
+                        Some(pv.version_normalized.clone()),
+                    ));
+                }
             }
         }
     }
@@ -499,6 +605,7 @@ pub async fn resolve(request: &ResolveRequest) -> Result<Vec<ResolvedPackage>, R
     // request's caller-supplied flags (which today are usually empty).
     let mut stability_flags: HashMap<String, Stability> = request.stability_flags.clone();
 
+    let minimum_stability = request.minimum_stability;
     let mut insert_root_require = |name: &str, constraint: &str| {
         let (clean, stability) = extract_stability_suffix(constraint);
         let lower = name.to_lowercase();
@@ -506,6 +613,19 @@ pub async fn resolve(request: &ResolveRequest) -> Result<Vec<ResolvedPackage>, R
             let entry = stability_flags.entry(lower.clone()).or_insert(s);
             if (*entry as u8) > (s as u8) {
                 *entry = s;
+            }
+        } else if let Some(inferred) = infer_constraint_stability(&clean) {
+            // Mirrors `RootPackageLoader::extractStabilityFlags` second loop:
+            // when a single-atom constraint like `dev-main` or `1.0.x-dev`
+            // implies a non-stable stability and no explicit `@flag` was
+            // given, raise that package's stability ceiling so the pool
+            // accepts it. Only applied when the inferred level is *more*
+            // permissive than `minimum_stability` and any existing flag.
+            if (inferred as u8) > (minimum_stability as u8) {
+                let entry = stability_flags.entry(lower.clone()).or_insert(inferred);
+                if (*entry as u8) < (inferred as u8) {
+                    *entry = inferred;
+                }
             }
         }
         root_requires.insert(lower, Some(clean));

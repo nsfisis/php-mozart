@@ -407,6 +407,114 @@ fn packagist_dist_to_locked(pd: &PackagistDist) -> LockedDist {
     }
 }
 
+/// Mirror Composer's `RootPackageLoader::extractReferences`: scan
+/// `require`/`require-dev` for `dev-foo#hex` style constraints, returning a
+/// lowercase package name → reference map. Constraints whose stability isn't
+/// `dev` after stripping the reference are left out (matching the
+/// `'dev' === VersionParser::parseStability(...)` guard in PHP).
+fn extract_root_references(
+    require: &BTreeMap<String, String>,
+    require_dev: &BTreeMap<String, String>,
+) -> BTreeMap<String, String> {
+    let mut out = BTreeMap::new();
+    for (name, raw_constraint) in require.iter().chain(require_dev.iter()) {
+        if let Some(reference) = parse_inline_reference(raw_constraint) {
+            out.insert(name.to_lowercase(), reference);
+        }
+    }
+    out
+}
+
+/// Pull the `#hex` suffix out of a single-atom dev constraint. Returns
+/// `None` for non-`dev-*` / non-`*-dev` constraints, matching Composer's
+/// `'{^[^,\s@]+?#([a-f0-9]+)$}'` + `parseStability == 'dev'` guard.
+fn parse_inline_reference(constraint: &str) -> Option<String> {
+    // Strip `... as alias` first, mirroring extractReferences's
+    // `'{^([^,\s@]+) as .+$}'` replacement.
+    let core = match constraint.split(" as ").next() {
+        Some(c) => c.trim(),
+        None => constraint.trim(),
+    };
+    let (head, hash) = core.rsplit_once('#')?;
+    if hash.is_empty() || !hash.chars().all(|c| c.is_ascii_hexdigit()) {
+        return None;
+    }
+    if head.contains([' ', '\t', ',', '@']) {
+        return None;
+    }
+    let lower = head.to_lowercase();
+    if !(lower.starts_with("dev-") || lower.ends_with("-dev")) {
+        return None;
+    }
+    Some(hash.to_string())
+}
+
+/// Mirror `Composer\Package\Package::setSourceDistReferences`: rewrite both
+/// source and dist references to the supplied value, and rewrite the
+/// reference inside any auto-generated GitHub/GitLab/Bitbucket dist URL when
+/// present. The dist reference is only written if there was already one
+/// (Composer leaves `dist.reference == null` packages alone).
+fn apply_reference_override(pkg: &mut LockedPackage, reference: &str) {
+    if let Some(source) = pkg.source.as_mut() {
+        source.reference = Some(reference.to_string());
+    }
+    if let Some(dist) = pkg.dist.as_mut() {
+        let url_carries_known_host = matches_dist_url_with_known_host(Some(&dist.url));
+        if dist.reference.is_some() || url_carries_known_host {
+            dist.reference = Some(reference.to_string());
+        }
+        if url_carries_known_host {
+            dist.url = rewrite_known_dist_url_reference(&dist.url, reference);
+        }
+    }
+}
+
+/// Match the bitbucket / github / gitlab dist-URL prefixes Composer
+/// rewrites. Mirrors the regex
+/// `{^https?://(?:(?:www\.)?bitbucket\.org|(api\.)?github\.com|(?:www\.)?gitlab\.com)/}i`.
+fn matches_dist_url_with_known_host(url: Option<&str>) -> bool {
+    let Some(url) = url else { return false };
+    let lower = url.to_lowercase();
+    let stripped = lower
+        .strip_prefix("http://")
+        .or_else(|| lower.strip_prefix("https://"))
+        .unwrap_or(&lower);
+    let stripped = stripped.strip_prefix("www.").unwrap_or(stripped);
+    let stripped = stripped.strip_prefix("api.").unwrap_or(stripped);
+    stripped.starts_with("bitbucket.org/")
+        || stripped.starts_with("github.com/")
+        || stripped.starts_with("gitlab.com/")
+}
+
+/// Substitute any 40-char hex segment surrounded by `/` or `sha=` (the
+/// archive shape produced by GitHub/GitLab/Bitbucket) with the new
+/// reference. Matches Composer's
+/// `'{(?<=/|sha=)[a-f0-9]{40}(?=/|$)}i'` rewrite.
+fn rewrite_known_dist_url_reference(url: &str, reference: &str) -> String {
+    let bytes = url.as_bytes();
+    let mut out = String::with_capacity(url.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        let start = i;
+        let preceded_by_slash = i > 0 && bytes[i - 1] == b'/';
+        let preceded_by_sha = i >= 4 && &bytes[i - 4..i] == b"sha=";
+        if (preceded_by_slash || preceded_by_sha) && i + 40 <= bytes.len() {
+            let candidate = &url[i..i + 40];
+            if candidate.chars().all(|c| c.is_ascii_hexdigit()) {
+                let after = bytes.get(i + 40).copied();
+                if after == Some(b'/') || after.is_none() {
+                    out.push_str(reference);
+                    i += 40;
+                    continue;
+                }
+            }
+        }
+        out.push(url[start..].chars().next().unwrap());
+        i += url[start..].chars().next().unwrap().len_utf8();
+    }
+    out
+}
+
 /// Convert a `PackagistVersion` to a `LockedPackage`.
 fn packagist_version_to_locked_package(name: &str, pv: &PackagistVersion) -> LockedPackage {
     let mut extra_fields: BTreeMap<String, serde_json::Value> = BTreeMap::new();
@@ -600,12 +708,26 @@ pub async fn generate_lock_file(request: &LockFileGenerationRequest) -> anyhow::
         &package_metadata,
     );
 
-    // 3. Build LockedPackage lists
+    // 3. Build LockedPackage lists.
+    //
+    // Apply root-level `#hex` reference overrides extracted from
+    // `require`/`require-dev`. Mirrors Composer's
+    // `RootPackageLoader::extractReferences` + `PoolBuilder::loadPackage`'s
+    // `setSourceDistReferences` call: when the user pinned a dev package via
+    // `dev-main#abcd123`, the resolved package's source/dist must show that
+    // reference in the lock + trace, not whatever the inline metadata said.
+    let root_references = extract_root_references(
+        &request.composer_json.require,
+        &request.composer_json.require_dev,
+    );
     let mut packages: Vec<LockedPackage> = Vec::new();
     let mut packages_dev: Vec<LockedPackage> = Vec::new();
     for pkg in &real_resolved {
         let pv = &package_metadata[&pkg.name];
-        let locked = packagist_version_to_locked_package(&pkg.name, pv);
+        let mut locked = packagist_version_to_locked_package(&pkg.name, pv);
+        if let Some(reference) = root_references.get(&pkg.name.to_lowercase()) {
+            apply_reference_override(&mut locked, reference);
+        }
         if dev_only.contains(&pkg.name) {
             packages_dev.push(locked);
         } else {
@@ -869,6 +991,7 @@ mod tests {
             time: Some("2024-01-15T10:00:00+00:00".to_string()),
             extra: Some(serde_json::json!({"branch-alias": {"dev-main": "1.0.x-dev"}})),
             notification_url: Some("https://packagist.org/downloads/".to_string()),
+            default_branch: false,
         }
     }
 
@@ -943,6 +1066,7 @@ mod tests {
             time: None,
             extra: None,
             notification_url: None,
+            default_branch: false,
         };
 
         let locked = packagist_version_to_locked_package("vendor/pkg", &pv);

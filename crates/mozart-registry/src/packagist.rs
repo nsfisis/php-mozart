@@ -127,6 +127,14 @@ pub struct PackagistVersion {
         deserialize_with = "deserialize_unset_as_none"
     )]
     pub notification_url: Option<String>,
+
+    /// `default-branch: true` marks the repository's default branch (e.g. the
+    /// branch returned by `git symbolic-ref HEAD`). For packages without a
+    /// numeric version prefix this triggers the synthetic `9999999-dev` alias
+    /// generation in `ArrayLoader::getBranchAlias` — see the alias loop in
+    /// `crate::resolver::packagist_to_pool_inputs`.
+    #[serde(rename = "default-branch", default)]
+    pub default_branch: bool,
 }
 
 impl PackagistVersion {

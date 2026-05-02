@@ -198,6 +198,7 @@ mod tests {
             time: None,
             extra: None,
             notification_url: None,
+            default_branch: false,
         }
     }
 

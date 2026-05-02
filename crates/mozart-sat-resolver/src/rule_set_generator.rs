@@ -105,6 +105,24 @@ impl<'a> RuleSetGenerator<'a> {
             }
         }
 
+        // Mirror Composer's `RuleSetGenerator::addRulesForRootAliases`:
+        // ensure every alias whose target was already added gets its own
+        // alias↔target rules, even when the alias itself didn't appear in
+        // any root require's `whatProvides` (e.g. the synthetic
+        // `9999999-dev` alias from a `default-branch: true` package, which
+        // only matches a literal `9999999-dev` constraint).
+        let alias_pairs: Vec<(PackageId, PackageId)> = self
+            .pool
+            .packages()
+            .iter()
+            .filter_map(|p| p.is_alias_of.map(|t| (p.id, t)))
+            .collect();
+        for (alias_id, target_id) in alias_pairs {
+            if self.added_map.contains(&target_id) && !self.added_map.contains(&alias_id) {
+                self.add_rules_for_package(alias_id);
+            }
+        }
+
         // Add conflict rules
         self.add_conflict_rules();
 

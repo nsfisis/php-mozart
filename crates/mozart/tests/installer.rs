@@ -244,7 +244,7 @@ installer_fixture!(
 );
 installer_fixture!(conflict_with_alias_in_lock_does_prevents_install, ignore);
 installer_fixture!(conflict_with_alias_prevents_update, ignore);
-installer_fixture!(conflict_with_alias_prevents_update_if_not_required, ignore);
+installer_fixture!(conflict_with_alias_prevents_update_if_not_required);
 installer_fixture!(conflict_with_all_dependencies_option_dont_recommend_to_use_it);
 installer_fixture!(deduplicate_solver_problems);
 installer_fixture!(disjunctive_multi_constraints);
@@ -276,7 +276,7 @@ installer_fixture!(install_missing_alias_from_lock, ignore);
 installer_fixture!(install_overridden_platform_packages, ignore);
 installer_fixture!(install_package_and_its_provider_skips_original);
 installer_fixture!(install_prefers_repos_over_package_versions, ignore);
-installer_fixture!(install_reference, ignore);
+installer_fixture!(install_reference);
 installer_fixture!(install_security_advisory_matching_dependency);
 installer_fixture!(install_self_from_root);
 installer_fixture!(install_simple);
@@ -361,7 +361,7 @@ installer_fixture!(suggest_replaced);
 installer_fixture!(suggest_uninstalled);
 installer_fixture!(unbounded_conflict_does_not_match_default_branch_with_branch_alias);
 installer_fixture!(unbounded_conflict_does_not_match_default_branch_with_numeric_branch);
-installer_fixture!(unbounded_conflict_matches_default_branch, ignore);
+installer_fixture!(unbounded_conflict_matches_default_branch);
 installer_fixture!(
     update_abandoned_package_required_but_blocked_via_audit_config,
     ignore
