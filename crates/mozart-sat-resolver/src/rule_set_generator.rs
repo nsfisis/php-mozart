@@ -125,14 +125,23 @@ impl<'a> RuleSetGenerator<'a> {
             self.added_map.insert(current_id);
 
             let pkg = self.pool.package_by_id(current_id);
-            let pkg_name = pkg.name.clone();
+            let conflict_names: Vec<String> =
+                pkg.conflict_names().into_iter().map(String::from).collect();
             let requires = pkg.requires.clone();
 
-            // Index by name (for same-name conflict rules later)
-            self.added_packages_by_name
-                .entry(pkg_name)
-                .or_default()
-                .push(current_id);
+            // Index by every name this package fully claims (own name +
+            // `replace` targets). Same-name conflict rules (below) then
+            // prevent two packages from coexisting under the same logical
+            // identity. Mirrors `BasePackage::getNames(false)` indexing in
+            // Composer's RuleSetGenerator::addRulesForPackage — `provide`
+            // targets are intentionally omitted so that providers can
+            // coexist with the package they provide.
+            for name in conflict_names {
+                self.added_packages_by_name
+                    .entry(name)
+                    .or_default()
+                    .push(current_id);
+            }
 
             // Process each requirement
             for link in requires {

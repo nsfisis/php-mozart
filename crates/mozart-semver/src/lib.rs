@@ -384,6 +384,20 @@ impl VersionConstraint {
         }
     }
 
+    /// Whether the two constraints share at least one satisfying version.
+    ///
+    /// Mirrors Composer's `MultiConstraint::matches` which is used to decide
+    /// whether a `provide` / `replace` link can satisfy a `require`. OR
+    /// constraints are flattened, then each AND/Single branch is reduced to a
+    /// single (low, high, excluded) interval; the two intervals are intersected
+    /// arithmetically.
+    pub fn intersects(&self, other: &VersionConstraint) -> bool {
+        let lhs = flatten_or(self);
+        let rhs = flatten_or(other);
+        lhs.iter()
+            .any(|a| rhs.iter().any(|b| ranges_intersect(a, b)))
+    }
+
     /// Parse a constraint string like `^1.2`, `>=1.0 <2.0`, `^1.0 || ^2.0`.
     pub fn parse(input: &str) -> Result<VersionConstraint, String> {
         let input = input.trim();
@@ -404,6 +418,147 @@ impl VersionConstraint {
 
         parse_and_group(input)
     }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Constraint intersection helpers
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// A reduced range form of a constraint branch: a half-open interval with an
+/// optional excluded version (from `!=`). `lower`/`upper` are `(version,
+/// inclusive)`; `None` means unbounded on that side.
+#[derive(Debug, Clone)]
+struct Range {
+    lower: Option<(Version, bool)>,
+    upper: Option<(Version, bool)>,
+    excluded: Vec<Version>,
+}
+
+impl Range {
+    fn unbounded() -> Self {
+        Range {
+            lower: None,
+            upper: None,
+            excluded: Vec::new(),
+        }
+    }
+}
+
+/// Flatten an OR tree into a vector of single-branch ranges. Returns one entry
+/// per disjunct; AND trees are merged into a single Range.
+fn flatten_or(c: &VersionConstraint) -> Vec<Range> {
+    match c {
+        VersionConstraint::Or(cs) => cs.iter().flat_map(flatten_or).collect(),
+        _ => match constraint_to_range(c) {
+            Some(r) => vec![r],
+            None => vec![Range::unbounded()],
+        },
+    }
+}
+
+/// Reduce a non-OR constraint to a single Range. Returns `None` if the
+/// constraint has nested OR (caller should `flatten_or` first).
+fn constraint_to_range(c: &VersionConstraint) -> Option<Range> {
+    match c {
+        VersionConstraint::Single(atom) => Some(atom_to_range(atom)),
+        VersionConstraint::And(cs) => {
+            let mut acc = Range::unbounded();
+            for sub in cs {
+                let r = constraint_to_range(sub)?;
+                merge_into(&mut acc, &r);
+            }
+            Some(acc)
+        }
+        VersionConstraint::Or(_) => None,
+    }
+}
+
+fn atom_to_range(c: &Constraint) -> Range {
+    match c {
+        Constraint::Any => Range::unbounded(),
+        Constraint::Exact(v) => Range {
+            lower: Some((v.clone(), true)),
+            upper: Some((v.clone(), true)),
+            excluded: Vec::new(),
+        },
+        Constraint::GreaterThan(v) => Range {
+            lower: Some((v.clone(), false)),
+            upper: None,
+            excluded: Vec::new(),
+        },
+        Constraint::GreaterThanOrEqual(v) => Range {
+            lower: Some((v.clone(), true)),
+            upper: None,
+            excluded: Vec::new(),
+        },
+        Constraint::LessThan(v) => Range {
+            lower: None,
+            upper: Some((v.clone(), false)),
+            excluded: Vec::new(),
+        },
+        Constraint::LessThanOrEqual(v) => Range {
+            lower: None,
+            upper: Some((v.clone(), true)),
+            excluded: Vec::new(),
+        },
+        Constraint::NotEqual(v) => Range {
+            lower: None,
+            upper: None,
+            excluded: vec![v.clone()],
+        },
+    }
+}
+
+/// Tighten `acc` by intersecting with `other`. Lower bound becomes the higher
+/// of the two; upper bound becomes the lower; excluded versions accumulate.
+fn merge_into(acc: &mut Range, other: &Range) {
+    if let Some((ov, oi)) = &other.lower {
+        match &acc.lower {
+            None => acc.lower = Some((ov.clone(), *oi)),
+            Some((av, ai)) => {
+                if ov > av || (ov == av && !*oi && *ai) {
+                    acc.lower = Some((ov.clone(), *oi));
+                }
+            }
+        }
+    }
+    if let Some((ov, oi)) = &other.upper {
+        match &acc.upper {
+            None => acc.upper = Some((ov.clone(), *oi)),
+            Some((av, ai)) => {
+                if ov < av || (ov == av && !*oi && *ai) {
+                    acc.upper = Some((ov.clone(), *oi));
+                }
+            }
+        }
+    }
+    acc.excluded.extend(other.excluded.iter().cloned());
+}
+
+/// Whether two reduced ranges share at least one version.
+fn ranges_intersect(a: &Range, b: &Range) -> bool {
+    let mut combined = a.clone();
+    merge_into(&mut combined, b);
+
+    // Empty interval (lower > upper)
+    if let (Some((lo, li)), Some((hi, hi_inc))) = (&combined.lower, &combined.upper) {
+        if lo > hi {
+            return false;
+        }
+        if lo == hi && !(*li && *hi_inc) {
+            return false;
+        }
+        // Pinned to a single version that is excluded
+        if lo == hi && *li && *hi_inc && combined.excluded.iter().any(|e| e == lo) {
+            return false;
+        }
+    }
+
+    // Witness extraction is approximate: if no bounds, any version works.
+    // Excluded versions only invalidate when the interval has shrunk to a
+    // single excluded point (handled above) — for ranges with width, a
+    // satisfying neighbour always exists.
+    true
 }
 
 /// Split on `|` or `||` (pipe-OR). Composer accepts both forms.
@@ -2100,5 +2255,61 @@ mod tests {
         let a = Version::parse("20230101.0.0").unwrap();
         let b = Version::parse("20220101.0.0").unwrap();
         assert!(a > b);
+    }
+
+    #[test]
+    fn test_intersects_disjoint_exacts() {
+        // The replaced-packages cluster: a `replace: foo "1.0.0"` link is
+        // not a valid provider for a `require: foo "2.0.0"` request.
+        let a = VersionConstraint::parse("1.0.0").unwrap();
+        let b = VersionConstraint::parse("2.0.0").unwrap();
+        assert!(!a.intersects(&b));
+        assert!(!b.intersects(&a));
+    }
+
+    #[test]
+    fn test_intersects_overlapping_ranges() {
+        let a = VersionConstraint::parse("^1.0").unwrap();
+        let b = VersionConstraint::parse(">=1.5 <3.0").unwrap();
+        assert!(a.intersects(&b));
+    }
+
+    #[test]
+    fn test_intersects_disjoint_ranges() {
+        let a = VersionConstraint::parse("^1.0").unwrap();
+        let b = VersionConstraint::parse("^2.0").unwrap();
+        assert!(!a.intersects(&b));
+    }
+
+    #[test]
+    fn test_intersects_or_branch() {
+        // Either branch in an OR is enough to intersect.
+        let a = VersionConstraint::parse("1.0.0 || 2.0.0").unwrap();
+        let b = VersionConstraint::parse("2.0.0").unwrap();
+        assert!(a.intersects(&b));
+    }
+
+    #[test]
+    fn test_intersects_any() {
+        let a = VersionConstraint::parse("*").unwrap();
+        let b = VersionConstraint::parse("1.0.0").unwrap();
+        assert!(a.intersects(&b));
+        assert!(b.intersects(&a));
+    }
+
+    #[test]
+    fn test_intersects_touching_open_boundaries() {
+        // [1, 2) and (2, 3] do not share any version.
+        let a = VersionConstraint::parse(">=1.0 <2.0").unwrap();
+        let b = VersionConstraint::parse(">2.0 <=3.0").unwrap();
+        assert!(!a.intersects(&b));
+    }
+
+    #[test]
+    fn test_intersects_touching_closed_boundaries() {
+        // [1, 2] and [2, 3] share version 2.
+        let a = VersionConstraint::parse(">=1.0 <=2.0").unwrap();
+        let b = VersionConstraint::parse(">=2.0 <=3.0").unwrap();
+        assert!(a.intersects(&b));
     }
 }

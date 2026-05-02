@@ -113,10 +113,7 @@ installer_fixture!(
 installer_fixture!(circular_dependency_errors);
 installer_fixture!(conflict_against_provided_by_dep_package_works);
 installer_fixture!(conflict_against_provided_package_works);
-installer_fixture!(
-    conflict_against_replaced_by_dep_package_problem,
-    ignore = "mozart binary cannot yet run this fixture"
-);
+installer_fixture!(conflict_against_replaced_by_dep_package_problem);
 installer_fixture!(
     conflict_against_replaced_package_problem,
     ignore = "mozart binary cannot yet run this fixture"
@@ -254,10 +251,7 @@ installer_fixture!(
     ignore = "mozart binary cannot yet run this fixture"
 );
 installer_fixture!(provider_conflicts2);
-installer_fixture!(
-    provider_conflicts3,
-    ignore = "mozart binary cannot yet run this fixture"
-);
+installer_fixture!(provider_conflicts3);
 installer_fixture!(
     provider_dev_require_can_satisfy_require,
     ignore = "mozart binary cannot yet run this fixture"
@@ -287,10 +281,7 @@ installer_fixture!(
 installer_fixture!(replace_priorities);
 installer_fixture!(replace_range_require_single_version);
 installer_fixture!(replace_root_require);
-installer_fixture!(
-    replaced_packages_should_not_be_installed,
-    ignore = "mozart binary cannot yet run this fixture"
-);
+installer_fixture!(replaced_packages_should_not_be_installed);
 installer_fixture!(
     replaced_packages_should_not_be_installed_when_installing_from_lock,
     ignore = "mozart binary cannot yet run this fixture"

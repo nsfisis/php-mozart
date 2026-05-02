@@ -67,6 +67,19 @@ impl PoolPackage {
         }
         names
     }
+
+    /// Names that drive same-name conflict resolution — own name plus
+    /// `replace` targets. `provide` targets are excluded because two packages
+    /// providing different versions of the same virtual name may legitimately
+    /// coexist; `replace` declares the replacing package fully supplants the
+    /// replaced one. Mirrors Composer's `BasePackage::getNames(false)`.
+    pub fn conflict_names(&self) -> Vec<&str> {
+        let mut names = vec![self.name.as_str()];
+        for link in &self.replaces {
+            names.push(link.target.as_str());
+        }
+        names
+    }
 }
 
 impl fmt::Display for PoolPackage {
@@ -281,20 +294,13 @@ impl fmt::Display for Pool {
     }
 }
 
-/// Simple intersection check: does there exist a version that satisfies both constraints?
-/// For provides/replaces matching, we just check if a "=version" from one constraint
-/// can match the other. This is a simplified check.
-fn constraints_intersect(_a: &VersionConstraint, _b: &VersionConstraint) -> bool {
-    // For a basic approximation: if b is a single exact constraint, check if a matches it
-    // and vice versa. For complex cases, we assume they intersect.
-    // This mirrors Composer's behavior where provide/replace constraints are matched
-    // against the requirement constraint.
-    //
-    // In Composer, this is done via `$constraint->matches($link->getConstraint())`
-    // which checks if there exists a version satisfying both.
-    // For now, we'll do a simple approach: always return true (provider matches).
-    // The RuleSetGenerator will create proper rules anyway.
-    true
+/// Whether the request constraint and the provide/replace link constraint
+/// share at least one satisfying version. Mirrors Composer's
+/// `ConstraintInterface::matches` semantics: a provide/replace link only
+/// makes the candidate a viable provider for those versions of the target
+/// that fall in the link's constraint.
+fn constraints_intersect(a: &VersionConstraint, b: &VersionConstraint) -> bool {
+    a.intersects(b)
 }
 
 #[cfg(test)]
