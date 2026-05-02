@@ -422,10 +422,8 @@ pub async fn install_from_lock(
     vendor_dir: &Path,
     config: &InstallConfig,
     console: &mozart_core::console::Console,
+    executor: &mut dyn InstallerExecutor,
 ) -> anyhow::Result<()> {
-    let cache_config = mozart_registry::cache::build_cache_config(config.no_cache);
-    let files_cache = mozart_registry::cache::Cache::files(&cache_config);
-
     let dev_mode = config.dev_mode;
 
     // Step 1: Determine which packages to install
@@ -506,7 +504,6 @@ pub async fn install_from_lock(
             console.info(&console_format!("  - Would remove <info>{}</info>", name));
         }
     } else {
-        let mut executor = FilesystemExecutor::new(files_cache);
         let exec_ctx = ExecuteContext {
             vendor_dir: vendor_dir.to_path_buf(),
             no_progress: config.no_progress,
@@ -761,6 +758,9 @@ pub async fn execute(
     let vendor_dir = working_dir.join("vendor");
 
     // Step 7: Delegate to shared install_from_lock()
+    let cache_config = mozart_registry::cache::build_cache_config(cli.no_cache);
+    let files_cache = mozart_registry::cache::Cache::files(&cache_config);
+    let mut executor = FilesystemExecutor::new(files_cache);
     install_from_lock(
         &lock,
         &working_dir,
@@ -781,6 +781,7 @@ pub async fn execute(
             no_cache: cli.no_cache,
         },
         console,
+        &mut executor,
     )
     .await
 }

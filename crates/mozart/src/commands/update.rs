@@ -863,9 +863,11 @@ pub async fn execute(
         platform: PlatformConfig::new(),
         ignore_platform_reqs: args.ignore_platform_reqs,
         ignore_platform_req_list: args.ignore_platform_req.clone(),
-        repo_cache: repo_cache.clone(),
+        repositories: std::sync::Arc::new(
+            mozart_registry::repository::RepositorySet::with_packagist(repo_cache.clone()),
+        ),
         temporary_constraints,
-        repositories: composer_json.repositories.clone(),
+        raw_repositories: composer_json.repositories.clone(),
     };
 
     // Step 6: Print header and run resolver
@@ -1021,7 +1023,9 @@ pub async fn execute(
         composer_json_content: composer_json_content.clone(),
         composer_json: composer_json.clone(),
         include_dev: dev_mode,
-        repo_cache: repo_cache.clone(),
+        repositories: std::sync::Arc::new(
+            mozart_registry::repository::RepositorySet::with_packagist(repo_cache.clone()),
+        ),
     })
     .await?;
 
@@ -1218,6 +1222,10 @@ pub async fn execute(
                 .map(|s| s.eq_ignore_ascii_case("source"))
                 .unwrap_or(false);
 
+        let cache_config = mozart_registry::cache::build_cache_config(cli.no_cache);
+        let files_cache = mozart_registry::cache::Cache::files(&cache_config);
+        let mut executor =
+            mozart_registry::installer_executor::FilesystemExecutor::new(files_cache);
         super::install::install_from_lock(
             &new_lock,
             &working_dir,
@@ -1238,6 +1246,7 @@ pub async fn execute(
                 no_cache: cli.no_cache,
             },
             console,
+            &mut executor,
         )
         .await?;
     }
@@ -1960,12 +1969,16 @@ mod tests {
             platform: PlatformConfig::new(),
             ignore_platform_reqs: false,
             ignore_platform_req_list: vec![],
-            repo_cache: mozart_registry::cache::Cache::new(
-                std::env::temp_dir().join("mozart-test-cache"),
-                false,
+            repositories: std::sync::Arc::new(
+                mozart_registry::repository::RepositorySet::with_packagist(
+                    mozart_registry::cache::Cache::new(
+                        std::env::temp_dir().join("mozart-test-cache"),
+                        false,
+                    ),
+                ),
             ),
             temporary_constraints: HashMap::new(),
-            repositories: vec![],
+            raw_repositories: vec![],
         };
 
         let resolved = resolve(&request).await.expect("Resolution should succeed");
@@ -1977,9 +1990,13 @@ mod tests {
             composer_json_content: composer_json_content.to_string(),
             composer_json,
             include_dev: false,
-            repo_cache: mozart_registry::cache::Cache::new(
-                std::env::temp_dir().join("mozart-test-cache"),
-                false,
+            repositories: std::sync::Arc::new(
+                mozart_registry::repository::RepositorySet::with_packagist(
+                    mozart_registry::cache::Cache::new(
+                        std::env::temp_dir().join("mozart-test-cache"),
+                        false,
+                    ),
+                ),
             ),
         })
         .await

@@ -81,6 +81,22 @@ impl RepositorySet {
         Self { repos }
     }
 
+    /// Production default: a single [`packagist_repo::PackagistRepository`]
+    /// backed by the given on-disk cache. Mirrors what Composer does when
+    /// no `'packagist' => false` entry appears in the merged config.
+    pub fn with_packagist(repo_cache: crate::cache::Cache) -> Self {
+        Self::new(vec![Box::new(packagist_repo::PackagistRepository::new(
+            repo_cache,
+        ))])
+    }
+
+    /// An empty set. Mirrors Composer's `'packagist' => false` test config:
+    /// resolution proceeds entirely from packages already in the pool
+    /// (eager VCS scan, inline `type: package` repos, the locked repository).
+    pub fn empty() -> Self {
+        Self::new(Vec::new())
+    }
+
     pub fn is_empty(&self) -> bool {
         self.repos.is_empty()
     }

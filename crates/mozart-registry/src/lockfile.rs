@@ -1,25 +1,11 @@
-use crate::cache::Cache;
 use crate::packagist::{PackagistDist, PackagistSource, PackagistVersion};
-use crate::repository::packagist_repo::PackagistRepository;
-use crate::repository::{Repository, RepositorySet};
+use crate::repository::RepositorySet;
 use crate::resolver::ResolvedPackage;
 use mozart_core::package::{RawPackageData, to_json_pretty};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::fs;
 use std::path::Path;
-
-/// Build a [`RepositorySet`] containing only [`PackagistRepository`].
-///
-/// Used by `generate_lock_file` to fetch full metadata for resolved packages
-/// not already covered by inline `type: package` repositories. Step B routes
-/// only Packagist queries through the trait; VCS/inline migration is a
-/// follow-up.
-fn build_packagist_repo_set(repo_cache: &Cache) -> RepositorySet {
-    let repos: Vec<Box<dyn Repository>> =
-        vec![Box::new(PackagistRepository::new(repo_cache.clone()))];
-    RepositorySet::new(repos)
-}
 
 fn default_stability() -> String {
     "stable".to_string()
@@ -364,8 +350,9 @@ pub struct LockFileGenerationRequest {
     pub composer_json: RawPackageData,
     /// Whether require-dev was included in resolution.
     pub include_dev: bool,
-    /// Repo cache for Packagist API calls made during generation.
-    pub repo_cache: Cache,
+    /// Repository set used to fetch full metadata for resolved packages
+    /// that aren't already covered by inline `type: package` repositories.
+    pub repositories: std::sync::Arc<RepositorySet>,
 }
 
 impl LockFileGenerationRequest {
@@ -535,7 +522,7 @@ pub async fn generate_lock_file(request: &LockFileGenerationRequest) -> anyhow::
     // through `RepositorySet`, which today contains only Packagist; future
     // steps will move VCS / inline through the same set.
     let mut package_metadata: HashMap<String, PackagistVersion> = HashMap::new();
-    let repo_set = build_packagist_repo_set(&request.repo_cache);
+    let repo_set = &request.repositories;
     for pkg in &request.resolved_packages {
         if let Some(inline) = request.inline_lookup(&pkg.name, &pkg.version_normalized) {
             package_metadata.insert(pkg.name.clone(), inline);
@@ -1092,7 +1079,9 @@ mod tests {
             composer_json_content: composer_json_content.clone(),
             composer_json,
             include_dev: true,
-            repo_cache: Cache::new(std::env::temp_dir().join("mozart-test-cache"), false),
+            repositories: std::sync::Arc::new(RepositorySet::with_packagist(
+                crate::cache::Cache::new(std::env::temp_dir().join("mozart-test-cache"), false),
+            )),
         };
 
         let lock = generate_lock_file(&request).await.unwrap();
@@ -1180,9 +1169,11 @@ mod tests {
     #[tokio::test]
     #[ignore]
     async fn test_generate_lock_file_monolog() {
+        use crate::cache::Cache;
         use crate::resolver::PlatformConfig;
         use crate::resolver::{ResolveRequest, resolve};
         use mozart_core::package::Stability;
+        use std::sync::Arc;
 
         // Resolve monolog/monolog ^3.0
         let resolve_request = ResolveRequest {
@@ -1197,9 +1188,12 @@ mod tests {
             platform: PlatformConfig::new(),
             ignore_platform_reqs: false,
             ignore_platform_req_list: vec![],
-            repo_cache: Cache::new(std::env::temp_dir().join("mozart-test-cache"), false),
+            repositories: Arc::new(RepositorySet::with_packagist(Cache::new(
+                std::env::temp_dir().join("mozart-test-cache"),
+                false,
+            ))),
             temporary_constraints: HashMap::new(),
-            repositories: vec![],
+            raw_repositories: vec![],
         };
 
         let resolved = resolve(&resolve_request)
@@ -1216,7 +1210,10 @@ mod tests {
             composer_json_content: composer_json_content.clone(),
             composer_json,
             include_dev: false,
-            repo_cache: Cache::new(std::env::temp_dir().join("mozart-test-cache"), false),
+            repositories: Arc::new(RepositorySet::with_packagist(Cache::new(
+                std::env::temp_dir().join("mozart-test-cache"),
+                false,
+            ))),
         };
 
         let lock = generate_lock_file(&gen_request)
