@@ -231,7 +231,9 @@ fn should_skip_platform_dep(
     if ignore_platform_reqs {
         return true;
     }
-    ignore_platform_req_list.iter().any(|p| p == dep_name)
+    ignore_platform_req_list
+        .iter()
+        .any(|p| mozart_core::matches_wildcard(dep_name, p))
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -412,13 +414,11 @@ pub async fn resolve(request: &ResolveRequest) -> Result<Vec<ResolvedPackage>, R
 
     // Set up ignore list for platform requirements
     let mut ignore_set: HashSet<String> = HashSet::new();
-    if request.ignore_platform_reqs {
-        // We'll skip platform deps in the loop below
-    }
     for name in &request.ignore_platform_req_list {
         ignore_set.insert(name.clone());
     }
     builder.set_ignore_platform_reqs(ignore_set.clone());
+    builder.set_ignore_all_platform_reqs(request.ignore_platform_reqs);
 
     // Add platform packages as fixed entries
     let platform_config = request.platform.to_versions();
@@ -560,6 +560,7 @@ pub async fn resolve(request: &ResolveRequest) -> Result<Vec<ResolvedPackage>, R
     // Generate rules
     let mut generator = RuleSetGenerator::new(&mut pool);
     generator.set_ignore_platform_reqs(ignore_set);
+    generator.set_ignore_all_platform_reqs(request.ignore_platform_reqs);
     let rules = generator.generate(&root_requires, &fixed_ids);
 
     // Create policy and solve

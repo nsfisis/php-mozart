@@ -13,8 +13,11 @@ pub struct RuleSetGenerator<'a> {
     added_map: HashSet<PackageId>,
     /// Package names → list of package IDs with that name (non-alias).
     added_packages_by_name: HashMap<String, Vec<PackageId>>,
-    /// Platform packages to ignore.
+    /// Specific platform packages to ignore (from `--ignore-platform-req=name`).
     ignore_platform_reqs: HashSet<String>,
+    /// When true, every platform package is treated as ignored.
+    /// Mirrors `--ignore-platform-reqs` (no value).
+    ignore_all_platform_reqs: bool,
 }
 
 impl<'a> RuleSetGenerator<'a> {
@@ -25,12 +28,29 @@ impl<'a> RuleSetGenerator<'a> {
             added_map: HashSet::new(),
             added_packages_by_name: HashMap::new(),
             ignore_platform_reqs: HashSet::new(),
+            ignore_all_platform_reqs: false,
         }
     }
 
     /// Set platform requirements to ignore.
     pub fn set_ignore_platform_reqs(&mut self, names: HashSet<String>) {
         self.ignore_platform_reqs = names;
+    }
+
+    /// When set, every platform package is treated as ignored.
+    pub fn set_ignore_all_platform_reqs(&mut self, ignore_all: bool) {
+        self.ignore_all_platform_reqs = ignore_all;
+    }
+
+    fn is_ignored_platform_dep(&self, name: &str) -> bool {
+        if self
+            .ignore_platform_reqs
+            .iter()
+            .any(|p| mozart_core::matches_wildcard(name, p))
+        {
+            return true;
+        }
+        self.ignore_all_platform_reqs && mozart_core::platform::is_platform_package(name)
     }
 
     /// Generate rules for a set of requirements and fixed packages.
@@ -60,7 +80,7 @@ impl<'a> RuleSetGenerator<'a> {
 
         // Process root requirements
         for (name, constraint) in requires {
-            if self.ignore_platform_reqs.contains(name.as_str()) {
+            if self.is_ignored_platform_dep(name.as_str()) {
                 continue;
             }
 
@@ -116,7 +136,7 @@ impl<'a> RuleSetGenerator<'a> {
 
             // Process each requirement
             for link in requires {
-                if self.ignore_platform_reqs.contains(&link.target) {
+                if self.is_ignored_platform_dep(&link.target) {
                     continue;
                 }
 
@@ -168,7 +188,7 @@ impl<'a> RuleSetGenerator<'a> {
             let conflicts = pkg.conflicts.clone();
 
             for link in conflicts {
-                if self.ignore_platform_reqs.contains(&link.target) {
+                if self.is_ignored_platform_dep(&link.target) {
                     continue;
                 }
 

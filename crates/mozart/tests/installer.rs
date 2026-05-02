@@ -190,14 +190,8 @@ installer_fixture!(install_funding_notice);
 installer_fixture!(install_funding_notice_env);
 installer_fixture!(install_funding_notice_not_displayed_env);
 installer_fixture!(install_ignore_platform_package_requirement_list);
-installer_fixture!(
-    install_ignore_platform_package_requirement_wildcard,
-    ignore = "mozart binary cannot yet run this fixture"
-);
-installer_fixture!(
-    install_ignore_platform_package_requirements,
-    ignore = "mozart binary cannot yet run this fixture"
-);
+installer_fixture!(install_ignore_platform_package_requirement_wildcard);
+installer_fixture!(install_ignore_platform_package_requirements);
 installer_fixture!(
     install_missing_alias_from_lock,
     ignore = "mozart binary cannot yet run this fixture"
@@ -461,14 +455,8 @@ installer_fixture!(
 );
 installer_fixture!(update_ignore_platform_package_requirement_list);
 installer_fixture!(update_ignore_platform_package_requirement_list_upper_bounds);
-installer_fixture!(
-    update_ignore_platform_package_requirement_wildcard,
-    ignore = "mozart binary cannot yet run this fixture"
-);
-installer_fixture!(
-    update_ignore_platform_package_requirements,
-    ignore = "mozart binary cannot yet run this fixture"
-);
+installer_fixture!(update_ignore_platform_package_requirement_wildcard);
+installer_fixture!(update_ignore_platform_package_requirements);
 installer_fixture!(update_installed_alias);
 installer_fixture!(update_installed_alias_dry_run);
 installer_fixture!(update_installed_reference);

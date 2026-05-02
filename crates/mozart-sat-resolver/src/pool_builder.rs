@@ -15,8 +15,11 @@ pub struct PoolBuilder {
     pending_names: VecDeque<String>,
     /// Package names that have already been explored (returned by next_pending).
     explored_names: HashSet<String>,
-    /// Platform packages to ignore.
+    /// Specific platform packages to ignore (from `--ignore-platform-req=name`).
     ignore_platform_reqs: HashSet<String>,
+    /// When true, ignore every platform package (php, ext-*, lib-*, composer-*).
+    /// Mirrors `--ignore-platform-reqs` (no value).
+    ignore_all_platform_reqs: bool,
 }
 
 impl PoolBuilder {
@@ -27,12 +30,29 @@ impl PoolBuilder {
             pending_names: VecDeque::new(),
             explored_names: HashSet::new(),
             ignore_platform_reqs: HashSet::new(),
+            ignore_all_platform_reqs: false,
         }
     }
 
     /// Set platform requirements to ignore during exploration.
     pub fn set_ignore_platform_reqs(&mut self, names: HashSet<String>) {
         self.ignore_platform_reqs = names;
+    }
+
+    /// When set, every platform package is skipped during exploration.
+    pub fn set_ignore_all_platform_reqs(&mut self, ignore_all: bool) {
+        self.ignore_all_platform_reqs = ignore_all;
+    }
+
+    fn is_ignored_platform_dep(&self, name: &str) -> bool {
+        if self
+            .ignore_platform_reqs
+            .iter()
+            .any(|p| mozart_core::matches_wildcard(name, p))
+        {
+            return true;
+        }
+        self.ignore_all_platform_reqs && mozart_core::platform::is_platform_package(name)
     }
 
     /// Add a package version to the builder. Returns true if it's new.
@@ -45,7 +65,7 @@ impl PoolBuilder {
 
         // Queue dependency names for exploration
         for link in &input.requires {
-            if !self.ignore_platform_reqs.contains(&link.target) {
+            if !self.is_ignored_platform_dep(&link.target) {
                 self.pending_names.push_back(link.target.clone());
             }
         }
