@@ -9,6 +9,8 @@ use std::fmt;
 
 use crate::cache::Cache;
 use crate::packagist;
+use crate::repository::packagist_repo::PackagistRepository;
+use crate::repository::{PackageQuery, Repository, RepositorySet};
 use crate::vcs_bridge;
 use mozart_core::package::{RawRepository, Stability};
 use mozart_sat_resolver::{
@@ -367,6 +369,19 @@ pub struct ResolvedPackage {
     pub is_dev: bool,
 }
 
+/// Build a [`RepositorySet`] containing only [`PackagistRepository`].
+///
+/// The resolver still preloads VCS and inline packages directly into the
+/// pool builder (and tracks their names in skip-lists) — Step B routes
+/// only Packagist queries through the trait. Migrating VCS/inline through
+/// `RepositorySet` is a follow-up. The function returns a single-repo set
+/// purely so the seed and transitive loops have a uniform call shape.
+fn build_packagist_repo_set(repo_cache: &Cache) -> RepositorySet {
+    let repos: Vec<Box<dyn Repository>> =
+        vec![Box::new(PackagistRepository::new(repo_cache.clone()))];
+    RepositorySet::new(repos)
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Public resolve() function
 // ─────────────────────────────────────────────────────────────────────────────
@@ -481,38 +496,44 @@ pub async fn resolve(request: &ResolveRequest) -> Result<Vec<ResolvedPackage>, R
         }
     }
 
-    // Seed the builder with packages for root requirements
-    for name in root_requires.keys() {
-        if PackageName(name.clone()).is_platform() {
-            continue; // platform packages already added
-        }
+    // Build the repository set used for Packagist queries (and, in future
+    // steps, inline + VCS too). Today only Packagist flows through the
+    // trait — VCS and inline packages above are still preloaded directly,
+    // and their names go into the skip lists so we don't double-load them
+    // through this set.
+    let repo_set: RepositorySet = build_packagist_repo_set(&request.repo_cache);
 
-        // Skip packages already provided by VCS or inline-package repositories
-        if vcs_package_names.contains(name) || inline_package_names.contains(name) {
-            continue;
-        }
-
-        // Fetch available versions from Packagist
-        let versions = packagist::fetch_package_versions(name, &request.repo_cache)
-            .await
-            .map_err(|e| {
-                ResolveError::DependencyFetchError(format!("Failed to fetch {}: {}", name, e))
-            })?;
-
-        for pv in &versions {
-            let inputs = packagist_to_pool_inputs(
-                name,
-                pv,
-                request.minimum_stability,
-                &request.stability_flags,
-            );
-            for input in inputs {
-                builder.add_package(input);
-            }
+    // Seed the builder with packages for root requirements.
+    let seed_names: Vec<String> = root_requires
+        .keys()
+        .filter(|name| !PackageName((*name).clone()).is_platform())
+        .filter(|name| !vcs_package_names.contains(*name) && !inline_package_names.contains(*name))
+        .cloned()
+        .collect();
+    let seed_queries: Vec<PackageQuery<'_>> = seed_names
+        .iter()
+        .map(|n| PackageQuery {
+            name: n.as_str(),
+            constraint: root_requires.get(n).and_then(|c| c.as_deref()),
+        })
+        .collect();
+    let seed_results = repo_set
+        .load_packages(&seed_queries)
+        .await
+        .map_err(|e| ResolveError::DependencyFetchError(e.to_string()))?;
+    for r in &seed_results {
+        let inputs = packagist_to_pool_inputs(
+            &r.name,
+            &r.version,
+            request.minimum_stability,
+            &request.stability_flags,
+        );
+        for input in inputs {
+            builder.add_package(input);
         }
     }
 
-    // Explore transitive dependencies
+    // Explore transitive dependencies.
     while let Some(name) = builder.next_pending() {
         if PackageName(name.clone()).is_platform() {
             continue;
@@ -523,7 +544,11 @@ pub async fn resolve(request: &ResolveRequest) -> Result<Vec<ResolvedPackage>, R
             continue;
         }
 
-        let versions = match packagist::fetch_package_versions(&name, &request.repo_cache).await {
+        let queries = [PackageQuery {
+            name: name.as_str(),
+            constraint: None,
+        }];
+        let results = match repo_set.load_packages(&queries).await {
             Ok(v) => v,
             Err(_) => {
                 // Virtual/meta packages (e.g. "psr/http-client-implementation")
@@ -532,11 +557,10 @@ pub async fn resolve(request: &ResolveRequest) -> Result<Vec<ResolvedPackage>, R
                 continue;
             }
         };
-
-        for pv in &versions {
+        for r in &results {
             let inputs = packagist_to_pool_inputs(
-                &name,
-                pv,
+                &r.name,
+                &r.version,
                 request.minimum_stability,
                 &request.stability_flags,
             );

@@ -1,11 +1,25 @@
 use crate::cache::Cache;
-use crate::packagist::{self, PackagistDist, PackagistSource, PackagistVersion};
+use crate::packagist::{PackagistDist, PackagistSource, PackagistVersion};
+use crate::repository::packagist_repo::PackagistRepository;
+use crate::repository::{Repository, RepositorySet};
 use crate::resolver::ResolvedPackage;
 use mozart_core::package::{RawPackageData, to_json_pretty};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::fs;
 use std::path::Path;
+
+/// Build a [`RepositorySet`] containing only [`PackagistRepository`].
+///
+/// Used by `generate_lock_file` to fetch full metadata for resolved packages
+/// not already covered by inline `type: package` repositories. Step B routes
+/// only Packagist queries through the trait; VCS/inline migration is a
+/// follow-up.
+fn build_packagist_repo_set(repo_cache: &Cache) -> RepositorySet {
+    let repos: Vec<Box<dyn Repository>> =
+        vec![Box::new(PackagistRepository::new(repo_cache.clone()))];
+    RepositorySet::new(repos)
+}
 
 fn default_stability() -> String {
     "stable".to_string()
@@ -514,21 +528,28 @@ fn extract_platform_requirements(requirements: &BTreeMap<String, String>) -> ser
 /// 3. Computes the content-hash
 /// 4. Assembles the complete `LockFile` struct
 pub async fn generate_lock_file(request: &LockFileGenerationRequest) -> anyhow::Result<LockFile> {
-    // 1. Fetch full metadata for all resolved packages
+    // 1. Fetch full metadata for all resolved packages.
+    //
+    // Inline `type: package` repositories carry full metadata in composer.json
+    // — short-circuit those before hitting the network. Everything else goes
+    // through `RepositorySet`, which today contains only Packagist; future
+    // steps will move VCS / inline through the same set.
     let mut package_metadata: HashMap<String, PackagistVersion> = HashMap::new();
+    let repo_set = build_packagist_repo_set(&request.repo_cache);
     for pkg in &request.resolved_packages {
-        // Inline `type: package` repositories carry full metadata in
-        // composer.json — use it directly instead of hitting Packagist.
         if let Some(inline) = request.inline_lookup(&pkg.name, &pkg.version_normalized) {
             package_metadata.insert(pkg.name.clone(), inline);
             continue;
         }
 
-        let versions = packagist::fetch_package_versions(&pkg.name, &request.repo_cache).await?;
-        // Find the exact version matching pkg.version_normalized
-        let matching = versions
+        let queries = [crate::repository::PackageQuery {
+            name: pkg.name.as_str(),
+            constraint: None,
+        }];
+        let results = repo_set.load_packages(&queries).await?;
+        let matching = results
             .into_iter()
-            .find(|v| v.version_normalized == pkg.version_normalized)
+            .find(|r| r.version.version_normalized == pkg.version_normalized)
             .ok_or_else(|| {
                 anyhow::anyhow!(
                     "Could not find version {} for package {} in Packagist response",
@@ -536,7 +557,7 @@ pub async fn generate_lock_file(request: &LockFileGenerationRequest) -> anyhow::
                     pkg.name
                 )
             })?;
-        package_metadata.insert(pkg.name.clone(), matching);
+        package_metadata.insert(pkg.name.clone(), matching.version);
     }
 
     // 2. Classify dev vs non-dev packages

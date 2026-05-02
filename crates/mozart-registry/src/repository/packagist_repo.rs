@@ -32,19 +32,19 @@ impl Repository for PackagistRepository {
     async fn load_packages(&self, queries: &[PackageQuery<'_>]) -> anyhow::Result<LoadResult> {
         let mut result = LoadResult::default();
         for query in queries {
-            // Mirror the existing transitive-loop tolerance: a 404 / network
-            // failure for one name is not fatal — it just means this repo
-            // contributes nothing for that name. `RepositorySet` falls
-            // through, and the solver fails later if no repo knows it.
+            // Errors propagate to the caller. Composer's
+            // `ComposerRepository::loadAsyncPackages` distinguishes 404
+            // (empty result, no error) from transport failures (exception);
+            // Mozart's underlying `fetch_package_versions` doesn't yet make
+            // that distinction, so for now both surface as `Err` and the
+            // caller decides whether the loop wants to continue (transitive
+            // exploration) or abort (seed-time fetch failure).
             let versions =
-                match packagist::fetch_package_versions(query.name, &self.cache).await {
-                    Ok(v) => v,
-                    Err(_) => continue,
-                };
-            // `fetch_package_versions` returning Ok counts as "this repo
-            // authoritatively knows the name", even if the version list is
-            // empty (matches Composer `ArrayRepository::loadPackages` which
-            // adds the name to `namesFound` regardless of constraint match).
+                packagist::fetch_package_versions(query.name, &self.cache).await?;
+            // A successful fetch counts as "this repo authoritatively knows
+            // the name", even if the version list is empty — mirrors
+            // Composer's `ArrayRepository::loadPackages` which adds the
+            // name to `namesFound` regardless of constraint match.
             result.names_found.push(query.name.to_string());
             for version in versions {
                 result.packages.push(NamedPackagistVersion {
