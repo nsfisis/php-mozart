@@ -12,7 +12,7 @@
 //! - Install: `Installing <name> (<version>)`
 //! - Update (upgrade direction): `Upgrading <name> (<oldVersion> => <newVersion>)`
 //! - Update (downgrade direction): `Downgrading <name> (<oldVersion> => <newVersion>)`
-//! - Uninstall: `Uninstalling <name> (<version>)`
+//! - Uninstall: `Removing <name> (<version>)`
 
 use mozart_semver::Version;
 
@@ -85,8 +85,7 @@ impl InstallerExecutor for TraceRecorderExecutor {
         version: &str,
         _ctx: &ExecuteContext,
     ) -> anyhow::Result<()> {
-        self.trace
-            .push(format!("Uninstalling {} ({})", name, version));
+        self.trace.push(format!("Removing {} ({})", name, version));
         Ok(())
     }
 }

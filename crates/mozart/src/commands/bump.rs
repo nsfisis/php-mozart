@@ -353,6 +353,8 @@ mod tests {
             require: BTreeMap::new(),
             require_dev: BTreeMap::new(),
             conflict: BTreeMap::new(),
+            provide: BTreeMap::new(),
+            replace: BTreeMap::new(),
             suggest: None,
             package_type: None,
             autoload: None,

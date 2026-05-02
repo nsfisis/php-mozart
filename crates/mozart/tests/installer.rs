@@ -195,7 +195,7 @@ installer_fixture!(conflict_against_replaced_package_problem, ignore);
 installer_fixture!(conflict_between_dependents);
 installer_fixture!(conflict_between_root_and_dependent);
 installer_fixture!(conflict_downgrade);
-installer_fixture!(conflict_downgrade_nested, ignore);
+installer_fixture!(conflict_downgrade_nested);
 installer_fixture!(
     conflict_on_root_with_alias_prevents_update_if_not_required,
     ignore
@@ -226,7 +226,7 @@ installer_fixture!(install_dev_using_dist, ignore);
 installer_fixture!(install_forces_reinstall_if_abandon_changes, ignore);
 installer_fixture!(install_from_incomplete_lock);
 installer_fixture!(install_from_incomplete_lock_with_ignore, ignore);
-installer_fixture!(install_from_lock_removes_package, ignore);
+installer_fixture!(install_from_lock_removes_package);
 installer_fixture!(install_funding_notice);
 installer_fixture!(install_funding_notice_env);
 installer_fixture!(install_funding_notice_not_displayed_env);
@@ -238,11 +238,11 @@ installer_fixture!(install_overridden_platform_packages, ignore);
 installer_fixture!(install_package_and_its_provider_skips_original);
 installer_fixture!(install_prefers_repos_over_package_versions, ignore);
 installer_fixture!(install_reference, ignore);
-installer_fixture!(install_security_advisory_matching_dependency, ignore);
+installer_fixture!(install_security_advisory_matching_dependency);
 installer_fixture!(install_self_from_root);
 installer_fixture!(install_simple);
 installer_fixture!(install_without_lock);
-installer_fixture!(load_replaced_package_if_replacer_dropped, ignore);
+installer_fixture!(load_replaced_package_if_replacer_dropped);
 installer_fixture!(outdated_lock_file_fails_install);
 installer_fixture!(outdated_lock_file_with_new_platform_reqs_fails);
 installer_fixture!(partial_update_always_updates_symlinked_path_repos, ignore);
@@ -254,13 +254,10 @@ installer_fixture!(
 installer_fixture!(partial_update_from_lock);
 installer_fixture!(partial_update_from_lock_with_root_alias, ignore);
 installer_fixture!(partial_update_installs_from_lock_even_missing, ignore);
-installer_fixture!(partial_update_keeps_older_dep_if_still_required, ignore);
-installer_fixture!(
-    partial_update_keeps_older_dep_if_still_required_with_provide,
-    ignore
-);
+installer_fixture!(partial_update_keeps_older_dep_if_still_required);
+installer_fixture!(partial_update_keeps_older_dep_if_still_required_with_provide);
 installer_fixture!(partial_update_loads_root_aliases_for_path_repos, ignore);
-installer_fixture!(partial_update_security_advisory_matching_locked_dep, ignore);
+installer_fixture!(partial_update_security_advisory_matching_locked_dep);
 installer_fixture!(
     partial_update_security_advisory_matching_locked_dep_with_dependencies,
     ignore
@@ -286,22 +283,19 @@ installer_fixture!(
 );
 installer_fixture!(provider_gets_picked_together_with_other_version_of_provided_indirect);
 installer_fixture!(provider_packages_can_be_installed_if_selected);
-installer_fixture!(
-    provider_packages_can_be_installed_together_with_provided_if_both_installable,
-    ignore
-);
+installer_fixture!(provider_packages_can_be_installed_together_with_provided_if_both_installable);
 installer_fixture!(
     provider_packages_can_not_be_installed_unless_selected,
     ignore
 );
 installer_fixture!(provider_satisfies_its_own_requirement, ignore);
-installer_fixture!(remove_deletes_unused_deps, ignore);
+installer_fixture!(remove_deletes_unused_deps);
 installer_fixture!(
     remove_does_nothing_if_removal_requires_update_of_dep,
     ignore
 );
 installer_fixture!(replace_alias, ignore);
-installer_fixture!(replace_priorities, ignore);
+installer_fixture!(replace_priorities);
 installer_fixture!(replace_range_require_single_version);
 installer_fixture!(replace_root_require);
 installer_fixture!(replaced_packages_should_not_be_installed);
@@ -354,16 +348,13 @@ installer_fixture!(update_allow_list_patterns_with_root_dependencies);
 installer_fixture!(update_allow_list_patterns_without_dependencies);
 installer_fixture!(update_allow_list_reads_lock);
 installer_fixture!(update_allow_list_removes_unused, ignore);
-installer_fixture!(update_allow_list_require_new_replace, ignore);
+installer_fixture!(update_allow_list_require_new_replace);
 installer_fixture!(update_allow_list_warns_non_existing_patterns);
 installer_fixture!(update_allow_list_with_dependencies);
 installer_fixture!(update_allow_list_with_dependencies_alias, ignore);
 installer_fixture!(update_allow_list_with_dependencies_new_requirement, ignore);
 installer_fixture!(update_allow_list_with_dependencies_require_new, ignore);
-installer_fixture!(
-    update_allow_list_with_dependencies_require_new_replace,
-    ignore
-);
+installer_fixture!(update_allow_list_with_dependencies_require_new_replace);
 installer_fixture!(
     update_allow_list_with_dependencies_require_new_replace_mutual,
     ignore
@@ -398,10 +389,7 @@ installer_fixture!(update_prefer_lowest_stable);
 installer_fixture!(update_reference, ignore);
 installer_fixture!(update_reference_picks_latest, ignore);
 installer_fixture!(update_removes_unused_locked_dep, ignore);
-installer_fixture!(
-    update_requiring_decision_reverts_and_learning_positive_literals,
-    ignore
-);
+installer_fixture!(update_requiring_decision_reverts_and_learning_positive_literals);
 installer_fixture!(update_security_advisory_matching_direct_dependency, ignore);
 installer_fixture!(
     update_security_advisory_matching_indirect_dependency,

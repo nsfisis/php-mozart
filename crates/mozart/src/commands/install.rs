@@ -211,65 +211,105 @@ pub fn compute_operations<'a>(
 }
 
 /// Order a slice of locked packages so every package's `require` deps that
-/// are present in the same slice come before it. Cycles fall back to the
-/// input order (Composer rejects cycles earlier in the resolver, so Mozart
-/// shouldn't see them here in practice). Mirrors the topological sort
-/// inside `Composer\DependencyResolver\Transaction::calculateOperations`.
+/// are present in the same slice come before it. Mirrors
+/// `Composer\DependencyResolver\Transaction::calculateOperations` — the
+/// stack-based DFS over the result map.
+///
+/// Three parity points worth keeping in sync with Composer:
+///
+/// - The result map is uasort-ed with `strcmp($b, $a)` (reverse alphabetical).
+///   Mozart's lock is alphabetical, so we pre-sort reverse to match.
+/// - `getProvidersInResult` returns every package in the result whose name
+///   *or* `provide`/`replace` entry matches a `require` link target. We
+///   build a multimap keyed by all three so a `require: x/y` push covers
+///   all packages that resolve `x/y`.
+/// - The DFS uses an explicit LIFO stack (Composer's `array_pop`). On first
+///   visit the package is re-pushed and its requires are pushed afterwards,
+///   so dep traversal order is the **reverse** of `getRequires` iteration.
+///
+/// Cycles fall back to input order (Composer rejects cycles earlier; this
+/// branch should not normally fire).
 fn topological_sort<'a>(
     packages: &[&'a lockfile::LockedPackage],
 ) -> Vec<&'a lockfile::LockedPackage> {
     use std::collections::BTreeMap;
 
-    let names: HashSet<String> = packages.iter().map(|p| p.name.to_lowercase()).collect();
-    let mut by_name: BTreeMap<String, &'a lockfile::LockedPackage> = BTreeMap::new();
-    for pkg in packages {
-        by_name.insert(pkg.name.to_lowercase(), *pkg);
+    // Reverse-alphabetical sort, mirroring `setResultPackageMaps`.
+    let mut sorted: Vec<&'a lockfile::LockedPackage> = packages.to_vec();
+    sorted.sort_by_key(|p| std::cmp::Reverse(p.name.to_lowercase()));
+
+    // Multimap: `name -> [packages]`. A package contributes itself under its
+    // own name *and* under every `provide`/`replace` entry. The vec values
+    // stay in `sorted` (reverse-alphabetical) order, mirroring Composer's
+    // `resultPackagesByName` after its uasort.
+    let mut resolves: BTreeMap<String, Vec<&'a lockfile::LockedPackage>> = BTreeMap::new();
+    for pkg in &sorted {
+        let names = std::iter::once(pkg.name.to_lowercase())
+            .chain(pkg.provide.keys().map(|s| s.to_lowercase()))
+            .chain(pkg.replace.keys().map(|s| s.to_lowercase()));
+        for n in names {
+            resolves.entry(n).or_default().push(*pkg);
+        }
     }
 
-    let mut visited: HashSet<String> = HashSet::new();
-    let mut on_stack: HashSet<String> = HashSet::new();
-    let mut ordered: Vec<&'a lockfile::LockedPackage> = Vec::with_capacity(packages.len());
-
-    fn visit<'b>(
-        name: &str,
-        names: &HashSet<String>,
-        by_name: &BTreeMap<String, &'b lockfile::LockedPackage>,
-        visited: &mut HashSet<String>,
-        on_stack: &mut HashSet<String>,
-        ordered: &mut Vec<&'b lockfile::LockedPackage>,
-    ) {
-        if visited.contains(name) || on_stack.contains(name) {
-            return;
-        }
-        let Some(pkg) = by_name.get(name) else {
-            return;
-        };
-        on_stack.insert(name.to_string());
+    // Identify root packages: those not pulled in by any other package's
+    // requires (counting provides/replaces as a match).
+    let mut required_by_others: HashSet<String> = HashSet::new();
+    for pkg in &sorted {
+        let pkg_lower = pkg.name.to_lowercase();
         for dep in pkg.require.keys() {
             let dep_lower = dep.to_lowercase();
-            if names.contains(&dep_lower) {
-                visit(&dep_lower, names, by_name, visited, on_stack, ordered);
+            if let Some(matches) = resolves.get(&dep_lower) {
+                for &m in matches {
+                    let m_lower = m.name.to_lowercase();
+                    if m_lower != pkg_lower {
+                        required_by_others.insert(m_lower);
+                    }
+                }
             }
         }
-        on_stack.remove(name);
-        visited.insert(name.to_string());
-        ordered.push(*pkg);
     }
 
-    // Seed iteration in the input order so two packages with no relation
-    // come out in the order Mozart's lock writer produced them
-    // (alphabetical), matching Composer's deterministic output.
+    let mut stack: Vec<&'a lockfile::LockedPackage> = sorted
+        .iter()
+        .filter(|p| !required_by_others.contains(&p.name.to_lowercase()))
+        .copied()
+        .collect();
+
+    let mut visited: HashSet<String> = HashSet::new();
+    let mut processed: HashSet<String> = HashSet::new();
+    let mut ordered: Vec<&'a lockfile::LockedPackage> = Vec::with_capacity(packages.len());
+
+    while let Some(pkg) = stack.pop() {
+        let lower = pkg.name.to_lowercase();
+        if processed.contains(&lower) {
+            continue;
+        }
+        if !visited.contains(&lower) {
+            visited.insert(lower);
+            // Re-push self so it's processed after its requires drain.
+            stack.push(pkg);
+            for dep in pkg.require.keys() {
+                let dep_lower = dep.to_lowercase();
+                if let Some(matches) = resolves.get(&dep_lower) {
+                    for &m in matches {
+                        stack.push(m);
+                    }
+                }
+            }
+        } else {
+            processed.insert(lower);
+            ordered.push(pkg);
+        }
+    }
+
+    // Cycle / disconnected fallback: append any leftover packages in the
+    // input order so the function is total.
     for pkg in packages {
         let lower = pkg.name.to_lowercase();
-        if !visited.contains(&lower) {
-            visit(
-                &lower,
-                &names,
-                &by_name,
-                &mut visited,
-                &mut on_stack,
-                &mut ordered,
-            );
+        if !processed.contains(&lower) {
+            processed.insert(lower);
+            ordered.push(*pkg);
         }
     }
 
@@ -550,8 +590,12 @@ pub async fn install_from_lock(
         ));
     }
 
-    // Step 6: Execute operations (unless dry_run)
+    // Step 6: Execute operations (unless dry_run). Removals run first to
+    // mirror Composer's `Transaction::moveUninstallsToFront`.
     if config.dry_run {
+        for name in &removals {
+            console.info(&console_format!("  - Would remove <info>{}</info>", name));
+        }
         for (pkg, action) in &ops {
             match action {
                 Action::Skip => {}
@@ -571,15 +615,27 @@ pub async fn install_from_lock(
                 }
             }
         }
-        for name in &removals {
-            console.info(&console_format!("  - Would remove <info>{}</info>", name));
-        }
     } else {
         let exec_ctx = ExecuteContext {
             vendor_dir: vendor_dir.to_path_buf(),
             no_progress: config.no_progress,
             prefer_source: config.prefer_source,
         };
+
+        for name in &removals {
+            console.info(&console_format!("  - Removing <info>{}</info>", name));
+            let from_version = installed
+                .packages
+                .iter()
+                .find(|p| p.name.eq_ignore_ascii_case(name))
+                .map(|p| p.version.as_str())
+                .unwrap_or("");
+            executor.uninstall_package(name, from_version, &exec_ctx)?;
+        }
+
+        if !removals.is_empty() {
+            executor.cleanup_after_uninstalls(&exec_ctx)?;
+        }
 
         for (pkg, action) in &ops {
             let op = match action {
@@ -614,23 +670,6 @@ pub async fn install_from_lock(
                 }
             };
             executor.install_package(op, &exec_ctx).await?;
-        }
-
-        // Handle removals
-        for name in &removals {
-            console.info(&console_format!("  - Removing <info>{}</info>", name));
-            let from_version = installed
-                .packages
-                .iter()
-                .find(|p| p.name.eq_ignore_ascii_case(name))
-                .map(|p| p.version.as_str())
-                .unwrap_or("");
-            executor.uninstall_package(name, from_version, &exec_ctx)?;
-        }
-
-        // Step 7: Clean up empty vendor namespace directories
-        if !removals.is_empty() {
-            executor.cleanup_after_uninstalls(&exec_ctx)?;
         }
 
         // Step 8: Write updated vendor/composer/installed.json (unless download_only)
@@ -905,6 +944,8 @@ mod tests {
             require: BTreeMap::new(),
             require_dev: BTreeMap::new(),
             conflict: BTreeMap::new(),
+            provide: BTreeMap::new(),
+            replace: BTreeMap::new(),
             suggest: None,
             package_type: Some("library".to_string()),
             autoload: None,

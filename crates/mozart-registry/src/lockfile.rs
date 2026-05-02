@@ -85,6 +85,12 @@ pub struct LockedPackage {
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub conflict: BTreeMap<String, String>,
 
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub provide: BTreeMap<String, String>,
+
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub replace: BTreeMap<String, String>,
+
     #[serde(skip_serializing_if = "Option::is_none")]
     pub suggest: Option<BTreeMap<String, String>>,
 
@@ -410,6 +416,8 @@ fn packagist_version_to_locked_package(name: &str, pv: &PackagistVersion) -> Loc
         require: pv.require.clone(),
         require_dev: pv.require_dev.clone(),
         conflict: pv.conflict.clone(),
+        provide: pv.provide.clone(),
+        replace: pv.replace.clone(),
         suggest: pv.suggest.clone(),
         package_type: pv.package_type.clone(),
         autoload: pv.autoload.clone(),
@@ -671,6 +679,8 @@ mod tests {
             require: BTreeMap::new(),
             require_dev: BTreeMap::new(),
             conflict: BTreeMap::new(),
+            provide: BTreeMap::new(),
+            replace: BTreeMap::new(),
             suggest: None,
             package_type: Some("library".to_string()),
             autoload: None,
@@ -1121,6 +1131,8 @@ mod tests {
                 require: BTreeMap::new(),
                 require_dev: BTreeMap::new(),
                 conflict: BTreeMap::new(),
+                provide: BTreeMap::new(),
+                replace: BTreeMap::new(),
                 suggest: None,
                 package_type: None,
                 autoload: None,
@@ -1144,6 +1156,8 @@ mod tests {
                 require: BTreeMap::new(),
                 require_dev: BTreeMap::new(),
                 conflict: BTreeMap::new(),
+                provide: BTreeMap::new(),
+                replace: BTreeMap::new(),
                 suggest: None,
                 package_type: None,
                 autoload: None,
@@ -1270,6 +1284,8 @@ mod tests {
             require: BTreeMap::new(),
             require_dev: BTreeMap::new(),
             conflict: BTreeMap::new(),
+            provide: BTreeMap::new(),
+            replace: BTreeMap::new(),
             suggest: None,
             package_type: Some("library".to_string()),
             autoload: None,

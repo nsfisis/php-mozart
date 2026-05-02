@@ -965,6 +965,8 @@ pub fn generate(config: &AutoloadConfig) -> anyhow::Result<GenerateResult> {
                 require: std::collections::BTreeMap::new(),
                 require_dev: std::collections::BTreeMap::new(),
                 conflict: std::collections::BTreeMap::new(),
+                provide: std::collections::BTreeMap::new(),
+                replace: std::collections::BTreeMap::new(),
                 suggest: None,
                 package_type: p.package_type.clone(),
                 autoload: p.autoload.clone(),
