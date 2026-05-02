@@ -18,8 +18,10 @@ use std::path::PathBuf;
 use crate::lockfile::LockedPackage;
 
 pub mod filesystem;
+pub mod trace_recorder;
 
 pub use filesystem::FilesystemExecutor;
+pub use trace_recorder::TraceRecorderExecutor;
 
 /// One install or update operation handed to [`InstallerExecutor::install_package`].
 #[derive(Debug, Clone, Copy)]
@@ -73,7 +75,17 @@ pub trait InstallerExecutor: Send + Sync {
     ) -> anyhow::Result<()>;
 
     /// Perform side effects for one uninstall.
-    fn uninstall_package(&mut self, name: &str, ctx: &ExecuteContext) -> anyhow::Result<()>;
+    ///
+    /// `version` is the previously-installed version (from installed.json),
+    /// passed so the trace recorder can format Composer's
+    /// `Uninstalling pkg/name (version)` line. The filesystem implementation
+    /// ignores it — `name` alone is enough to locate the vendor directory.
+    fn uninstall_package(
+        &mut self,
+        name: &str,
+        version: &str,
+        ctx: &ExecuteContext,
+    ) -> anyhow::Result<()>;
 
     /// Hook called once after every uninstall has run. Default no-op.
     /// Composer cleans up empty namespace directories here; the recorder

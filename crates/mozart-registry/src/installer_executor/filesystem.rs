@@ -81,7 +81,12 @@ impl InstallerExecutor for FilesystemExecutor {
         Ok(())
     }
 
-    fn uninstall_package(&mut self, name: &str, ctx: &ExecuteContext) -> anyhow::Result<()> {
+    fn uninstall_package(
+        &mut self,
+        name: &str,
+        _version: &str,
+        ctx: &ExecuteContext,
+    ) -> anyhow::Result<()> {
         let pkg_dir = ctx.vendor_dir.join(name);
         if pkg_dir.exists() {
             std::fs::remove_dir_all(&pkg_dir)?;

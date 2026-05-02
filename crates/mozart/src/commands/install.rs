@@ -167,15 +167,23 @@ pub fn resolve_working_dir(cli: &super::Cli) -> PathBuf {
 /// Compute install operations by comparing locked packages against installed packages.
 ///
 /// Returns a tuple of (ops, removals) where:
-/// - ops: list of (package, action) for each locked package
+/// - ops: list of (package, action) ordered topologically — every package's
+///   lock-internal `require` deps appear before it, so installs run in
+///   dependency-first order to match Composer's `Transaction::calculateOperations`.
 /// - removals: list of package names that are installed but not locked
 pub fn compute_operations<'a>(
     locked: &[&'a lockfile::LockedPackage],
     installed: &installed::InstalledPackages,
 ) -> (Vec<(&'a lockfile::LockedPackage, Action)>, Vec<String>) {
-    let mut ops: Vec<(&'a lockfile::LockedPackage, Action)> = Vec::new();
+    // Topo-sort `locked` so each package's deps (within the lock set) come
+    // before it. Composer's solver yields operations in this order via the
+    // Transaction; Mozart writes the lock alphabetically, so the install
+    // loop must re-order before emitting trace lines or invoking the
+    // executor.
+    let ordered = topological_sort(locked);
 
-    for pkg in locked {
+    let mut ops: Vec<(&'a lockfile::LockedPackage, Action)> = Vec::new();
+    for pkg in ordered {
         if installed.is_installed(&pkg.name, &pkg.version) {
             ops.push((pkg, Action::Skip));
         } else if installed
@@ -200,6 +208,72 @@ pub fn compute_operations<'a>(
         .collect();
 
     (ops, removals)
+}
+
+/// Order a slice of locked packages so every package's `require` deps that
+/// are present in the same slice come before it. Cycles fall back to the
+/// input order (Composer rejects cycles earlier in the resolver, so Mozart
+/// shouldn't see them here in practice). Mirrors the topological sort
+/// inside `Composer\DependencyResolver\Transaction::calculateOperations`.
+fn topological_sort<'a>(
+    packages: &[&'a lockfile::LockedPackage],
+) -> Vec<&'a lockfile::LockedPackage> {
+    use std::collections::BTreeMap;
+
+    let names: HashSet<String> = packages.iter().map(|p| p.name.to_lowercase()).collect();
+    let mut by_name: BTreeMap<String, &'a lockfile::LockedPackage> = BTreeMap::new();
+    for pkg in packages {
+        by_name.insert(pkg.name.to_lowercase(), *pkg);
+    }
+
+    let mut visited: HashSet<String> = HashSet::new();
+    let mut on_stack: HashSet<String> = HashSet::new();
+    let mut ordered: Vec<&'a lockfile::LockedPackage> = Vec::with_capacity(packages.len());
+
+    fn visit<'b>(
+        name: &str,
+        names: &HashSet<String>,
+        by_name: &BTreeMap<String, &'b lockfile::LockedPackage>,
+        visited: &mut HashSet<String>,
+        on_stack: &mut HashSet<String>,
+        ordered: &mut Vec<&'b lockfile::LockedPackage>,
+    ) {
+        if visited.contains(name) || on_stack.contains(name) {
+            return;
+        }
+        let Some(pkg) = by_name.get(name) else {
+            return;
+        };
+        on_stack.insert(name.to_string());
+        for dep in pkg.require.keys() {
+            let dep_lower = dep.to_lowercase();
+            if names.contains(&dep_lower) {
+                visit(&dep_lower, names, by_name, visited, on_stack, ordered);
+            }
+        }
+        on_stack.remove(name);
+        visited.insert(name.to_string());
+        ordered.push(*pkg);
+    }
+
+    // Seed iteration in the input order so two packages with no relation
+    // come out in the order Mozart's lock writer produced them
+    // (alphabetical), matching Composer's deterministic output.
+    for pkg in packages {
+        let lower = pkg.name.to_lowercase();
+        if !visited.contains(&lower) {
+            visit(
+                &lower,
+                &names,
+                &by_name,
+                &mut visited,
+                &mut on_stack,
+                &mut ordered,
+            );
+        }
+    }
+
+    ordered
 }
 
 /// Convert a LockedPackage to an InstalledPackageEntry.
@@ -524,13 +598,17 @@ pub async fn install_from_lock(
                         pkg.name,
                         pkg.version
                     ));
-                    // The previous-version string is unknown to install_from_lock
-                    // (it only sees the post-update lock). Pass the new version
-                    // as a placeholder; this path is unused by the recorder, and
-                    // Composer's `Upgrading` trace string is generated upstream
-                    // by the resolver, not by InstallationManager itself.
+                    // Pull the previously-installed version from installed.json
+                    // so the trace recorder can format
+                    // `Upgrading pkg (oldVersion => newVersion)`.
+                    let from_version = installed
+                        .packages
+                        .iter()
+                        .find(|p| p.name.eq_ignore_ascii_case(&pkg.name))
+                        .map(|p| p.version.as_str())
+                        .unwrap_or("");
                     PackageOperation::Update {
-                        from_version: &pkg.version,
+                        from_version,
                         package: pkg,
                     }
                 }
@@ -541,7 +619,13 @@ pub async fn install_from_lock(
         // Handle removals
         for name in &removals {
             console.info(&console_format!("  - Removing <info>{}</info>", name));
-            executor.uninstall_package(name, &exec_ctx)?;
+            let from_version = installed
+                .packages
+                .iter()
+                .find(|p| p.name.eq_ignore_ascii_case(name))
+                .map(|p| p.version.as_str())
+                .unwrap_or("");
+            executor.uninstall_package(name, from_version, &exec_ctx)?;
         }
 
         // Step 7: Clean up empty vendor namespace directories
