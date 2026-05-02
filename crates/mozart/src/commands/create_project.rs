@@ -424,6 +424,16 @@ pub async fn execute(
         ),
         temporary_constraints: HashMap::new(),
         raw_repositories: raw.repositories.clone(),
+        root_provide: raw
+            .provide
+            .iter()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect(),
+        root_replace: raw
+            .replace
+            .iter()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect(),
     };
 
     console.info("Resolving dependencies...");

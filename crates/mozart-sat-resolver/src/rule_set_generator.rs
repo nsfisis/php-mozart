@@ -1,6 +1,7 @@
 use crate::pool::{Literal, PackageId, Pool, PoolLink};
 use crate::rule::{ReasonData, Rule, RuleReason, RuleType};
 use crate::rule_set::RuleSet;
+use mozart_semver::VersionConstraint;
 use std::collections::{HashMap, HashSet, VecDeque};
 
 /// Generates SAT rules from the pool and request.
@@ -56,10 +57,22 @@ impl<'a> RuleSetGenerator<'a> {
     /// Generate rules for a set of requirements and fixed packages.
     ///
     /// Port of Composer's RuleSetGenerator::getRulesFor.
+    ///
+    /// `root_provides` / `root_replaces` map a target package name to the
+    /// constraint declared in the root composer.json's `provide` / `replace`
+    /// section. They mirror the "self-fulfilling rule" check in Composer's
+    /// `RuleSetGenerator::createRequireRule`: when the root package itself
+    /// provides or replaces a name it requires, no install-one-of rule is
+    /// emitted for that root require — root is implicitly already installed,
+    /// so the requirement is trivially satisfied without forcing a real
+    /// provider. Without this, Mozart picks up an inline `provided/pkg` from
+    /// the repository even though the root claims to fulfill it itself.
     pub fn generate(
         mut self,
         requires: &HashMap<String, Option<String>>,
         fixed_packages: &[PackageId],
+        root_provides: &HashMap<String, String>,
+        root_replaces: &HashMap<String, String>,
     ) -> RuleSet {
         // Process fixed packages
         for &pkg_id in fixed_packages {
@@ -81,6 +94,21 @@ impl<'a> RuleSetGenerator<'a> {
         // Process root requirements
         for (name, constraint) in requires {
             if self.is_ignored_platform_dep(name.as_str()) {
+                continue;
+            }
+
+            // Self-fulfilling root require: if the root composer.json declares
+            // `provide` / `replace` for this name and the link constraint
+            // intersects the require constraint, drop the install-one-of rule
+            // entirely. Mirrors Composer's `createRequireRule` returning null
+            // when a provider IS the package itself: there, the root is in the
+            // pool as a fixed package and `whatProvides` includes it, so the
+            // resulting rule is trivially satisfied. Mozart does not yet add
+            // the root to the pool, so we make the same decision here based
+            // on the explicit root provide/replace tables.
+            if root_self_fulfills(name, constraint.as_deref(), root_provides)
+                || root_self_fulfills(name, constraint.as_deref(), root_replaces)
+            {
                 continue;
             }
 
@@ -305,6 +333,31 @@ impl<'a> RuleSetGenerator<'a> {
     }
 }
 
+/// True when the root composer.json's `provide` / `replace` map declares
+/// `target` with a constraint that intersects the require's constraint. A
+/// missing require constraint is treated as `*` (matches anything), and a
+/// missing/unparsable link constraint conservatively does NOT match — the
+/// fixture fails closed back to the regular install-one-of path.
+fn root_self_fulfills(
+    target: &str,
+    require_constraint: Option<&str>,
+    root_links: &HashMap<String, String>,
+) -> bool {
+    let Some(link_constraint_str) = root_links.get(target) else {
+        return false;
+    };
+    let Ok(link_vc) = VersionConstraint::parse(link_constraint_str) else {
+        return false;
+    };
+    match require_constraint {
+        None => true,
+        Some(req) => match VersionConstraint::parse(req) {
+            Ok(req_vc) => req_vc.intersects(&link_vc),
+            Err(_) => false,
+        },
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -335,7 +388,7 @@ mod tests {
         requires.insert("a/a".to_string(), None);
 
         let generator = RuleSetGenerator::new(&mut pool);
-        let rules = generator.generate(&requires, &[]);
+        let rules = generator.generate(&requires, &[], &HashMap::new(), &HashMap::new());
 
         // Should have a request rule: (1 | 2)
         let request_count = rules.iter_type(RuleType::Request).count();
@@ -375,7 +428,7 @@ mod tests {
         requires.insert("a/a".to_string(), None);
 
         let generator = RuleSetGenerator::new(&mut pool);
-        let rules = generator.generate(&requires, &[]);
+        let rules = generator.generate(&requires, &[], &HashMap::new(), &HashMap::new());
 
         // Should have:
         // 1. Request rule: (1) — root requires a/a
@@ -388,7 +441,7 @@ mod tests {
         let mut pool = Pool::new(vec![make_input("php", "8.2.0.0")], vec![]);
 
         let generator = RuleSetGenerator::new(&mut pool);
-        let rules = generator.generate(&HashMap::new(), &[1]);
+        let rules = generator.generate(&HashMap::new(), &[1], &HashMap::new(), &HashMap::new());
 
         // Should have an assertion rule: (1)
         let request_rules: Vec<_> = rules.iter_type(RuleType::Request).collect();

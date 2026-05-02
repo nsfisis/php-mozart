@@ -327,7 +327,7 @@ installer_fixture!(
     provider_packages_can_not_be_installed_unless_selected,
     ignore
 );
-installer_fixture!(provider_satisfies_its_own_requirement, ignore);
+installer_fixture!(provider_satisfies_its_own_requirement);
 installer_fixture!(remove_deletes_unused_deps);
 installer_fixture!(
     remove_does_nothing_if_removal_requires_update_of_dep,
@@ -342,7 +342,7 @@ installer_fixture!(
     replaced_packages_should_not_be_installed_when_installing_from_lock,
     ignore
 );
-installer_fixture!(replacer_satisfies_its_own_requirement, ignore);
+installer_fixture!(replacer_satisfies_its_own_requirement);
 installer_fixture!(repositories_priorities, ignore);
 installer_fixture!(repositories_priorities2, ignore);
 installer_fixture!(repositories_priorities3, ignore);

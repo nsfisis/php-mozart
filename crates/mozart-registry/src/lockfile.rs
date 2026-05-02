@@ -1400,6 +1400,8 @@ mod tests {
             ))),
             temporary_constraints: HashMap::new(),
             raw_repositories: vec![],
+            root_provide: HashMap::new(),
+            root_replace: HashMap::new(),
         };
 
         let resolved = resolve(&resolve_request)

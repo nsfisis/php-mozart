@@ -569,6 +569,15 @@ pub struct ResolveRequest {
     /// preload that still live in `resolve()` (Step B follow-up will move
     /// these through `RepositorySet` too).
     pub raw_repositories: Vec<RawRepository>,
+    /// Root composer.json's `provide` map (target → constraint string). Drives
+    /// the self-fulfilling-rule check in the SAT generator: when a root
+    /// `require` names something the root itself `provide`s with a matching
+    /// constraint, no install-one-of rule is emitted, mirroring Composer's
+    /// `RuleSetGenerator::createRequireRule` self-fulfillment branch.
+    pub root_provide: HashMap<String, String>,
+    /// Root composer.json's `replace` map. Same role as `root_provide` for the
+    /// `replace` link: a replaced target counts as fulfilled by the root.
+    pub root_replace: HashMap<String, String>,
 }
 
 /// A single package in the resolution output.
@@ -848,7 +857,12 @@ pub async fn resolve(request: &ResolveRequest) -> Result<Vec<ResolvedPackage>, R
     let mut generator = RuleSetGenerator::new(&mut pool);
     generator.set_ignore_platform_reqs(ignore_set);
     generator.set_ignore_all_platform_reqs(request.ignore_platform_reqs);
-    let rules = generator.generate(&root_requires, &fixed_ids);
+    let rules = generator.generate(
+        &root_requires,
+        &fixed_ids,
+        &request.root_provide,
+        &request.root_replace,
+    );
 
     // Create policy and solve
     let policy = DefaultPolicy::new(request.prefer_stable, request.prefer_lowest);
@@ -1247,7 +1261,7 @@ mod tests {
         requires.insert("foo/foo".to_string(), Some("^1.0".to_string()));
 
         let generator = RuleSetGenerator::new(&mut pool);
-        let rules = generator.generate(&requires, &[]);
+        let rules = generator.generate(&requires, &[], &HashMap::new(), &HashMap::new());
 
         let policy = DefaultPolicy::default();
         let solver = Solver::new(rules, &pool, policy, HashSet::new());
@@ -1282,6 +1296,8 @@ mod tests {
             ))),
             temporary_constraints: HashMap::new(),
             raw_repositories: vec![],
+            root_provide: HashMap::new(),
+            root_replace: HashMap::new(),
         };
 
         let result = resolve(&request).await;

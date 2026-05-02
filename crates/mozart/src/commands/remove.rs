@@ -258,6 +258,16 @@ pub async fn execute(
         ),
         temporary_constraints: HashMap::new(),
         raw_repositories: raw.repositories.clone(),
+        root_provide: raw
+            .provide
+            .iter()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect(),
+        root_replace: raw
+            .replace
+            .iter()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect(),
     };
 
     // Print header messages
@@ -518,6 +528,16 @@ async fn remove_unused(
         ),
         temporary_constraints: HashMap::new(),
         raw_repositories: raw.repositories.clone(),
+        root_provide: raw
+            .provide
+            .iter()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect(),
+        root_replace: raw
+            .replace
+            .iter()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect(),
     };
 
     console.info("Resolving dependencies to detect unused packages...");
@@ -866,6 +886,8 @@ mod tests {
             ),
             temporary_constraints: HashMap::new(),
             raw_repositories: vec![],
+            root_provide: HashMap::new(),
+            root_replace: HashMap::new(),
         };
         let resolved = resolve(&request)
             .await
@@ -917,6 +939,8 @@ mod tests {
             ),
             temporary_constraints: HashMap::new(),
             raw_repositories: vec![],
+            root_provide: HashMap::new(),
+            root_replace: HashMap::new(),
         };
         let resolved2 = resolve(&request2)
             .await

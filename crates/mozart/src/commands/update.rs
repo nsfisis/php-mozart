@@ -887,6 +887,16 @@ pub async fn run(
         repositories: repositories.clone(),
         temporary_constraints,
         raw_repositories: composer_json.repositories.clone(),
+        root_provide: composer_json
+            .provide
+            .iter()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect(),
+        root_replace: composer_json
+            .replace
+            .iter()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect(),
     };
 
     // Step 6: Print header and run resolver
@@ -1994,6 +2004,8 @@ mod tests {
             ),
             temporary_constraints: HashMap::new(),
             raw_repositories: vec![],
+            root_provide: HashMap::new(),
+            root_replace: HashMap::new(),
         };
 
         let resolved = resolve(&request).await.expect("Resolution should succeed");
