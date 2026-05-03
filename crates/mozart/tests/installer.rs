@@ -244,7 +244,7 @@ macro_rules! installer_fixture {
 }
 
 installer_fixture!(abandoned_listed);
-installer_fixture!(alias_in_complex_constraints, ignore);
+installer_fixture!(alias_in_complex_constraints);
 installer_fixture!(alias_in_lock);
 installer_fixture!(alias_in_lock2);
 installer_fixture!(alias_on_unloadable_package);

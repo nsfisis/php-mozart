@@ -5,8 +5,10 @@
 //! a compatible set of packages to install.
 
 use indexmap::{IndexMap, IndexSet};
+use regex::{Captures, Regex};
 use std::fmt;
 use std::sync::Arc;
+use std::sync::LazyLock;
 
 use crate::packagist;
 use crate::repository::{PackageQuery, RepositorySet};
@@ -289,30 +291,46 @@ struct RootAlias {
     alias_normalized: String,
 }
 
-/// Strip a single-atom `<X> as <Y>` clause from a constraint string. Returns
-/// the cleaned constraint plus the `(left, right)` pieces when an alias is
-/// present. Mirrors Composer's `VersionParser::parseConstraint` `as`-strip:
-/// the constraint passed to the resolver is the LEFT side, and a separate
-/// alias entry is recorded for the RIGHT side. A trailing `#hex` reference
-/// (`dev-main#abcd`) is also stripped — Composer's `extractAliases` regex
-/// `([^,\s#|]+)(?:#[^ ]+)?` excludes it from the captured constraint, and
-/// `RootPackageLoader::extractReferences` records the hash separately for
-/// the post-resolve `setSourceDistReferences` pass.
-fn strip_root_alias_clause(constraint: &str) -> (String, Option<(String, String)>) {
+/// Composer's `RootPackageLoader::extractAliases` regex. Finds every
+/// `<left> as <right>` clause inside a constraint string, including those
+/// nested in OR / AND expressions (e.g. `1.*||dev-feature-foo as 1.0.2||^2`
+/// or `dev-feature-foo, dev-feature-foo as 1.0.2`). The optional `#hex`
+/// suffix on the LEFT atom is captured but excluded from the alias target,
+/// matching `RootPackageLoader::extractReferences` which records refs out
+/// of band.
+static ALIAS_CLAUSE_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(
+        r"(?P<sep>^|\| *|, *)(?P<left>[^,\s#|]+)(?:#[^ ]+)? +as +(?P<right>[^,\s|]+)(?P<after>$| *\|| *,)",
+    )
+    .expect("alias clause regex compiles")
+});
+
+/// Strip every `<X> as <Y>` clause from a constraint string. Returns the
+/// cleaned constraint plus an entry per alias. Mirrors Composer's
+/// `VersionParser::parseConstraint` `as`-strip combined with
+/// `RootPackageLoader::extractAliases`: the constraint passed to the
+/// resolver is the LEFT side of each atom, and a separate alias entry is
+/// recorded for each RIGHT side so `RootAliasPackage`-style virtual
+/// packages can be materialized later. A trailing `#hex` reference
+/// (`dev-main#abcd`) on the LEFT atom is also stripped from the cleaned
+/// constraint — `RootPackageLoader::extractReferences` records the hash
+/// out of band for the post-resolve `setSourceDistReferences` pass.
+fn strip_root_alias_clause(constraint: &str) -> (String, Vec<(String, String)>) {
     let trimmed = constraint.trim();
-    if let Some(idx) = trimmed.find(" as ") {
-        let before = trimmed[..idx].trim();
-        let after = trimmed[idx + 4..].trim();
-        if !before.is_empty()
-            && !after.is_empty()
-            && !before.contains([' ', '\t', ',', '|'])
-            && !after.contains([' ', '\t', ',', '|'])
-        {
-            let cleaned = strip_inline_reference(before);
-            return (cleaned.clone(), Some((cleaned, after.to_string())));
-        }
+    let mut aliases: Vec<(String, String)> = Vec::new();
+    let cleaned = ALIAS_CLAUSE_RE.replace_all(trimmed, |caps: &Captures<'_>| {
+        let sep = caps.name("sep").map_or("", |m| m.as_str());
+        let left = caps.name("left").map_or("", |m| m.as_str());
+        let right = caps.name("right").map_or("", |m| m.as_str());
+        let after = caps.name("after").map_or("", |m| m.as_str());
+        let cleaned_left = strip_inline_reference(left);
+        aliases.push((cleaned_left.clone(), right.to_string()));
+        format!("{sep}{cleaned_left}{after}")
+    });
+    if aliases.is_empty() {
+        return (strip_inline_reference(trimmed), aliases);
     }
-    (strip_inline_reference(trimmed), None)
+    (cleaned.into_owned(), aliases)
 }
 
 /// Drop a trailing `#hex` reference from a single-atom `dev-*` / `*-dev`
@@ -825,17 +843,20 @@ pub async fn resolve(request: &ResolveRequest) -> Result<Vec<ResolvedPackage>, R
 
     let minimum_stability = request.minimum_stability;
     let mut insert_root_require = |name: &str, constraint: &str| {
-        // Strip any `<X> as <Y>` clause first (mirrors Composer's
+        // Strip every `<X> as <Y>` clause first (mirrors Composer's
         // `parseConstraint` strip + `extractAliases` capture). The cleaned
-        // constraint feeds the resolver; the alias is recorded for a second
-        // pool-population pass once real packages are in.
+        // constraint feeds the resolver; each alias is recorded for a second
+        // pool-population pass once real packages are in. Complex constraints
+        // (`1.*||dev-feature-foo as 1.0.2||^2`) yield one alias entry plus a
+        // constraint with the ` as <Y>` segment removed in place.
         let (constraint_no_as, alias_pieces) = strip_root_alias_clause(constraint);
-        if let Some((target_atom, alias_atom)) = alias_pieces
-            && let (Some(target_normalized), Some(alias_normalized)) = (
+        for (target_atom, alias_atom) in alias_pieces {
+            let (Some(target_normalized), Some(alias_normalized)) = (
                 normalize_root_alias_atom(&target_atom),
                 normalize_root_alias_atom(&alias_atom),
-            )
-        {
+            ) else {
+                continue;
+            };
             root_aliases.push(RootAlias {
                 package: name.to_lowercase(),
                 version_normalized: target_normalized,

@@ -650,34 +650,39 @@ fn parse_and_group(s: &str) -> Result<VersionConstraint, String> {
 /// Split on spaces or commas (AND separator), respecting that version strings
 /// can contain `-` (pre-release).
 fn split_and(s: &str) -> Vec<String> {
-    // A constraint "part" is separated by space or comma when not part of
-    // operator prefixes like `>=`, `<=`, `!=`, or version like `1.2.3-beta`.
-    // Strategy: tokenize by whitespace/comma, then re-join multi-token ranges.
-    let tokens: Vec<&str> = s.split([' ', ',']).filter(|t| !t.is_empty()).collect();
-
+    // Comma is an unambiguous AND separator (`dev-foo, dev-bar` → two atoms).
+    // Within a comma-part, space splits with an operator-aware heuristic so
+    // `>= 1.0.0` stays glued. Without the comma pre-pass, `dev-foo, dev-bar`
+    // collapses into a single atom because the second `dev-bar` doesn't start
+    // with an operator/digit and the heuristic treats it as a continuation.
     let mut parts: Vec<String> = Vec::new();
-    let mut current = String::new();
-
-    for token in tokens {
-        if current.is_empty() {
-            current = token.to_string();
-        } else {
-            // If the token starts with an operator or a digit/^ ~/>, it's a new constraint
-            let starts_new = token.starts_with(|c: char| {
-                matches!(c, '>' | '<' | '!' | '=' | '^' | '~' | '*') || c.is_ascii_digit()
-            });
-            if starts_new {
-                parts.push(current.trim().to_string());
+    for segment in s.split(',') {
+        let tokens: Vec<&str> = segment.split_whitespace().collect();
+        if tokens.is_empty() {
+            continue;
+        }
+        let mut current = String::new();
+        for token in tokens {
+            if current.is_empty() {
                 current = token.to_string();
             } else {
-                // Continuation (e.g. part of a version string with spaces)
-                current.push(' ');
-                current.push_str(token);
+                // If the token starts with an operator or a digit/^ ~/>, it's a new constraint
+                let starts_new = token.starts_with(|c: char| {
+                    matches!(c, '>' | '<' | '!' | '=' | '^' | '~' | '*') || c.is_ascii_digit()
+                });
+                if starts_new {
+                    parts.push(current.trim().to_string());
+                    current = token.to_string();
+                } else {
+                    // Continuation (e.g. part of a version string with spaces)
+                    current.push(' ');
+                    current.push_str(token);
+                }
             }
         }
-    }
-    if !current.is_empty() {
-        parts.push(current.trim().to_string());
+        if !current.is_empty() {
+            parts.push(current.trim().to_string());
+        }
     }
 
     parts
