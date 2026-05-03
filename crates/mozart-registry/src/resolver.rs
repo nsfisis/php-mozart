@@ -800,6 +800,13 @@ pub struct LockedPackageInfo {
     pub replaces: Vec<(String, String)>,
     pub provides: Vec<(String, String)>,
     pub conflicts: Vec<(String, String)>,
+    /// Branch-alias entries to surface alongside the base locked package, as
+    /// `(pretty, normalized)` pairs. Mirrors what
+    /// `Composer\Package\Locker::getLockedRepository` constructs from
+    /// `extra.branch-alias`: a `dev-master` locked package with branch alias
+    /// `2.1.x-dev` needs to expose itself under both versions so root
+    /// constraints like `~2.1` still resolve on a partial update.
+    pub branch_aliases: Vec<(String, String)>,
 }
 
 /// A single package in the resolution output.
@@ -1098,15 +1105,28 @@ pub async fn resolve(request: &ResolveRequest) -> Result<Vec<ResolvedPackage>, R
     }
 
     // Build a map first so the filter below knows which (name, version)
-    // pairs are the only allowed entries for locked names.
-    let locked_name_to_version: IndexMap<String, String> = request
+    // pairs are the only allowed entries for locked names. Each entry holds
+    // the locked normalized version plus any branch-alias normalized
+    // versions Composer's `Locker::getLockedRepository` would expose
+    // alongside the base. Without the alias entries, an inline-package or
+    // VCS source providing the same `dev-master` + alias as the lock would
+    // have its alias filtered out, leaving root constraints like `~2.1` —
+    // which can only match the alias version, not the raw `dev-master` —
+    // unsatisfiable on a partial update.
+    let locked_name_to_versions: IndexMap<String, Vec<String>> = request
         .locked_packages
         .iter()
-        .map(|p| (p.name.to_lowercase(), p.version_normalized.clone()))
+        .map(|p| {
+            let mut versions = vec![p.version_normalized.clone()];
+            for (_, alias_normalized) in &p.branch_aliases {
+                versions.push(alias_normalized.clone());
+            }
+            (p.name.to_lowercase(), versions)
+        })
         .collect();
     let lock_filter_allows = |name: &str, version: &str| -> bool {
-        match locked_name_to_version.get(&name.to_lowercase()) {
-            Some(locked_version) => locked_version == version,
+        match locked_name_to_versions.get(&name.to_lowercase()) {
+            Some(locked_versions) => locked_versions.iter().any(|v| v == version),
             None => true,
         }
     };

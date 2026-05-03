@@ -468,6 +468,7 @@ pub async fn execute(
             mozart_registry::repository::RepositorySet::with_packagist(repo_cache.clone()),
         ),
         previous_lock: None,
+        lock_pinned_names: indexmap::IndexSet::new(),
     })
     .await?;
 

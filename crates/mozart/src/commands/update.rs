@@ -410,6 +410,15 @@ pub fn apply_partial_update(
         .into_iter()
         .map(|mut pkg| {
             let name_lower = pkg.name.to_lowercase();
+            // Alias entries already carry their post-swap shape: the resolver
+            // picked them from the locked-repo branch-alias surface, which is
+            // exactly where the previous lock would have put them. Re-pinning
+            // their `version` to the base's locked pretty would collapse the
+            // alias label into the base, leaving a self-referential entry in
+            // the new lock's `aliases[]` block.
+            if pkg.alias_of_normalized.is_some() {
+                return pkg;
+            }
             // If this package is NOT in the update set and we have an old locked version,
             // swap it back to the old version to prevent unintended changes.
             //
@@ -1230,6 +1239,10 @@ pub async fn run(
                             continue;
                         }
                         names.insert(name_lower.clone());
+                        let branch_aliases = lockfile::locked_package_branch_aliases(p)
+                            .into_iter()
+                            .map(|a| (a.alias, a.alias_normalized))
+                            .collect();
                         infos.push(LockedPackageInfo {
                             name: name_lower,
                             pretty_version: p.version.clone(),
@@ -1254,6 +1267,7 @@ pub async fn run(
                                 .iter()
                                 .map(|(k, v)| (k.to_lowercase(), v.clone()))
                                 .collect(),
+                            branch_aliases,
                         });
                     }
                     (names, infos)
@@ -1599,6 +1613,25 @@ pub async fn run(
     // Step 9: Generate new lock file. `include_dev: true` matches Composer:
     // `update --no-dev` still writes a complete lock file with packages-dev
     // populated, so a later `install` (with dev_mode) sees them.
+    //
+    // For partial updates, names NOT in the CLI allow list keep their
+    // locked-repo metadata (source/dist references in particular). Computed
+    // here from the same `update_packages` list `apply_partial_update` used
+    // to swap the resolved versions back. Empty for full updates.
+    let lock_pinned_names: IndexSet<String> = if update_packages.is_empty() {
+        IndexSet::new()
+    } else if let Some(lock) = &old_lock {
+        let update_set: IndexSet<String> =
+            update_packages.iter().map(|s| s.to_lowercase()).collect();
+        lock.packages
+            .iter()
+            .chain(lock.packages_dev.iter().flatten())
+            .map(|p| p.name.to_lowercase())
+            .filter(|n| !update_set.contains(n))
+            .collect()
+    } else {
+        IndexSet::new()
+    };
     let mut new_lock = lockfile::generate_lock_file(&lockfile::LockFileGenerationRequest {
         resolved_packages: resolved,
         composer_json_content: composer_json_content.clone(),
@@ -1606,6 +1639,7 @@ pub async fn run(
         include_dev: true,
         repositories: repositories.clone(),
         previous_lock: old_lock.clone(),
+        lock_pinned_names,
     })
     .await?;
 
@@ -2504,6 +2538,7 @@ mod tests {
                 ),
             ),
             previous_lock: None,
+            lock_pinned_names: IndexSet::new(),
         })
         .await
         .expect("Lock file generation should succeed");

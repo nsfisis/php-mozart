@@ -467,6 +467,16 @@ pub struct LockFileGenerationRequest {
     /// during partial updates: lock entries are stable across updates that
     /// don't touch the package, even if the upstream metadata has drifted.
     pub previous_lock: Option<LockFile>,
+    /// Lowercase package names that were held back to their locked version
+    /// on a partial update — i.e. they were NOT in the CLI's allow list and
+    /// were re-pinned by `apply_partial_update`. For these names the lock
+    /// entry's metadata (source/dist references in particular) is canonical:
+    /// inline / composer-repo metadata may have drifted to a newer commit
+    /// that the partial update is explicitly choosing not to take. Mirrors
+    /// Composer's `PoolBuilder`, which keeps non-allow-listed packages at
+    /// the locked-repo entry rather than re-loading them from the inline /
+    /// VCS sources.
+    pub lock_pinned_names: indexmap::IndexSet<String>,
 }
 
 impl LockFileGenerationRequest {
@@ -926,6 +936,21 @@ pub async fn generate_lock_file(request: &LockFileGenerationRequest) -> anyhow::
     let mut package_metadata: IndexMap<String, PackagistVersion> = IndexMap::new();
     let repo_set = &request.repositories;
     for pkg in &real_resolved {
+        // For packages held back to the locked version on a partial update,
+        // the lock entry is the canonical metadata source. Inline / composer-
+        // repo / VCS sources may have moved to a newer commit that this
+        // partial update is explicitly choosing NOT to take, so consulting
+        // them first would silently bump the source/dist reference. Mirrors
+        // Composer's `PoolBuilder` behaviour: non-allow-listed packages keep
+        // the locked-repo entry rather than re-loading from upstream.
+        let pinned = request.lock_pinned_names.contains(&pkg.name.to_lowercase());
+        if pinned
+            && let Some(prev) = request.previous_lock_lookup(&pkg.name, &pkg.version_normalized)
+        {
+            package_metadata.insert(pkg.name.clone(), prev);
+            continue;
+        }
+
         if let Some(inline) = request.inline_lookup(&pkg.name, &pkg.version_normalized) {
             package_metadata.insert(pkg.name.clone(), inline);
             continue;
@@ -1640,6 +1665,7 @@ mod tests {
                 crate::cache::Cache::new(std::env::temp_dir().join("mozart-test-cache"), false),
             )),
             previous_lock: None,
+            lock_pinned_names: IndexSet::new(),
         };
 
         let lock = generate_lock_file(&request).await.unwrap();
@@ -1787,6 +1813,7 @@ mod tests {
                 false,
             ))),
             previous_lock: None,
+            lock_pinned_names: IndexSet::new(),
         };
 
         let lock = generate_lock_file(&gen_request)

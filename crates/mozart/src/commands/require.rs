@@ -769,6 +769,7 @@ pub async fn execute(
             mozart_registry::repository::RepositorySet::with_packagist(repo_cache.clone()),
         ),
         previous_lock: old_lock.clone(),
+        lock_pinned_names: indexmap::IndexSet::new(),
     })
     .await?;
 
@@ -1103,6 +1104,7 @@ mod tests {
                 ),
             ),
             previous_lock: None,
+            lock_pinned_names: IndexSet::new(),
         })
         .await
         .expect("Lock file generation should succeed");
@@ -1180,6 +1182,7 @@ mod tests {
                 ),
             ),
             previous_lock: None,
+            lock_pinned_names: IndexSet::new(),
         })
         .await
         .expect("Lock file generation should succeed");

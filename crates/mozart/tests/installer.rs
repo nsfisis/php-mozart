@@ -311,10 +311,7 @@ installer_fixture!(outdated_lock_file_fails_install);
 installer_fixture!(outdated_lock_file_with_new_platform_reqs_fails);
 installer_fixture!(partial_update_always_updates_symlinked_path_repos);
 installer_fixture!(partial_update_downgrades_non_allow_listed_unstable);
-installer_fixture!(
-    partial_update_forces_dev_reference_from_lock_for_non_updated_packages,
-    ignore
-);
+installer_fixture!(partial_update_forces_dev_reference_from_lock_for_non_updated_packages);
 installer_fixture!(partial_update_from_lock);
 installer_fixture!(partial_update_from_lock_with_root_alias);
 installer_fixture!(partial_update_installs_from_lock_even_missing, ignore);

@@ -380,6 +380,7 @@ pub async fn execute(
             mozart_registry::repository::RepositorySet::with_packagist(repo_cache.clone()),
         ),
         previous_lock: old_lock.clone(),
+        lock_pinned_names: indexmap::IndexSet::new(),
     })
     .await?;
 
@@ -627,6 +628,7 @@ async fn remove_unused(
             mozart_registry::repository::RepositorySet::with_packagist(repo_cache.clone()),
         ),
         previous_lock: Some(old_lock.clone()),
+        lock_pinned_names: indexmap::IndexSet::new(),
     })
     .await?;
 
@@ -946,6 +948,7 @@ mod tests {
                 ),
             ),
             previous_lock: None,
+            lock_pinned_names: IndexSet::new(),
         })
         .await
         .expect("initial lock file generation should succeed");
@@ -1010,6 +1013,7 @@ mod tests {
                 ),
             ),
             previous_lock: Some(initial_lock.clone()),
+            lock_pinned_names: IndexSet::new(),
         })
         .await
         .expect("post-remove lock file generation should succeed");
