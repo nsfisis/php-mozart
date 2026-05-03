@@ -338,10 +338,7 @@ installer_fixture!(provider_conflicts2);
 installer_fixture!(provider_conflicts3);
 installer_fixture!(provider_dev_require_can_satisfy_require);
 installer_fixture!(provider_gets_picked_together_with_other_version_of_provided);
-installer_fixture!(
-    provider_gets_picked_together_with_other_version_of_provided_conflict,
-    ignore
-);
+installer_fixture!(provider_gets_picked_together_with_other_version_of_provided_conflict);
 installer_fixture!(provider_gets_picked_together_with_other_version_of_provided_indirect);
 installer_fixture!(provider_packages_can_be_installed_if_selected);
 installer_fixture!(provider_packages_can_be_installed_together_with_provided_if_both_installable);

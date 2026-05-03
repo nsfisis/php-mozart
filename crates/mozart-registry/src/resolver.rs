@@ -1181,7 +1181,24 @@ pub async fn resolve(request: &ResolveRequest) -> Result<Vec<ResolvedPackage>, R
                 .unwrap_or(false)
         })
     };
-    let add_inline_for = |name: &str, builder: &mut PoolBuilder| -> bool {
+    // Mirrors Composer's `PoolBuilder::markPackageNameForLoading`: a root
+    // require's constraint caps every load of that name. Transitive deps that
+    // would otherwise pull in an out-of-range version (e.g. `foo/requirer`
+    // requires `foo/original 1.0.0` while the root pinned it at `3.0.0`) are
+    // silently filtered down to the root-required range, so the pool never
+    // sees a candidate the root forbids. Without this, providers that satisfy
+    // the root require can coexist with the actual package at the wrong
+    // version, masking what should be a conflict.
+    //
+    // The match check considers both the base version and any branch-alias
+    // entries it expands to — mirrors `ArrayRepository::loadPackages`, which
+    // pulls in the base whenever any of its aliases satisfies the constraint
+    // (and vice-versa). Skipping the base when only an alias matches would
+    // leave the alias dangling.
+    let add_inline_for = |name: &str,
+                          load_constraint: Option<&VersionConstraint>,
+                          builder: &mut PoolBuilder|
+     -> bool {
         let Some(packages) = inline_packages_by_name.get(name) else {
             return false;
         };
@@ -1198,6 +1215,16 @@ pub async fn resolve(request: &ResolveRequest) -> Result<Vec<ResolvedPackage>, R
                 request.minimum_stability,
                 &stability_flags,
             );
+            if let Some(c) = load_constraint {
+                let any_matches = inputs.iter().any(|input| {
+                    Version::parse(&input.version)
+                        .map(|v| c.matches(&v))
+                        .unwrap_or(false)
+                });
+                if !any_matches {
+                    continue;
+                }
+            }
             for input in inputs {
                 if !lock_filter_allows(&input.name, &input.version) {
                     continue;
@@ -1207,6 +1234,17 @@ pub async fn resolve(request: &ResolveRequest) -> Result<Vec<ResolvedPackage>, R
         }
         true
     };
+
+    // Pre-parse root-require constraints once. Reused for every name lookup
+    // in the seed + transitive loops below.
+    let root_require_constraints: IndexMap<String, VersionConstraint> = root_requires
+        .iter()
+        .filter_map(|(name, c)| {
+            c.as_deref()
+                .and_then(|s| VersionConstraint::parse(s).ok())
+                .map(|vc| (name.clone(), vc))
+        })
+        .collect();
 
     // Collect packages from `type: composer` repositories with file:// URLs.
     // The harness rewrites `file://foobar` to `file:///abs/path` before this
@@ -1254,7 +1292,8 @@ pub async fn resolve(request: &ResolveRequest) -> Result<Vec<ResolvedPackage>, R
         .collect();
     let mut seed_queries: Vec<PackageQuery<'_>> = Vec::new();
     for name in &seed_names {
-        if add_inline_for(name.as_str(), &mut builder) {
+        let load_constraint = root_require_constraints.get(name);
+        if add_inline_for(name.as_str(), load_constraint, &mut builder) {
             continue;
         }
         seed_queries.push(PackageQuery {
@@ -1297,13 +1336,14 @@ pub async fn resolve(request: &ResolveRequest) -> Result<Vec<ResolvedPackage>, R
         if vcs_package_names.contains(&name) || composer_repo_names.contains(&name) {
             continue;
         }
-        if add_inline_for(name.as_str(), &mut builder) {
+        let load_constraint = root_require_constraints.get(&name);
+        if add_inline_for(name.as_str(), load_constraint, &mut builder) {
             continue;
         }
 
         let queries = [PackageQuery {
             name: name.as_str(),
-            constraint: None,
+            constraint: root_requires.get(&name).and_then(|c| c.as_deref()),
         }];
         let results = match repo_set.load_packages(&queries).await {
             Ok(v) => v,

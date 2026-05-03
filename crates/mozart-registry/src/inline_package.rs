@@ -143,17 +143,29 @@ fn parse_inline_package(value: &serde_json::Value) -> Option<InlinePackage> {
     // PackagistVersion requires `version_normalized`. If the inline definition
     // omits it (the common case), compute it the same way Packagist does:
     // run the version through Mozart's normalizer.
+    //
+    // Mirrors Composer's `ArrayLoader::parsePackage` Composer v1 compat path:
+    // when `version_normalized` is exactly `9999999-dev` (the legacy default
+    // branch sentinel), re-normalize from the human-readable `version` field
+    // instead. Without this, the package's version stays as `9999999-dev`
+    // even though its pretty form is e.g. `dev-master`, and a root require
+    // for `dev-master` then can't match the loaded package.
     let mut value_for_parse = value.clone();
-    if let serde_json::Value::Object(ref mut map) = value_for_parse
-        && !map.contains_key("version_normalized")
-    {
-        let normalized = mozart_semver::Version::parse(&version_str)
-            .map(|v| v.to_string())
-            .unwrap_or_else(|_| version_str.clone());
-        map.insert(
-            "version_normalized".to_string(),
-            serde_json::Value::String(normalized),
-        );
+    if let serde_json::Value::Object(ref mut map) = value_for_parse {
+        let needs_normalize = match map.get("version_normalized") {
+            None => true,
+            Some(serde_json::Value::String(s)) => s == "9999999-dev",
+            _ => false,
+        };
+        if needs_normalize {
+            let normalized = mozart_semver::Version::parse(&version_str)
+                .map(|v| v.to_string())
+                .unwrap_or_else(|_| version_str.clone());
+            map.insert(
+                "version_normalized".to_string(),
+                serde_json::Value::String(normalized),
+            );
+        }
     }
 
     let version: PackagistVersion = serde_json::from_value(value_for_parse).ok()?;
