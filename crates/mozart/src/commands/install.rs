@@ -731,6 +731,93 @@ fn collect_install_same_name_problems(lock: &lockfile::LockFile, dev_mode: bool)
     problems
 }
 
+/// Detect declared `conflict` clashes between two packages already in the
+/// lock. Mirrors what Composer's `Installer::doInstall` SAT verify catches
+/// when one locked package conflicts with another locked package's version
+/// (including its branch-alias and the lock's top-level `aliases` block):
+/// the SAT solver fails with `SolverProblemsException`, exit-code 2,
+/// and the user is told to run `composer update`.
+///
+/// We don't yet run a full SAT verify on `install`; this targeted check
+/// covers the lock-file-only conflict case the SAT solver would have
+/// caught. Each (declarer, target) pair where the target's effective
+/// version satisfies the declarer's `conflict` constraint is reported.
+fn collect_install_conflict_problems(lock: &lockfile::LockFile, dev_mode: bool) -> Vec<String> {
+    use mozart_semver::{Version, VersionConstraint};
+
+    let mut all_pkgs: Vec<&lockfile::LockedPackage> = lock.packages.iter().collect();
+    if dev_mode {
+        all_pkgs.extend(lock.packages_dev.iter().flatten());
+    }
+
+    // Collect every (name → version_string) pair the lock advertises so a
+    // conflict against a name can be matched against any version that name
+    // resolves to. Sources, in order: a package's own `(name, version)`,
+    // its `extra.branch-alias` mapping, the lock's top-level `aliases`
+    // block, and each `replace` target with its declared constraint as a
+    // best-effort version (Composer's solver would re-run constraint
+    // intersection here; we treat exact replace constraints as concrete
+    // versions to keep this check string-based).
+    let mut name_versions: Vec<(String, String, &lockfile::LockedPackage)> = Vec::new();
+    for &p in &all_pkgs {
+        let lower_name = p.name.to_lowercase();
+        name_versions.push((lower_name.clone(), p.version.clone(), p));
+        if let Some(branch_alias) = p
+            .extra_fields
+            .get("extra")
+            .and_then(|e| e.get("branch-alias"))
+            .and_then(|m| m.as_object())
+            && let Some(alias_target) = branch_alias.get(&p.version).and_then(|v| v.as_str())
+        {
+            name_versions.push((lower_name.clone(), alias_target.to_string(), p));
+        }
+        for (target, constraint) in &p.replace {
+            name_versions.push((target.to_lowercase(), constraint.clone(), p));
+        }
+    }
+    for la in &lock.aliases {
+        // The lock's top-level aliases block exposes a package under the
+        // alias's pretty version pointing at a base (`package`, `version`).
+        // Find that base in `all_pkgs` so the alias inherits its conflict
+        // declarations transparently.
+        if let Some(base) = all_pkgs
+            .iter()
+            .find(|p| p.name.eq_ignore_ascii_case(&la.package) && p.version == la.version)
+        {
+            name_versions.push((la.package.to_lowercase(), la.alias.clone(), base));
+        }
+    }
+
+    let mut problems = Vec::new();
+    for &p in &all_pkgs {
+        for (target, conflict_constraint) in &p.conflict {
+            let target_lower = target.to_lowercase();
+            let Ok(constraint) = VersionConstraint::parse(conflict_constraint) else {
+                continue;
+            };
+            for (name, ver, source) in &name_versions {
+                if name != &target_lower {
+                    continue;
+                }
+                if std::ptr::eq(*source as *const _, p as *const _) {
+                    continue;
+                }
+                let Ok(parsed_ver) = Version::parse(ver) else {
+                    continue;
+                };
+                if constraint.matches(&parsed_ver) {
+                    problems.push(format!(
+                        "- {} {} conflicts with {} {}.",
+                        p.name, p.version, source.name, ver
+                    ));
+                    break;
+                }
+            }
+        }
+    }
+    problems
+}
+
 /// Merge platform requirements from the lock's `platform`/`platform-dev`
 /// fields and the root composer.json's `require`/`require-dev`. Root
 /// composer.json overrides the lock on duplicate keys (matching Composer's
@@ -1354,6 +1441,21 @@ pub async fn run(
             );
             console.info("");
             for (i, msg) in same_name_problems.iter().enumerate() {
+                console.info(&format!("  Problem {}", i + 1));
+                console.info(&format!("    {msg}"));
+            }
+            return Err(mozart_core::exit_code::bail_silent(
+                mozart_core::exit_code::DEPENDENCY_RESOLUTION_FAILED,
+            ));
+        }
+
+        let conflict_problems = collect_install_conflict_problems(&lock, dev_mode);
+        if !conflict_problems.is_empty() {
+            console.info(
+                "Your lock file does not contain a compatible set of packages. Please run composer update.",
+            );
+            console.info("");
+            for (i, msg) in conflict_problems.iter().enumerate() {
                 console.info(&format!("  Problem {}", i + 1));
                 console.info(&format!("    {msg}"));
             }

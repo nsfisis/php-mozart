@@ -239,7 +239,7 @@ installer_fixture!(conflict_between_root_and_dependent);
 installer_fixture!(conflict_downgrade);
 installer_fixture!(conflict_downgrade_nested);
 installer_fixture!(conflict_on_root_with_alias_prevents_update_if_not_required);
-installer_fixture!(conflict_with_alias_in_lock_does_prevents_install, ignore);
+installer_fixture!(conflict_with_alias_in_lock_does_prevents_install);
 installer_fixture!(conflict_with_alias_prevents_update);
 installer_fixture!(conflict_with_alias_prevents_update_if_not_required);
 installer_fixture!(conflict_with_all_dependencies_option_dont_recommend_to_use_it);
