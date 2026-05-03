@@ -843,6 +843,41 @@ pub async fn run(
         .filter(|p| !matches!(p.to_lowercase().as_str(), "lock" | "nothing" | "mirrors"))
         .collect();
 
+    // For partial updates (specific package names given), eagerly read the
+    // lock file to collect names that stay pinned across this resolve.
+    // The resolver uses this set to skip materializing root `as` aliases
+    // for those packages — Composer's `PoolBuilder::loadPackage` only
+    // applies a root alias when the package's update is being propagated,
+    // so a locked-only package keeps its locked version unaliased.
+    //
+    // Only the *names* are needed — the full lock is re-read below for
+    // change reporting and `apply_partial_update` post-processing. Reading
+    // it twice is fine: it's a small JSON file. Errors here fall back to
+    // an empty set (treat as full update); the later read surfaces the
+    // failure to the user.
+    let locked_package_names: IndexSet<String> = if !raw_packages.is_empty() && lock_path.exists() {
+        match lockfile::LockFile::read_from_file(&lock_path) {
+            Ok(l) => {
+                let updated: IndexSet<String> =
+                    raw_packages.iter().map(|s| s.to_lowercase()).collect();
+                l.packages
+                    .iter()
+                    .map(|p| p.name.to_lowercase())
+                    .chain(
+                        l.packages_dev
+                            .iter()
+                            .flatten()
+                            .map(|p| p.name.to_lowercase()),
+                    )
+                    .filter(|n| !updated.contains(n))
+                    .collect()
+            }
+            Err(_) => IndexSet::new(),
+        }
+    } else {
+        IndexSet::new()
+    };
+
     // Step 5: Build the resolve request from composer.json
     // Filter out platform packages from require list for the resolver (they're handled separately)
     let require: Vec<(String, String)> = composer_json
@@ -912,6 +947,7 @@ pub async fn run(
             .iter()
             .map(|(k, v)| (k.clone(), v.clone()))
             .collect(),
+        locked_package_names,
     };
 
     // Step 6: Print header and run resolver
@@ -2023,6 +2059,7 @@ mod tests {
             root_provide: IndexMap::new(),
             root_replace: IndexMap::new(),
             root_conflict: IndexMap::new(),
+            locked_package_names: IndexSet::new(),
         };
 
         let resolved = resolve(&request).await.expect("Resolution should succeed");

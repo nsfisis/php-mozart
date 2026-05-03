@@ -49,10 +49,17 @@ impl PartialOrd for Version {
 
 impl Ord for Version {
     fn cmp(&self, other: &Self) -> Ordering {
-        // Dev branches are always lowest
-        match (self.is_dev_branch, other.is_dev_branch) {
+        // Named dev branches (`dev-foo`) sort below every numeric version.
+        // A wildcard `1.0.x-dev` parses with `is_dev_branch=true` but
+        // `dev_branch_name=None` and is semantically identical to its
+        // normalized form `1.0.9999999.9999999-dev` (which parses with
+        // `is_dev_branch=false`). Only the *named* case takes the
+        // branch-comparison shortcut; unnamed wildcards fall through to
+        // numeric comparison so the two forms compare equal.
+        let self_named = self.is_dev_branch && self.dev_branch_name.is_some();
+        let other_named = other.is_dev_branch && other.dev_branch_name.is_some();
+        match (self_named, other_named) {
             (true, true) => {
-                // Compare branch names
                 return self.dev_branch_name.cmp(&other.dev_branch_name);
             }
             (true, false) => return Ordering::Less,
@@ -351,12 +358,19 @@ pub enum Constraint {
 impl Constraint {
     pub fn matches(&self, v: &Version) -> bool {
         match self {
-            Constraint::Exact(target) => v == target,
+            // Compare via `Ord` (rather than the derived `PartialEq`) so
+            // wildcard-branch / numeric-dev pairs that represent the same
+            // normalized version — e.g. `1.0.x-dev` (`is_dev_branch=true,
+            // name=None`) and its expanded form `1.0.9999999.9999999-dev`
+            // (`is_dev_branch=false`) — count as equal. The derived `==`
+            // would compare `is_dev_branch` field-by-field and miss the
+            // match.
+            Constraint::Exact(target) => v.cmp(target).is_eq(),
             Constraint::GreaterThan(target) => v > target,
             Constraint::GreaterThanOrEqual(target) => v >= target,
             Constraint::LessThan(target) => v < target,
             Constraint::LessThanOrEqual(target) => v <= target,
-            Constraint::NotEqual(target) => v != target,
+            Constraint::NotEqual(target) => !v.cmp(target).is_eq(),
             Constraint::Any => true,
         }
     }
@@ -2266,11 +2280,16 @@ mod tests {
 
     #[test]
     fn test_x_dev_ordering_within_range() {
-        // "2.x-dev" version has patch=9999999, build=9999999 and is a dev branch.
-        // Dev branches are always lowest. So "2.x-dev" < "2.0.0" < "3.0.0".
+        // `2.x-dev` is the in-progress 2.x branch and normalizes to
+        // `2.9999999.9999999.9999999-dev`. Numerically that sorts above any
+        // concrete `2.N.M` release — Composer relies on this so a wildcard
+        // branch alias compares as the *latest* candidate within its major.
+        // Only *named* dev branches (`dev-foo`) sort below numeric versions.
         let x_dev = Version::parse("2.x-dev").unwrap();
-        let stable = Version::parse("2.0.0").unwrap();
-        assert!(x_dev < stable);
+        let stable_low = Version::parse("2.0.0").unwrap();
+        let stable_next_major = Version::parse("3.0.0").unwrap();
+        assert!(x_dev > stable_low);
+        assert!(x_dev < stable_next_major);
     }
 
     #[test]

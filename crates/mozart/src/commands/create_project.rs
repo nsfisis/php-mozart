@@ -440,6 +440,7 @@ pub async fn execute(
             .iter()
             .map(|(k, v)| (k.clone(), v.clone()))
             .collect(),
+        locked_package_names: indexmap::IndexSet::new(),
     };
 
     console.info("Resolving dependencies...");

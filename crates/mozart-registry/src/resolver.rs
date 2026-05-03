@@ -237,6 +237,77 @@ pub(crate) fn normalize_branch_alias_target(alias_target: &str) -> Option<String
     Some(format!("{}-dev", expanded.join(".")))
 }
 
+/// Mirror Composer's `VersionParser::normalize` for the values that appear on
+/// either side of an `as` clause (`require: "1.0.x-dev as dev-master"`).
+///
+/// Composer sends both sides through `normalize`, which:
+/// - Maps `master` / `trunk` / `default` (with optional `dev-` prefix) to
+///   `9999999-dev`. Mozart's pool uses the four-segment expansion
+///   `9999999.9999999.9999999.9999999-dev`, which is what
+///   `make_default_branch_alias` emits — keep the same form here so a root
+///   `as dev-master` lines up with synthetic default-branch aliases.
+/// - Strips a leading `v` and treats numeric `*.x-dev` branches via
+///   `normalizeBranch` (= `normalize_branch_alias_target`).
+/// - Leaves other `dev-NAME` strings as `dev-NAME`.
+fn normalize_root_alias_atom(atom: &str) -> Option<String> {
+    let trimmed = atom.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let lower = trimmed.to_lowercase();
+    let stripped = lower.strip_prefix("dev-").unwrap_or(&lower);
+    if matches!(stripped, "master" | "trunk" | "default") {
+        return Some("9999999.9999999.9999999.9999999-dev".to_string());
+    }
+    if let Some(numeric) = normalize_branch_alias_target(trimmed) {
+        return Some(numeric);
+    }
+    if let Some(rest) = lower.strip_prefix("dev-") {
+        return Some(format!("dev-{rest}"));
+    }
+    parse_normalized(trimmed).map(|_| trimmed.to_string())
+}
+
+/// A root-level alias declared via the `require: "X as Y"` shorthand on the
+/// root composer.json. Mirrors Composer's
+/// `RootPackageLoader::extractAliases` entries: when the resolver loads a
+/// package matching `(package, version_normalized)`, it materializes an extra
+/// alias entry exposing the same install under `alias_normalized`/`alias`.
+#[derive(Debug, Clone)]
+struct RootAlias {
+    package: String,
+    /// Normalized form of the LEFT-hand side (the actual constraint).
+    version_normalized: String,
+    /// Pretty form of the RIGHT-hand side (the alias to expose).
+    alias: String,
+    /// Normalized form of the RIGHT-hand side.
+    alias_normalized: String,
+}
+
+/// Strip a single-atom `<X> as <Y>` clause from a constraint string. Returns
+/// the cleaned constraint plus the `(left, right)` pieces when an alias is
+/// present. Mirrors Composer's `VersionParser::parseConstraint` `as`-strip:
+/// the constraint passed to the resolver is the LEFT side, and a separate
+/// alias entry is recorded for the RIGHT side.
+fn strip_root_alias_clause(constraint: &str) -> (String, Option<(String, String)>) {
+    let trimmed = constraint.trim();
+    if let Some(idx) = trimmed.find(" as ") {
+        let before = trimmed[..idx].trim();
+        let after = trimmed[idx + 4..].trim();
+        if !before.is_empty()
+            && !after.is_empty()
+            && !before.contains([' ', '\t', ',', '|'])
+            && !after.contains([' ', '\t', ',', '|'])
+        {
+            return (
+                before.to_string(),
+                Some((before.to_string(), after.to_string())),
+            );
+        }
+    }
+    (trimmed.to_string(), None)
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // PackageName
 // ─────────────────────────────────────────────────────────────────────────────
@@ -618,6 +689,13 @@ pub struct ResolveRequest {
     /// targeted version and any alias / replace / provide that would resolve
     /// to it.
     pub root_conflict: IndexMap<String, String>,
+    /// Lowercase names of packages that are pinned to their lock-file version
+    /// for this resolve (a partial update where the package is not in the
+    /// update list). Mirrors the `propagateUpdate=false` branch of Composer's
+    /// `PoolBuilder::loadPackage`: locked-only packages do not pick up
+    /// `require: "X as Y"` root aliases. Empty for installs and full updates,
+    /// where every package can take aliases as usual.
+    pub locked_package_names: IndexSet<String>,
 }
 
 /// A single package in the resolution output.
@@ -653,10 +731,33 @@ pub async fn resolve(request: &ResolveRequest) -> Result<Vec<ResolvedPackage>, R
     // `RootPackageLoader::extractStabilityFlags`. Merged on top of the
     // request's caller-supplied flags (which today are usually empty).
     let mut stability_flags: IndexMap<String, Stability> = request.stability_flags.clone();
+    // Root-level aliases extracted from `require: "X as Y"`. Mirrors
+    // Composer's `RootPackageLoader::extractAliases`: each entry adds a new
+    // alias package to the pool exposing the matched real package under the
+    // RIGHT-hand version label.
+    let mut root_aliases: Vec<RootAlias> = Vec::new();
 
     let minimum_stability = request.minimum_stability;
     let mut insert_root_require = |name: &str, constraint: &str| {
-        let (clean, stability) = extract_stability_suffix(constraint);
+        // Strip any `<X> as <Y>` clause first (mirrors Composer's
+        // `parseConstraint` strip + `extractAliases` capture). The cleaned
+        // constraint feeds the resolver; the alias is recorded for a second
+        // pool-population pass once real packages are in.
+        let (constraint_no_as, alias_pieces) = strip_root_alias_clause(constraint);
+        if let Some((target_atom, alias_atom)) = alias_pieces
+            && let (Some(target_normalized), Some(alias_normalized)) = (
+                normalize_root_alias_atom(&target_atom),
+                normalize_root_alias_atom(&alias_atom),
+            )
+        {
+            root_aliases.push(RootAlias {
+                package: name.to_lowercase(),
+                version_normalized: target_normalized,
+                alias: alias_atom,
+                alias_normalized,
+            });
+        }
+        let (clean, stability) = extract_stability_suffix(&constraint_no_as);
         let lower = name.to_lowercase();
         if let Some(s) = stability {
             let entry = stability_flags.entry(lower.clone()).or_insert(s);
@@ -931,6 +1032,59 @@ pub async fn resolve(request: &ResolveRequest) -> Result<Vec<ResolvedPackage>, R
             for input in inputs {
                 builder.add_package(input);
             }
+        }
+    }
+
+    // Second pass: materialize root aliases (`require: "X as Y"`).
+    //
+    // Mirrors Composer's `PoolBuilder::loadPackage` post-load step: when a
+    // package whose `(name, version)` matches a `rootAliases` entry is added,
+    // an extra `AliasPackage` exposing that install under
+    // `(alias_normalized, alias)` is appended to the pool. When the matched
+    // input is already an alias (e.g. an `extra.branch-alias` entry from
+    // `packagist_to_pool_inputs`), Composer follows `getAliasOf()` to the
+    // base package — we replicate by carrying the input's `is_alias_of`
+    // value forward, so the new alias points straight at the real package
+    // rather than chaining through the intermediate alias.
+    if !root_aliases.is_empty() {
+        let mut new_aliases: Vec<PoolPackageInput> = Vec::new();
+        for input in builder.inputs() {
+            // Skip alias creation for packages locked to their lock-file
+            // version (partial update where this package wasn't requested).
+            // Mirrors Composer's `propagateUpdate=false` skip in
+            // `PoolBuilder::loadPackage`.
+            if request
+                .locked_package_names
+                .contains(&input.name.to_lowercase())
+            {
+                continue;
+            }
+            for alias in &root_aliases {
+                if input.name.to_lowercase() != alias.package {
+                    continue;
+                }
+                if input.version != alias.version_normalized {
+                    continue;
+                }
+                let target_normalized = input
+                    .is_alias_of
+                    .clone()
+                    .unwrap_or_else(|| input.version.clone());
+                new_aliases.push(PoolPackageInput {
+                    name: input.name.clone(),
+                    version: alias.alias_normalized.clone(),
+                    pretty_version: alias.alias.clone(),
+                    requires: input.requires.clone(),
+                    replaces: input.replaces.clone(),
+                    provides: input.provides.clone(),
+                    conflicts: input.conflicts.clone(),
+                    is_fixed: false,
+                    is_alias_of: Some(target_normalized),
+                });
+            }
+        }
+        for alias_input in new_aliases {
+            builder.add_package(alias_input);
         }
     }
 
@@ -1426,6 +1580,7 @@ mod tests {
             root_provide: IndexMap::new(),
             root_replace: IndexMap::new(),
             root_conflict: IndexMap::new(),
+            locked_package_names: IndexSet::new(),
         };
 
         let result = resolve(&request).await;

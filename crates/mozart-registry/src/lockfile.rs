@@ -1406,6 +1406,7 @@ mod tests {
             root_provide: IndexMap::new(),
             root_replace: IndexMap::new(),
             root_conflict: IndexMap::new(),
+            locked_package_names: IndexSet::new(),
         };
 
         let resolved = resolve(&resolve_request)

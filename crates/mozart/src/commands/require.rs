@@ -662,6 +662,7 @@ pub async fn execute(
             .iter()
             .map(|(k, v)| (k.clone(), v.clone()))
             .collect(),
+        locked_package_names: indexmap::IndexSet::new(),
     };
 
     // Print header messages
@@ -1029,6 +1030,7 @@ mod tests {
     #[tokio::test]
     #[ignore]
     async fn test_require_full_e2e() {
+        use indexmap::IndexSet;
         use mozart_core::package::RawPackageData;
         use mozart_registry::lockfile::{LockFileGenerationRequest, generate_lock_file};
 
@@ -1061,6 +1063,7 @@ mod tests {
             root_provide: IndexMap::new(),
             root_replace: IndexMap::new(),
             root_conflict: IndexMap::new(),
+            locked_package_names: IndexSet::new(),
         };
 
         let resolved = resolver::resolve(&request)
@@ -1094,6 +1097,7 @@ mod tests {
     #[tokio::test]
     #[ignore]
     async fn test_require_no_install_writes_lock_only() {
+        use indexmap::IndexSet;
         use mozart_core::package::RawPackageData;
         use tempfile::tempdir;
 
@@ -1133,6 +1137,7 @@ mod tests {
             root_provide: IndexMap::new(),
             root_replace: IndexMap::new(),
             root_conflict: IndexMap::new(),
+            locked_package_names: IndexSet::new(),
         };
 
         let resolved = resolver::resolve(&request)

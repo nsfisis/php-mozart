@@ -274,6 +274,7 @@ pub async fn execute(
             .iter()
             .map(|(k, v)| (k.clone(), v.clone()))
             .collect(),
+        locked_package_names: indexmap::IndexSet::new(),
     };
 
     // Print header messages
@@ -550,6 +551,7 @@ async fn remove_unused(
             .iter()
             .map(|(k, v)| (k.clone(), v.clone()))
             .collect(),
+        locked_package_names: indexmap::IndexSet::new(),
     };
 
     console.info("Resolving dependencies to detect unused packages...");
@@ -859,7 +861,7 @@ mod tests {
     #[tokio::test]
     #[ignore]
     async fn test_remove_full_e2e() {
-        use indexmap::IndexMap;
+        use indexmap::{IndexMap, IndexSet};
         use mozart_registry::lockfile::{LockFileGenerationRequest, generate_lock_file};
         use mozart_registry::resolver::{ResolveRequest, resolve};
         use tempfile::tempdir;
@@ -902,6 +904,7 @@ mod tests {
             root_provide: IndexMap::new(),
             root_replace: IndexMap::new(),
             root_conflict: IndexMap::new(),
+            locked_package_names: IndexSet::new(),
         };
         let resolved = resolve(&request)
             .await
@@ -957,6 +960,7 @@ mod tests {
             root_provide: IndexMap::new(),
             root_replace: IndexMap::new(),
             root_conflict: IndexMap::new(),
+            locked_package_names: IndexSet::new(),
         };
         let resolved2 = resolve(&request2)
             .await

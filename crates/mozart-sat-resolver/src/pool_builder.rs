@@ -108,6 +108,14 @@ impl PoolBuilder {
         self.inputs.len()
     }
 
+    /// Read-only access to package inputs collected so far. Used by the
+    /// registry layer to materialize root aliases (`require: "X as Y"`) once
+    /// every base + branch-alias entry is in place: a second pass scans for
+    /// matching `(name, version)` and pushes the alias entry on top.
+    pub fn inputs(&self) -> &[PoolPackageInput] {
+        &self.inputs
+    }
+
     /// Whether the builder has no packages.
     pub fn is_empty(&self) -> bool {
         self.inputs.is_empty()

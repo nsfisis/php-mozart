@@ -272,11 +272,29 @@ impl Pool {
             return match constraint {
                 None => true,
                 Some(vc) => {
-                    if let Ok(v) = mozart_semver::Version::parse(&candidate.version) {
-                        vc.matches(&v)
-                    } else {
-                        false
+                    // Try the normalized version first; fall back to the
+                    // pretty version. Composer normalizes both sides of a
+                    // constraint match to a single string form (e.g.
+                    // `dev-master` → `9999999-dev`), so a query for
+                    // `dev-master` matches a package whose pretty version
+                    // is `dev-master` even when the pool stores its
+                    // version field in a different normalized shape (e.g.
+                    // the four-segment `9999999.9999999.9999999.9999999-dev`
+                    // expansion Mozart uses internally for default-branch
+                    // and root-alias entries). The pretty fallback bridges
+                    // that gap without forcing the pool to commit to a
+                    // single normalization.
+                    if let Ok(v) = mozart_semver::Version::parse(&candidate.version)
+                        && vc.matches(&v)
+                    {
+                        return true;
                     }
+                    if let Ok(pv) = mozart_semver::Version::parse(&candidate.pretty_version)
+                        && vc.matches(&pv)
+                    {
+                        return true;
+                    }
+                    false
                 }
             };
         }
