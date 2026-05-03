@@ -32,12 +32,15 @@ pub enum PackageOperation<'a> {
     Install { package: &'a LockedPackage },
     /// Replace an existing install with a new version. `from_version` is the
     /// pretty version that was installed before (no reference suffix —
-    /// drives the upgrade-vs-downgrade direction). `from_full_pretty` is the
-    /// formatted display string (`dev-master abc123`) used verbatim in the
-    /// trace output.
+    /// drives the upgrade-vs-downgrade direction). `from_full_pretty` /
+    /// `to_full_pretty` are the formatted display strings used verbatim in
+    /// the trace output; the caller renders them via
+    /// [`format_update_pretty_versions`] so the SOURCE_REF / DIST_REF mode
+    /// switch from Composer's `UpdateOperation::format` lands on both sides.
     Update {
         from_version: &'a str,
         from_full_pretty: &'a str,
+        to_full_pretty: &'a str,
         package: &'a LockedPackage,
     },
     /// Mark an alias of a real package as installed. No filesystem effects —
@@ -116,6 +119,84 @@ pub fn format_full_pretty_version_for_installed(entry: &InstalledPackageEntry) -
         dist_ref,
         source_type,
     )
+}
+
+/// Render the from/to display strings for an update trace line, mirroring
+/// Composer's `UpdateOperation::format`. Defaults to `DISPLAY_SOURCE_REF_IF_DEV`,
+/// then if both sides render identically:
+///
+/// - source references differ → re-render in `DISPLAY_SOURCE_REF` mode,
+/// - else dist references differ → re-render in `DISPLAY_DIST_REF` mode.
+///
+/// Without the switch, two same-version-different-reference packages would
+/// produce a useless `pkg (X => X)` trace line.
+pub fn format_update_pretty_versions(
+    from_entry: &InstalledPackageEntry,
+    to_pkg: &LockedPackage,
+) -> (String, String) {
+    let from_default = format_full_pretty_version_for_installed(from_entry);
+    let to_default = format_full_pretty_version(to_pkg);
+    if from_default != to_default {
+        return (from_default, to_default);
+    }
+
+    let from_source_ref = from_entry
+        .source
+        .as_ref()
+        .and_then(|v| v.get("reference"))
+        .and_then(|v| v.as_str());
+    let from_source_type = from_entry
+        .source
+        .as_ref()
+        .and_then(|v| v.get("type"))
+        .and_then(|v| v.as_str());
+    let to_source_ref = to_pkg.source.as_ref().and_then(|s| s.reference.as_deref());
+    let to_source_type = to_pkg.source.as_ref().map(|s| s.source_type.as_str());
+
+    if from_source_ref != to_source_ref {
+        return (
+            format_with_explicit_reference(&from_entry.version, from_source_ref, from_source_type),
+            format_with_explicit_reference(&to_pkg.version, to_source_ref, to_source_type),
+        );
+    }
+
+    let from_dist_ref = from_entry
+        .dist
+        .as_ref()
+        .and_then(|v| v.get("reference"))
+        .and_then(|v| v.as_str());
+    let to_dist_ref = to_pkg.dist.as_ref().and_then(|d| d.reference.as_deref());
+
+    if from_dist_ref != to_dist_ref {
+        return (
+            format_with_explicit_reference(&from_entry.version, from_dist_ref, from_source_type),
+            format_with_explicit_reference(&to_pkg.version, to_dist_ref, to_source_type),
+        );
+    }
+
+    (from_default, to_default)
+}
+
+/// Render `pretty_version` with an explicitly chosen reference, mirroring
+/// Composer's `BasePackage::getFullPrettyVersion` with `DISPLAY_SOURCE_REF`
+/// or `DISPLAY_DIST_REF`: skip the dev-stability gate, just truncate sha1
+/// references and concatenate. A `None` reference falls back to the bare
+/// pretty version.
+fn format_with_explicit_reference(
+    pretty_version: &str,
+    reference: Option<&str>,
+    source_type: Option<&str>,
+) -> String {
+    let Some(reference) = reference else {
+        return pretty_version.to_string();
+    };
+    if matches!(source_type, Some("svn")) {
+        return format!("{} {}", pretty_version, reference);
+    }
+    if reference.len() == 40 {
+        return format!("{} {}", pretty_version, &reference[..7]);
+    }
+    format!("{} {}", pretty_version, reference)
 }
 
 /// Core of `BasePackage::getFullPrettyVersion()` factored over raw

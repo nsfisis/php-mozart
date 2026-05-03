@@ -70,6 +70,7 @@ impl InstallerExecutor for TraceRecorderExecutor {
             PackageOperation::Update {
                 from_version,
                 from_full_pretty,
+                to_full_pretty,
                 package,
             } => {
                 let action = if is_upgrade(from_version, &package.version) {
@@ -79,10 +80,7 @@ impl InstallerExecutor for TraceRecorderExecutor {
                 };
                 self.trace.push(format!(
                     "{} {} ({} => {})",
-                    action,
-                    package.name,
-                    from_full_pretty,
-                    format_full_pretty_version(package)
+                    action, package.name, from_full_pretty, to_full_pretty
                 ));
             }
             PackageOperation::MarkAliasInstalled { alias, target } => {

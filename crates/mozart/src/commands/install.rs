@@ -5,7 +5,7 @@ use mozart_core::console_format;
 use mozart_registry::installed;
 use mozart_registry::installer_executor::{
     ExecuteContext, FilesystemExecutor, InstallerExecutor, PackageOperation,
-    format_full_pretty_version_for_installed,
+    format_full_pretty_version, format_update_pretty_versions,
 };
 use mozart_registry::lockfile;
 use std::collections::BTreeMap;
@@ -675,10 +675,11 @@ pub async fn install_from_lock(
         }
 
         for (pkg, action) in &ops {
-            // Owned scratch buffer the Update branch borrows for
-            // `PackageOperation::Update::from_version`. Declared at loop
-            // scope so the borrow outlives the await call.
-            let from_version_buf;
+            // Owned scratch buffers the Update branch borrows for
+            // `PackageOperation::Update::{from_full_pretty,to_full_pretty}`.
+            // Declared at loop scope so the borrows outlive the await call.
+            let from_full_pretty_buf;
+            let to_full_pretty_buf;
             let op = match action {
                 Action::Skip => continue,
                 Action::Install => {
@@ -695,24 +696,32 @@ pub async fn install_from_lock(
                         pkg.name,
                         pkg.version
                     ));
-                    // Pull the previously-installed version from installed.json
+                    // Pull the previously-installed entry from installed.json
                     // so the trace recorder can format
                     // `Upgrading pkg (oldVersion => newVersion)`. The plain
                     // version drives the upgrade/downgrade direction; the
-                    // full-pretty form (with the dev reference suffix) is
-                    // what shows up in the trace, mirroring Composer's
-                    // `UpdateOperation::format`.
+                    // full-pretty pair is rendered through
+                    // `format_update_pretty_versions` so Composer's
+                    // SOURCE_REF / DIST_REF mode switch (used when both
+                    // sides would otherwise render identically) lands on
+                    // both halves.
                     let from_entry = installed
                         .packages
                         .iter()
                         .find(|p| p.name.eq_ignore_ascii_case(&pkg.name));
                     let from_version = from_entry.map(|p| p.version.as_str()).unwrap_or("");
-                    from_version_buf = from_entry
-                        .map(format_full_pretty_version_for_installed)
-                        .unwrap_or_default();
+                    if let Some(entry) = from_entry {
+                        let (from, to) = format_update_pretty_versions(entry, pkg);
+                        from_full_pretty_buf = from;
+                        to_full_pretty_buf = to;
+                    } else {
+                        from_full_pretty_buf = String::new();
+                        to_full_pretty_buf = format_full_pretty_version(pkg);
+                    }
                     PackageOperation::Update {
                         from_version,
-                        from_full_pretty: &from_version_buf,
+                        from_full_pretty: &from_full_pretty_buf,
+                        to_full_pretty: &to_full_pretty_buf,
                         package: pkg,
                     }
                 }
