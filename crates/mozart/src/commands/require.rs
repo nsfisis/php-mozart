@@ -665,6 +665,7 @@ pub async fn execute(
         locked_package_names: indexmap::IndexSet::new(),
         locked_packages: Vec::new(),
         block_abandoned: false,
+        root_branch_alias: None,
     };
 
     // Print header messages
@@ -1075,6 +1076,7 @@ mod tests {
             locked_package_names: IndexSet::new(),
             locked_packages: Vec::new(),
             block_abandoned: false,
+            root_branch_alias: None,
         };
 
         let resolved = resolver::resolve(&request)
@@ -1152,6 +1154,7 @@ mod tests {
             locked_package_names: IndexSet::new(),
             locked_packages: Vec::new(),
             block_abandoned: false,
+            root_branch_alias: None,
         };
 
         let resolved = resolver::resolve(&request)

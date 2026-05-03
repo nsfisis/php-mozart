@@ -1679,6 +1679,7 @@ mod tests {
             locked_package_names: IndexSet::new(),
             locked_packages: Vec::new(),
             block_abandoned: false,
+            root_branch_alias: None,
         };
 
         let resolved = resolve(&resolve_request)

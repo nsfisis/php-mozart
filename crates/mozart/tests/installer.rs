@@ -227,7 +227,7 @@ installer_fixture!(aliased_priority);
 installer_fixture!(aliased_priority_conflicting);
 installer_fixture!(aliases_with_require_dev, ignore);
 installer_fixture!(broken_deps_do_not_replace);
-installer_fixture!(circular_dependency, ignore);
+installer_fixture!(circular_dependency);
 installer_fixture!(circular_dependency2);
 installer_fixture!(circular_dependency_errors);
 installer_fixture!(conflict_against_provided_by_dep_package_works);

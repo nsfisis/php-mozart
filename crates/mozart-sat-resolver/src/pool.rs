@@ -299,36 +299,40 @@ impl Pool {
             };
         }
 
-        // Check provides
+        // Check provides. A package may declare more than one provide link
+        // for the same target (e.g. an `AliasPackage` carries the base's link
+        // and an extra link tagged at the alias's own version), so keep
+        // iterating once a target name matches but the constraint doesn't —
+        // a later link may still satisfy.
         for link in &candidate.provides {
-            if link.target == name {
-                return match constraint {
-                    None => true,
-                    Some(vc) => {
-                        // The provide link has its own constraint; check if they intersect
-                        if let Ok(provide_vc) = VersionConstraint::parse(&link.constraint) {
-                            constraints_intersect(vc, &provide_vc)
-                        } else {
-                            false
-                        }
+            if link.target != name {
+                continue;
+            }
+            match constraint {
+                None => return true,
+                Some(vc) => {
+                    if let Ok(provide_vc) = VersionConstraint::parse(&link.constraint)
+                        && constraints_intersect(vc, &provide_vc)
+                    {
+                        return true;
                     }
-                };
+                }
             }
         }
 
-        // Check replaces
         for link in &candidate.replaces {
-            if link.target == name {
-                return match constraint {
-                    None => true,
-                    Some(vc) => {
-                        if let Ok(replace_vc) = VersionConstraint::parse(&link.constraint) {
-                            constraints_intersect(vc, &replace_vc)
-                        } else {
-                            false
-                        }
+            if link.target != name {
+                continue;
+            }
+            match constraint {
+                None => return true,
+                Some(vc) => {
+                    if let Ok(replace_vc) = VersionConstraint::parse(&link.constraint)
+                        && constraints_intersect(vc, &replace_vc)
+                    {
+                        return true;
                     }
-                };
+                }
             }
         }
 

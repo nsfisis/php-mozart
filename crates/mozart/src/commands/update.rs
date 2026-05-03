@@ -169,6 +169,28 @@ pub struct UpdateChange {
 ///
 /// Recognizes "stable", "RC", "beta", "alpha", "dev" (case-insensitive).
 /// Defaults to `Stability::Stable` for unrecognized values.
+/// Resolve the root composer.json's `extra.branch-alias` against the root's
+/// `version` field. Returns the alias target (e.g. `"2.0-dev"`) when both
+/// `version` and a matching `branch-alias` entry are present, mirroring
+/// Composer's `RootPackageLoader` branch-alias detection on the root package.
+/// `None` for projects without a `version` or without a matching alias entry.
+fn extract_root_branch_alias(
+    composer_json: &mozart_core::package::RawPackageData,
+) -> Option<String> {
+    let version = composer_json.version.as_deref()?;
+    if version.is_empty() {
+        return None;
+    }
+    composer_json
+        .extra_fields
+        .get("extra")
+        .and_then(|extra| extra.get("branch-alias"))
+        .and_then(|aliases| aliases.as_object())
+        .and_then(|map| map.get(version))
+        .and_then(|v| v.as_str())
+        .map(String::from)
+}
+
 fn parse_minimum_stability(s: &str) -> Stability {
     package::Stability::parse(s)
 }
@@ -1136,6 +1158,7 @@ pub async fn run(
         locked_package_names,
         locked_packages,
         block_abandoned,
+        root_branch_alias: extract_root_branch_alias(&composer_json),
     };
 
     // Step 6: Print header and run resolver
@@ -2274,6 +2297,7 @@ mod tests {
             locked_package_names: IndexSet::new(),
             locked_packages: Vec::new(),
             block_abandoned: false,
+            root_branch_alias: None,
         };
 
         let resolved = resolve(&request).await.expect("Resolution should succeed");

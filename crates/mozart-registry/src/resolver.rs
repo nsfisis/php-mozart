@@ -725,6 +725,14 @@ pub struct ResolveRequest {
     /// versions, so a root requirement that only matches abandoned candidates
     /// fails with the standard "could not be resolved" error.
     pub block_abandoned: bool,
+    /// Pretty form of the root's `extra.branch-alias` target when the root's
+    /// version matches a key in that map (e.g. `dev-master` → `2.0-dev`).
+    /// Mirrors Composer's `RootAliasPackage`: an extra alias entry is added
+    /// to the pool exposing the root under the numeric branch-alias version,
+    /// with `replace`/`provide`/`conflict` links extended to advertise the
+    /// alias's version for any link originally written as `self.version`.
+    /// `None` when the root carries no matching `branch-alias` entry.
+    pub root_branch_alias: Option<String>,
 }
 
 /// Full data for a lock-pinned package, used in partial updates. Carried on
@@ -906,42 +914,81 @@ pub async fn resolve(request: &ResolveRequest) -> Result<Vec<ResolvedPackage>, R
             Some(v) if !v.is_empty() => (v.to_string(), v.to_string()),
             _ => ("1.0.0+no-version-set".to_string(), "1.0.0.0".to_string()),
         };
+        // Resolve `self.version` against the root's normalized version when
+        // building base links. Mirrors Composer's `ArrayLoader::createLink`:
+        // a `self.version` constraint is parsed against the declaring package's
+        // pretty version (here, the root's). The base entry only carries this
+        // resolved form; any branch-alias entry below extends each base link
+        // with an extra link tagged at the alias's version, matching
+        // `AliasPackage::replaceSelfVersionDependencies`.
+        let make_base_links = |raw: &IndexMap<String, String>| -> Vec<PoolLink> {
+            raw.iter()
+                .map(|(target, constraint)| PoolLink {
+                    target: target.to_lowercase(),
+                    constraint: if constraint.trim() == "self.version" {
+                        root_normalized.clone()
+                    } else {
+                        constraint.clone()
+                    },
+                    source: root_name_lower.clone(),
+                })
+                .collect()
+        };
+        let base_replaces = make_base_links(&request.root_replace);
+        let base_provides = make_base_links(&request.root_provide);
+        let base_conflicts = make_base_links(&request.root_conflict);
         let root_input = PoolPackageInput {
             name: root_name_lower.clone(),
-            version: root_normalized,
-            pretty_version: root_pretty,
+            version: root_normalized.clone(),
+            pretty_version: root_pretty.clone(),
             requires: vec![],
-            replaces: request
-                .root_replace
-                .iter()
-                .map(|(target, constraint)| PoolLink {
-                    target: target.to_lowercase(),
-                    constraint: constraint.clone(),
-                    source: root_name_lower.clone(),
-                })
-                .collect(),
-            provides: request
-                .root_provide
-                .iter()
-                .map(|(target, constraint)| PoolLink {
-                    target: target.to_lowercase(),
-                    constraint: constraint.clone(),
-                    source: root_name_lower.clone(),
-                })
-                .collect(),
-            conflicts: request
-                .root_conflict
-                .iter()
-                .map(|(target, constraint)| PoolLink {
-                    target: target.to_lowercase(),
-                    constraint: constraint.clone(),
-                    source: root_name_lower.clone(),
-                })
-                .collect(),
+            replaces: base_replaces.clone(),
+            provides: base_provides.clone(),
+            conflicts: base_conflicts.clone(),
             is_fixed: true,
             is_alias_of: None,
         };
         builder.add_package(root_input);
+
+        // Materialize a branch-alias entry for the root when `extra.branch-alias`
+        // mapped this version to a numeric alias (e.g. dev-master → 2.0-dev).
+        // Mirrors Composer's `RootAliasPackage`: the alias copies the base's
+        // resolved replace/provide/conflict links and then ADDS one more link
+        // per `self.version` original, this time pinned at the alias's own
+        // version. So a transitive `provided/dependency 2.*` lookup can be
+        // satisfied through the alias even though the base resolved
+        // `self.version` to a non-matching dev version.
+        if let Some(alias_pretty) = &request.root_branch_alias
+            && let Some(alias_normalized) = normalize_branch_alias_target(alias_pretty)
+        {
+            let extra_self_version_links = |raw: &IndexMap<String, String>| -> Vec<PoolLink> {
+                raw.iter()
+                    .filter(|(_, constraint)| constraint.trim() == "self.version")
+                    .map(|(target, _)| PoolLink {
+                        target: target.to_lowercase(),
+                        constraint: alias_normalized.clone(),
+                        source: root_name_lower.clone(),
+                    })
+                    .collect()
+            };
+            let mut alias_replaces = base_replaces.clone();
+            alias_replaces.extend(extra_self_version_links(&request.root_replace));
+            let mut alias_provides = base_provides.clone();
+            alias_provides.extend(extra_self_version_links(&request.root_provide));
+            let mut alias_conflicts = base_conflicts.clone();
+            alias_conflicts.extend(extra_self_version_links(&request.root_conflict));
+            builder.add_package(PoolPackageInput {
+                name: root_name_lower.clone(),
+                version: alias_normalized,
+                pretty_version: alias_pretty.clone(),
+                requires: vec![],
+                replaces: alias_replaces,
+                provides: alias_provides,
+                conflicts: alias_conflicts,
+                is_fixed: false,
+                is_alias_of: Some(root_normalized),
+            });
+        }
     }
 
     // Add lock-pinned packages as pool entries (partial-update case).
@@ -1738,6 +1785,7 @@ mod tests {
             locked_package_names: IndexSet::new(),
             locked_packages: Vec::new(),
             block_abandoned: false,
+            root_branch_alias: None,
         };
 
         let result = resolve(&request).await;
