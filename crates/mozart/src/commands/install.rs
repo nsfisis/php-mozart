@@ -486,6 +486,55 @@ fn collect_install_platform_problems(
     )
 }
 
+/// Mirror Composer's `RuleSetGenerator::addConflictRules` SAME_NAME loop on
+/// the locked package set. `getNames(false)` returns each package's
+/// canonical name plus the names it claims via `replace`; when two distinct
+/// locked packages claim the same name, only one of them can be installed.
+/// During Composer's lock-verify solve every locked package is `fix`-locked,
+/// so two providers of the same name make the rule unsatisfiable and the
+/// solver throws `SolverProblemsException` → exit 2.
+///
+/// `provide` is intentionally excluded — `getNames(false)` excludes it, and
+/// virtual `provide` targets allow multiple co-installed providers.
+fn collect_install_same_name_problems(lock: &lockfile::LockFile, dev_mode: bool) -> Vec<String> {
+    let mut providers: BTreeMap<String, Vec<String>> = BTreeMap::new();
+
+    let mut all_pkgs: Vec<&lockfile::LockedPackage> = lock.packages.iter().collect();
+    if dev_mode {
+        all_pkgs.extend(lock.packages_dev.iter().flatten());
+    }
+
+    for p in all_pkgs {
+        let canonical = p.name.to_lowercase();
+        providers
+            .entry(canonical.clone())
+            .or_default()
+            .push(p.name.clone());
+        for replace_target in p.replace.keys() {
+            let target_lower = replace_target.to_lowercase();
+            if target_lower == canonical {
+                continue;
+            }
+            providers
+                .entry(target_lower)
+                .or_default()
+                .push(p.name.clone());
+        }
+    }
+
+    let mut problems = Vec::new();
+    for (name, owners) in &providers {
+        if owners.len() > 1 {
+            problems.push(format!(
+                "- Conflict between locked packages on name {}: {}",
+                name,
+                owners.join(", ")
+            ));
+        }
+    }
+    problems
+}
+
 /// Merge platform requirements from the lock's `platform`/`platform-dev`
 /// fields and the root composer.json's `require`/`require-dev`. Root
 /// composer.json overrides the lock on duplicate keys (matching Composer's
@@ -1036,6 +1085,21 @@ pub async fn run(
             );
             console.info("");
             for (i, msg) in platform_problems.iter().enumerate() {
+                console.info(&format!("  Problem {}", i + 1));
+                console.info(&format!("    {msg}"));
+            }
+            return Err(mozart_core::exit_code::bail_silent(
+                mozart_core::exit_code::DEPENDENCY_RESOLUTION_FAILED,
+            ));
+        }
+
+        let same_name_problems = collect_install_same_name_problems(&lock, dev_mode);
+        if !same_name_problems.is_empty() {
+            console.info(
+                "Your lock file does not contain a compatible set of packages. Please run composer update.",
+            );
+            console.info("");
+            for (i, msg) in same_name_problems.iter().enumerate() {
                 console.info(&format!("  Problem {}", i + 1));
                 console.info(&format!("    {msg}"));
             }

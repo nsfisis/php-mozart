@@ -332,10 +332,7 @@ installer_fixture!(replace_priorities);
 installer_fixture!(replace_range_require_single_version);
 installer_fixture!(replace_root_require);
 installer_fixture!(replaced_packages_should_not_be_installed);
-installer_fixture!(
-    replaced_packages_should_not_be_installed_when_installing_from_lock,
-    ignore
-);
+installer_fixture!(replaced_packages_should_not_be_installed_when_installing_from_lock);
 installer_fixture!(replacer_satisfies_its_own_requirement);
 installer_fixture!(repositories_priorities);
 installer_fixture!(repositories_priorities2);
