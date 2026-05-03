@@ -1204,9 +1204,21 @@ pub async fn run(
             for line in &missing {
                 console.info(line);
             }
-            return Err(mozart_core::exit_code::bail_silent(
-                mozart_core::exit_code::LOCK_FILE_INVALID,
-            ));
+            // Mirrors `Composer\Installer::doInstall()` lines 749-756: when
+            // `config.allow-missing-requirements` is true, print the warnings
+            // but proceed with what the lock already covers instead of
+            // bailing with ERROR_LOCK_FILE_INVALID.
+            let allow_missing = root_pkg
+                .extra_fields
+                .get("config")
+                .and_then(|v| v.get("allow-missing-requirements"))
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            if !allow_missing {
+                return Err(mozart_core::exit_code::bail_silent(
+                    mozart_core::exit_code::LOCK_FILE_INVALID,
+                ));
+            }
         }
 
         let platform_problems = collect_install_platform_problems(
