@@ -731,6 +731,60 @@ fn collect_install_same_name_problems(lock: &lockfile::LockFile, dev_mode: bool)
     problems
 }
 
+/// Detect locked-package requires whose target is the current root but
+/// whose version constraint no longer matches the root's declared version.
+/// Mirrors the slice of Composer's `Installer::doInstall` SAT verify that
+/// surfaces messages like
+/// `"b/requirer 1.0.0 requires root/pkg ^1 -> found root/pkg[2.x-dev] but
+/// it does not match the constraint"`: when the user bumps the root's
+/// `version` (or its branch alias) past the range a locked dependent
+/// expects, the lock can't be installed as-is and the resolver-equivalent
+/// must bail with exit-code 2 before any package operations run.
+fn collect_install_root_require_problems(
+    lock: &lockfile::LockFile,
+    root: &mozart_core::package::RawPackageData,
+    dev_mode: bool,
+) -> Vec<String> {
+    use mozart_semver::{Version, VersionConstraint};
+
+    let Some(root_version) = root.version.as_deref() else {
+        return Vec::new();
+    };
+    if root.name.is_empty() || root_version.is_empty() {
+        return Vec::new();
+    }
+    let root_name_lower = root.name.to_lowercase();
+    let Ok(parsed_root_version) = Version::parse(root_version) else {
+        return Vec::new();
+    };
+
+    let mut all_pkgs: Vec<&lockfile::LockedPackage> = lock.packages.iter().collect();
+    if dev_mode {
+        all_pkgs.extend(lock.packages_dev.iter().flatten());
+    }
+
+    let mut problems = Vec::new();
+    for &p in &all_pkgs {
+        for (target, constraint_str) in &p.require {
+            if target.to_lowercase() != root_name_lower {
+                continue;
+            }
+            let Ok(constraint) = VersionConstraint::parse(constraint_str) else {
+                continue;
+            };
+            if constraint.matches(&parsed_root_version) {
+                continue;
+            }
+            problems.push(format!(
+                "- {pkg_name} is locked to version {pkg_version} and an update of this package was not requested.\n    - {pkg_name} {pkg_version} requires {target} {constraint_str} -> found {target}[{root_version}] but it does not match the constraint.",
+                pkg_name = p.name,
+                pkg_version = p.version,
+            ));
+        }
+    }
+    problems
+}
+
 /// Detect declared `conflict` clashes between two packages already in the
 /// lock. Mirrors what Composer's `Installer::doInstall` SAT verify catches
 /// when one locked package conflicts with another locked package's version
@@ -1456,6 +1510,22 @@ pub async fn run(
             );
             console.info("");
             for (i, msg) in conflict_problems.iter().enumerate() {
+                console.info(&format!("  Problem {}", i + 1));
+                console.info(&format!("    {msg}"));
+            }
+            return Err(mozart_core::exit_code::bail_silent(
+                mozart_core::exit_code::DEPENDENCY_RESOLUTION_FAILED,
+            ));
+        }
+
+        let root_require_problems =
+            collect_install_root_require_problems(&lock, &root_pkg, dev_mode);
+        if !root_require_problems.is_empty() {
+            console.info(
+                "Your lock file does not contain a compatible set of packages. Please run composer update.",
+            );
+            console.info("");
+            for (i, msg) in root_require_problems.iter().enumerate() {
                 console.info(&format!("  Problem {}", i + 1));
                 console.info(&format!("    {msg}"));
             }

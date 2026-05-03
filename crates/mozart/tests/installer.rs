@@ -336,7 +336,7 @@ installer_fixture!(repositories_priorities2);
 installer_fixture!(repositories_priorities3);
 installer_fixture!(repositories_priorities4);
 installer_fixture!(repositories_priorities5);
-installer_fixture!(root_alias_change_with_circular_dep, ignore);
+installer_fixture!(root_alias_change_with_circular_dep);
 installer_fixture!(root_alias_gets_loaded_for_locked_pkgs);
 installer_fixture!(root_requirements_do_not_affect_locked_versions);
 installer_fixture!(solver_problem_with_hash_in_branch);
