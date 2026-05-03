@@ -1167,29 +1167,41 @@ pub async fn run(
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
 
-    // For `--minimal-changes` without a per-package update list, feed the
-    // lock's pinned versions into the resolver as preferred-version
-    // overrides. Mirrors Composer's
-    // `Installer::createPolicy(forUpdate=true, minimalUpdate=true)` branch.
-    let preferred_versions: IndexMap<String, String> =
-        if args.minimal_changes && raw_packages.is_empty() && lock_path.exists() {
-            match lockfile::LockFile::read_from_file(&lock_path) {
-                Ok(lock) => {
-                    let mut map = IndexMap::new();
-                    for pkg in lock
-                        .packages
-                        .iter()
-                        .chain(lock.packages_dev.iter().flatten())
-                    {
-                        map.insert(pkg.name.to_lowercase(), locked_version_normalized(pkg));
+    // For `--minimal-changes`, feed the lock's pinned versions into the
+    // resolver as preferred-version overrides. The packages the user
+    // explicitly named on the CLI are excluded — they're being asked to
+    // move, so the policy should pick the regular highest/lowest version
+    // for them. Mirrors Composer's
+    // `Installer::createPolicy(forUpdate=true, minimalUpdate=true)` branch,
+    // which loops over the locked repository and skips any
+    // `updateAllowList` entry. Transitive deps pulled in by
+    // `--with-(all-)dependencies` stay in the map so they only move when a
+    // constraint actually forces a different version.
+    let preferred_versions: IndexMap<String, String> = if args.minimal_changes && lock_path.exists()
+    {
+        match lockfile::LockFile::read_from_file(&lock_path) {
+            Ok(lock) => {
+                let allow_set: IndexSet<String> =
+                    raw_packages.iter().map(|s| s.to_lowercase()).collect();
+                let mut map = IndexMap::new();
+                for pkg in lock
+                    .packages
+                    .iter()
+                    .chain(lock.packages_dev.iter().flatten())
+                {
+                    let name_lower = pkg.name.to_lowercase();
+                    if allow_set.contains(&name_lower) {
+                        continue;
                     }
-                    map
+                    map.insert(name_lower, locked_version_normalized(pkg));
                 }
-                Err(_) => IndexMap::new(),
+                map
             }
-        } else {
-            IndexMap::new()
-        };
+            Err(_) => IndexMap::new(),
+        }
+    } else {
+        IndexMap::new()
+    };
 
     let request = ResolveRequest {
         root_name: composer_json.name.clone(),

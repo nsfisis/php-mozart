@@ -358,7 +358,7 @@ installer_fixture!(update_all);
 installer_fixture!(update_all_dry_run);
 installer_fixture!(update_allow_list);
 installer_fixture!(update_allow_list_locked_require);
-installer_fixture!(update_allow_list_minimal_changes, ignore);
+installer_fixture!(update_allow_list_minimal_changes);
 installer_fixture!(update_allow_list_patterns, ignore);
 installer_fixture!(update_allow_list_patterns_with_all_dependencies);
 installer_fixture!(update_allow_list_patterns_with_dependencies);
