@@ -373,10 +373,7 @@ installer_fixture!(update_allow_list_with_dependencies_alias, ignore);
 installer_fixture!(update_allow_list_with_dependencies_new_requirement);
 installer_fixture!(update_allow_list_with_dependencies_require_new);
 installer_fixture!(update_allow_list_with_dependencies_require_new_replace);
-installer_fixture!(
-    update_allow_list_with_dependencies_require_new_replace_mutual,
-    ignore
-);
+installer_fixture!(update_allow_list_with_dependencies_require_new_replace_mutual);
 installer_fixture!(update_allow_list_with_dependency_conflict);
 installer_fixture!(update_changes_url, ignore);
 installer_fixture!(update_dev_ignores_providers);
@@ -403,7 +400,7 @@ installer_fixture!(update_picks_up_change_of_vcs_type);
 installer_fixture!(update_prefer_lowest_stable);
 installer_fixture!(update_reference);
 installer_fixture!(update_reference_picks_latest);
-installer_fixture!(update_removes_unused_locked_dep, ignore);
+installer_fixture!(update_removes_unused_locked_dep);
 installer_fixture!(update_requiring_decision_reverts_and_learning_positive_literals);
 installer_fixture!(update_security_advisory_matching_direct_dependency, ignore);
 installer_fixture!(

@@ -206,12 +206,19 @@ pub fn compute_operations<'a>(
         ops.push((pkg, action));
     }
 
-    // Compute removals: packages in installed but not in locked
+    // Compute removals: packages in installed but not in locked. Iterate
+    // installed.json in reverse, mirroring Composer's
+    // `Transaction::calculateOperations`, which seeds `removeMap` from
+    // `presentPackages` in order and then `array_unshift`s each entry onto
+    // `operations` — flipping the iteration order. Without the flip, two
+    // co-orphaned packages emit removals in the wrong order vs Composer's
+    // trace.
     let locked_names: IndexSet<String> = locked.iter().map(|p| p.name.to_lowercase()).collect();
 
     let removals: Vec<String> = installed
         .packages
         .iter()
+        .rev()
         .filter(|p| !locked_names.contains(&p.name.to_lowercase()))
         .map(|p| p.name.clone())
         .collect();

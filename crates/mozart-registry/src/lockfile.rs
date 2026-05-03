@@ -459,6 +459,14 @@ pub struct LockFileGenerationRequest {
     /// Repository set used to fetch full metadata for resolved packages
     /// that aren't already covered by inline `type: package` repositories.
     pub repositories: std::sync::Arc<RepositorySet>,
+    /// Previous `composer.lock` (when running update / require / remove).
+    /// For each resolved package whose name+normalized-version matches an
+    /// entry in this lock, the entry is copied into the new lock verbatim
+    /// rather than being re-fetched from the inline / composer-repo /
+    /// Packagist sources. Mirrors Composer's `Locker::setLockData` behaviour
+    /// during partial updates: lock entries are stable across updates that
+    /// don't touch the package, even if the upstream metadata has drifted.
+    pub previous_lock: Option<LockFile>,
 }
 
 impl LockFileGenerationRequest {
@@ -666,7 +674,7 @@ fn classify_dev_packages(
     resolved: &[ResolvedPackage],
     require: &BTreeMap<String, String>,
     _require_dev: &BTreeMap<String, String>,
-    package_metadata: &IndexMap<String, PackagistVersion>,
+    requires_by_name: &IndexMap<String, Vec<String>>,
 ) -> IndexSet<String> {
     // Build set of all resolved package names for quick lookup
     let resolved_names: IndexSet<&str> = resolved.iter().map(|p| p.name.as_str()).collect();
@@ -690,8 +698,8 @@ fn classify_dev_packages(
 
     // BFS: walk transitive `require` deps of each production package
     while let Some(pkg_name) = queue.pop_front() {
-        if let Some(pv) = package_metadata.get(&pkg_name) {
-            for dep_name in pv.require.keys() {
+        if let Some(deps) = requires_by_name.get(&pkg_name) {
+            for dep_name in deps {
                 let dep_lower = dep_name.to_lowercase();
                 if is_platform_name(&dep_lower) {
                     continue;
@@ -759,6 +767,60 @@ pub async fn generate_lock_file(request: &LockFileGenerationRequest) -> anyhow::
     // — short-circuit those before hitting the network. Everything else goes
     // through `RepositorySet`, which today contains only Packagist; future
     // steps will move VCS / inline through the same set.
+    // Previous-lock relationship pass-through: when a resolved package
+    // matches an entry in `previous_lock` at the same name +
+    // version_normalized, capture the entry's relationship-shaped fields
+    // (require / require-dev / conflict / replace / provide / suggest).
+    // Composer's transaction calculates operation order using these
+    // relationship fields off the locked repository, so a partial update
+    // shouldn't refresh them from upstream metadata for packages that
+    // didn't move — otherwise topological_sort sees a different graph
+    // than Composer would.
+    //
+    // Source/dist references and version-shaped fields still come from
+    // the freshly-fetched metadata, so dev packages whose ref bumped (the
+    // resolver picked a new commit at the same version label) still get
+    // their ref refreshed.
+    struct PreservedRelationships {
+        require: BTreeMap<String, String>,
+        require_dev: BTreeMap<String, String>,
+        conflict: BTreeMap<String, String>,
+        provide: BTreeMap<String, String>,
+        replace: BTreeMap<String, String>,
+        suggest: Option<BTreeMap<String, String>>,
+    }
+    let mut preserved_rel: IndexMap<String, PreservedRelationships> = IndexMap::new();
+    if let Some(prev) = &request.previous_lock {
+        for prev_pkg in prev
+            .packages
+            .iter()
+            .chain(prev.packages_dev.iter().flatten())
+        {
+            let prev_normalized = prev_pkg.version_normalized.clone().unwrap_or_else(|| {
+                mozart_semver::Version::parse(&prev_pkg.version)
+                    .map(|v| v.to_string())
+                    .unwrap_or_else(|_| prev_pkg.version.clone())
+            });
+            for pkg in &real_resolved {
+                if pkg.name.eq_ignore_ascii_case(&prev_pkg.name)
+                    && pkg.version_normalized == prev_normalized
+                {
+                    preserved_rel.insert(
+                        pkg.name.clone(),
+                        PreservedRelationships {
+                            require: prev_pkg.require.clone(),
+                            require_dev: prev_pkg.require_dev.clone(),
+                            conflict: prev_pkg.conflict.clone(),
+                            provide: prev_pkg.provide.clone(),
+                            replace: prev_pkg.replace.clone(),
+                            suggest: prev_pkg.suggest.clone(),
+                        },
+                    );
+                }
+            }
+        }
+    }
+
     let mut package_metadata: IndexMap<String, PackagistVersion> = IndexMap::new();
     let repo_set = &request.repositories;
     for pkg in &real_resolved {
@@ -801,11 +863,23 @@ pub async fn generate_lock_file(request: &LockFileGenerationRequest) -> anyhow::
             alias_of_normalized: None,
         })
         .collect();
+    // Build the `name → require keys` view classify_dev_packages walks. Use
+    // preserved-from-old-lock requires when available so a partial update
+    // sees the same dev-classification graph the previous lock did.
+    let mut requires_by_name: IndexMap<String, Vec<String>> = IndexMap::new();
+    for (name, pv) in &package_metadata {
+        let keys: Vec<String> = if let Some(rel) = preserved_rel.get(name) {
+            rel.require.keys().cloned().collect()
+        } else {
+            pv.require.keys().cloned().collect()
+        };
+        requires_by_name.insert(name.to_lowercase(), keys);
+    }
     let dev_only = classify_dev_packages(
         &real_owned,
         &request.composer_json.require,
         &request.composer_json.require_dev,
-        &package_metadata,
+        &requires_by_name,
     );
 
     // 3. Build LockedPackage lists.
@@ -825,6 +899,18 @@ pub async fn generate_lock_file(request: &LockFileGenerationRequest) -> anyhow::
     for pkg in &real_resolved {
         let pv = &package_metadata[&pkg.name];
         let mut locked = packagist_version_to_locked_package(&pkg.name, pv);
+        // Overlay relationship fields from the previous lock when applicable
+        // — the resolver's transaction-time view came from the lock, so the
+        // new lock should mirror those relationships even if the upstream
+        // metadata has drifted.
+        if let Some(rel) = preserved_rel.get(&pkg.name) {
+            locked.require = rel.require.clone();
+            locked.require_dev = rel.require_dev.clone();
+            locked.conflict = rel.conflict.clone();
+            locked.provide = rel.provide.clone();
+            locked.replace = rel.replace.clone();
+            locked.suggest = rel.suggest.clone();
+        }
         if let Some(reference) = root_references.get(&pkg.name.to_lowercase()) {
             apply_reference_override(&mut locked, reference);
         }
@@ -1250,7 +1336,11 @@ mod tests {
             make_packagist_version("1.0.0", "1.0.0.0", BTreeMap::new()),
         );
 
-        let dev_only = classify_dev_packages(&resolved, &require, &require_dev, &metadata);
+        let requires_by_name: IndexMap<String, Vec<String>> = metadata
+            .iter()
+            .map(|(name, pv)| (name.to_lowercase(), pv.require.keys().cloned().collect()))
+            .collect();
+        let dev_only = classify_dev_packages(&resolved, &require, &require_dev, &requires_by_name);
 
         assert!(!dev_only.contains("vendor/a"), "A is a production package");
         assert!(dev_only.contains("vendor/b"), "B is dev-only");
@@ -1322,7 +1412,11 @@ mod tests {
             make_packagist_version("1.0.0", "1.0.0.0", BTreeMap::new()),
         );
 
-        let dev_only = classify_dev_packages(&resolved, &require, &require_dev, &metadata);
+        let requires_by_name: IndexMap<String, Vec<String>> = metadata
+            .iter()
+            .map(|(name, pv)| (name.to_lowercase(), pv.require.keys().cloned().collect()))
+            .collect();
+        let dev_only = classify_dev_packages(&resolved, &require, &require_dev, &requires_by_name);
 
         assert!(!dev_only.contains("vendor/a"), "A is a production package");
         assert!(dev_only.contains("vendor/b"), "B is dev-only");
@@ -1386,6 +1480,7 @@ mod tests {
             repositories: std::sync::Arc::new(RepositorySet::with_packagist(
                 crate::cache::Cache::new(std::env::temp_dir().join("mozart-test-cache"), false),
             )),
+            previous_lock: None,
         };
 
         let lock = generate_lock_file(&request).await.unwrap();
@@ -1529,6 +1624,7 @@ mod tests {
                 std::env::temp_dir().join("mozart-test-cache"),
                 false,
             ))),
+            previous_lock: None,
         };
 
         let lock = generate_lock_file(&gen_request)

@@ -765,6 +765,7 @@ pub async fn execute(
         repositories: std::sync::Arc::new(
             mozart_registry::repository::RepositorySet::with_packagist(repo_cache.clone()),
         ),
+        previous_lock: old_lock.clone(),
     })
     .await?;
 
@@ -1095,6 +1096,7 @@ mod tests {
                     ),
                 ),
             ),
+            previous_lock: None,
         })
         .await
         .expect("Lock file generation should succeed");
@@ -1168,6 +1170,7 @@ mod tests {
                     ),
                 ),
             ),
+            previous_lock: None,
         })
         .await
         .expect("Lock file generation should succeed");

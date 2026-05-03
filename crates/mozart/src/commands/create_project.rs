@@ -464,6 +464,7 @@ pub async fn execute(
         repositories: std::sync::Arc::new(
             mozart_registry::repository::RepositorySet::with_packagist(repo_cache.clone()),
         ),
+        previous_lock: None,
     })
     .await?;
 

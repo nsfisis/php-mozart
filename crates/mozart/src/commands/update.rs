@@ -1290,6 +1290,7 @@ pub async fn run(
         composer_json: composer_json.clone(),
         include_dev: dev_mode,
         repositories: repositories.clone(),
+        previous_lock: old_lock.clone(),
     })
     .await?;
 
@@ -2285,6 +2286,7 @@ mod tests {
                     ),
                 ),
             ),
+            previous_lock: None,
         })
         .await
         .expect("Lock file generation should succeed");

@@ -158,21 +158,30 @@ impl<'a> Transaction<'a> {
     /// Topologically sort result packages by their dependency order.
     /// Uses DFS: dependencies are processed before dependents.
     fn topological_sort(&self) -> Vec<PackageId> {
-        let result_set: IndexSet<PackageId> = self.result_ids.iter().copied().collect();
-        let result_by_name: IndexMap<&str, Vec<PackageId>> = {
-            let mut map: IndexMap<&str, Vec<PackageId>> = IndexMap::new();
-            for &id in &self.result_ids {
-                let pkg = self.pool.package_by_id(id);
-                map.entry(&pkg.name).or_default().push(id);
+        // Index every result package by every name it answers to (own name +
+        // `replaces` targets + `provides` targets). Mirrors Composer's
+        // `resultPackagesByName` map, which `getProvidersInResult` queries
+        // when walking a package's requires — so a replace/provide target
+        // resolves to the package that satisfies it. Without this expansion
+        // the DFS treats replace/provide-only requires as unsatisfied and
+        // misses the transitive ordering edge.
+        let mut result_by_target: IndexMap<&str, Vec<PackageId>> = IndexMap::new();
+        for &id in &self.result_ids {
+            let pkg = self.pool.package_by_id(id);
+            result_by_target.entry(&pkg.name).or_default().push(id);
+            for link in &pkg.replaces {
+                result_by_target.entry(&link.target).or_default().push(id);
             }
-            map
-        };
+            for link in &pkg.provides {
+                result_by_target.entry(&link.target).or_default().push(id);
+            }
+        }
 
         let mut visited: IndexSet<PackageId> = IndexSet::new();
         let mut order: Vec<PackageId> = Vec::new();
 
         // Find root packages (not required by any other result package)
-        let roots = self.get_root_packages(&result_set, &result_by_name);
+        let roots = self.get_root_packages(&result_by_target);
 
         // DFS from roots
         let mut stack: Vec<(PackageId, bool)> = Vec::new();
@@ -198,7 +207,7 @@ impl<'a> Transaction<'a> {
             // Push dependencies
             let pkg = self.pool.package_by_id(pkg_id);
             for req in &pkg.requires {
-                if let Some(provider_ids) = result_by_name.get(req.target.as_str()) {
+                if let Some(provider_ids) = result_by_target.get(req.target.as_str()) {
                     for &dep_id in provider_ids {
                         if !visited.contains(&dep_id) {
                             stack.push((dep_id, false));
@@ -218,26 +227,32 @@ impl<'a> Transaction<'a> {
         order
     }
 
-    /// Find root packages: result packages not required by any other result package.
+    /// Find root packages: result packages not required by any other result
+    /// package. A package whose own name (or any `replaces`/`provides`
+    /// target) appears in another result package's `requires` is excluded.
+    /// Mirrors Composer's `Transaction::getRootPackages`, which uses
+    /// `getProvidersInResult` to do the same expansion.
     fn get_root_packages(
         &self,
-        result_set: &IndexSet<PackageId>,
-        _result_by_name: &IndexMap<&str, Vec<PackageId>>,
+        result_by_target: &IndexMap<&str, Vec<PackageId>>,
     ) -> Vec<PackageId> {
-        // Collect all required package names
-        let mut required_names: IndexSet<&str> = IndexSet::new();
-        for &id in result_set {
+        let mut required: IndexSet<PackageId> = IndexSet::new();
+        for &id in &self.result_ids {
             let pkg = self.pool.package_by_id(id);
             for req in &pkg.requires {
-                required_names.insert(&req.target);
+                if let Some(provider_ids) = result_by_target.get(req.target.as_str()) {
+                    for &dep_id in provider_ids {
+                        if dep_id != id {
+                            required.insert(dep_id);
+                        }
+                    }
+                }
             }
         }
 
-        // Root packages are those whose name is NOT in required_names
         let mut roots: Vec<PackageId> = Vec::new();
         for &id in &self.result_ids {
-            let pkg = self.pool.package_by_id(id);
-            if !required_names.contains(pkg.name.as_str()) {
+            if !required.contains(&id) {
                 roots.push(id);
             }
         }
