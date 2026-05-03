@@ -187,17 +187,21 @@ impl Version {
         // the form Composer's `normalizeBranch` emits for `3.2.x`) is NOT a
         // branch — it falls through to classical parsing where `-dev` is just
         // a regular pre-release stability and `is_dev_branch` stays false.
+        //
+        // Mirrors `Composer\Semver\VersionParser::normalizeBranch`: every
+        // position not given by the input becomes 9999999. So `2.x-dev` →
+        // `2.9999999.9999999.9999999-dev`, not `2.0.9999999.9999999-dev`.
         let s_lower = s.to_lowercase();
         if s_lower.ends_with(".x-dev") {
             let base = &s[..s.len() - ".x-dev".len()];
             let parts: Vec<&str> = base.split('.').collect();
-            let major = parts.first().and_then(|p| p.parse().ok()).unwrap_or(0);
-            let minor = parts.get(1).and_then(|p| p.parse().ok()).unwrap_or(0);
+            let part_at =
+                |i: usize| -> u64 { parts.get(i).and_then(|p| p.parse().ok()).unwrap_or(9999999) };
             return Ok(Version {
-                major,
-                minor,
-                patch: 9999999,
-                build: 9999999,
+                major: part_at(0),
+                minor: part_at(1),
+                patch: part_at(2),
+                build: part_at(3),
                 pre_release: Some("dev".to_string()),
                 is_dev_branch: true,
                 dev_branch_name: None,
@@ -1389,11 +1393,14 @@ mod tests {
 
     #[test]
     fn test_parse_x_dev_two_segment() {
-        // "2.x-dev" → major=2, minor=0, patch=9999999, build=9999999
+        // "2.x-dev" → major=2, minor/patch/build all 9999999. Mirrors
+        // Composer's `normalizeBranch`, which fills every position not given
+        // by the input with `.x` and then replaces `x` with `9999999`. So the
+        // missing minor position is also 9999999, not 0.
         let v = Version::parse("2.x-dev").unwrap();
         assert!(v.is_dev_branch);
         assert_eq!(v.major, 2);
-        assert_eq!(v.minor, 0);
+        assert_eq!(v.minor, 9999999);
         assert_eq!(v.patch, 9999999);
         assert_eq!(v.build, 9999999);
     }

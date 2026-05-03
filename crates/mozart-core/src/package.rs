@@ -1,5 +1,7 @@
+use serde::de::{Deserializer, MapAccess, SeqAccess, Visitor};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
+use std::fmt;
 use std::fs;
 use std::path::Path;
 
@@ -505,7 +507,15 @@ pub struct RawPackageData {
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub replace: BTreeMap<String, String>,
 
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    /// `repositories` accepts either a JSON array or a JSON object keyed by
+    /// repository name. Composer iterates `foreach ($repoConfigs as ...)` in
+    /// `RepositoryFactory::createRepos`, so PHP transparently handles either
+    /// shape; mirror that here.
+    #[serde(
+        default,
+        deserialize_with = "deserialize_repositories",
+        skip_serializing_if = "Vec::is_empty"
+    )]
     pub repositories: Vec<RawRepository>,
 
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -585,6 +595,51 @@ pub struct RawRepository {
 /// Mirrors Composer's `RootPackageLoader` fallback.
 fn default_root_package_name() -> String {
     "__root__".to_string()
+}
+
+/// Deserialize `repositories` from either a JSON array or a JSON object.
+/// PHP's `json_decode($x, true)` produces an associative array in either
+/// case, and `RepositoryFactory::createRepos` iterates the values without
+/// caring whether the key was an int (array) or a string (object). The map
+/// keys are dropped — `RawRepository` doesn't carry a name field, and
+/// downstream code doesn't depend on the original keying.
+fn deserialize_repositories<'de, D>(deserializer: D) -> Result<Vec<RawRepository>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    struct RepositoriesVisitor;
+
+    impl<'de> Visitor<'de> for RepositoriesVisitor {
+        type Value = Vec<RawRepository>;
+
+        fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
+            f.write_str("a sequence or map of repository definitions")
+        }
+
+        fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
+        where
+            A: SeqAccess<'de>,
+        {
+            let mut out = Vec::with_capacity(seq.size_hint().unwrap_or(0));
+            while let Some(repo) = seq.next_element::<RawRepository>()? {
+                out.push(repo);
+            }
+            Ok(out)
+        }
+
+        fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
+        where
+            A: MapAccess<'de>,
+        {
+            let mut out = Vec::with_capacity(map.size_hint().unwrap_or(0));
+            while let Some((_key, repo)) = map.next_entry::<String, RawRepository>()? {
+                out.push(repo);
+            }
+            Ok(out)
+        }
+    }
+
+    deserializer.deserialize_any(RepositoriesVisitor)
 }
 
 impl RawPackageData {
@@ -827,5 +882,46 @@ mod tests {
     fn validate_root_self_require_accepts_empty_requires() {
         let raw = RawPackageData::new("foo/bar".to_string());
         assert!(raw.validate_root_does_not_self_require().is_ok());
+    }
+
+    #[test]
+    fn raw_repositories_array_form() {
+        let json = r#"{
+            "name": "test/array",
+            "repositories": [
+                {"type": "vcs", "url": "https://example.com/a"},
+                {"type": "vcs", "url": "https://example.com/b"}
+            ]
+        }"#;
+        let raw: RawPackageData = serde_json::from_str(json).unwrap();
+        assert_eq!(raw.repositories.len(), 2);
+        assert_eq!(
+            raw.repositories[0].url.as_deref(),
+            Some("https://example.com/a")
+        );
+        assert_eq!(
+            raw.repositories[1].url.as_deref(),
+            Some("https://example.com/b")
+        );
+    }
+
+    #[test]
+    fn raw_repositories_object_form() {
+        let json = r#"{
+            "name": "test/object",
+            "repositories": {
+                "first": {"type": "vcs", "url": "https://example.com/a"},
+                "second": {"type": "package", "package": {"name": "x/y", "version": "1.0.0"}}
+            }
+        }"#;
+        let raw: RawPackageData = serde_json::from_str(json).unwrap();
+        assert_eq!(raw.repositories.len(), 2);
+        assert_eq!(raw.repositories[0].repo_type, "vcs");
+        assert_eq!(
+            raw.repositories[0].url.as_deref(),
+            Some("https://example.com/a")
+        );
+        assert_eq!(raw.repositories[1].repo_type, "package");
+        assert!(raw.repositories[1].package.is_some());
     }
 }

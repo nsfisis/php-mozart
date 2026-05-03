@@ -16,17 +16,32 @@ pub struct PlatformPackage {
 
 /// Returns true if the package name is a Composer platform package.
 ///
-/// Platform packages include: php, php-*, ext-*, lib-*, composer,
-/// composer-plugin-api, composer-runtime-api.
+/// Mirrors `Composer\Repository\PlatformRepository::PLATFORM_PACKAGE_REGEX`:
+/// `php`, `php-64bit`, `php-ipv6`, `php-zts`, `php-debug`, `hhvm`,
+/// `ext-<name>`, `lib-<name>`, `composer`, `composer-plugin-api`,
+/// `composer-runtime-api`. The `php-` family is a closed set, NOT a wildcard
+/// — `php-http/client-common` is a regular vendor package, not a platform
+/// requirement.
 pub fn is_platform_package(name: &str) -> bool {
     let lower = name.to_lowercase();
-    lower == "php"
-        || lower.starts_with("php-")
-        || lower.starts_with("ext-")
-        || lower.starts_with("lib-")
-        || lower == "composer"
-        || lower == "composer-plugin-api"
-        || lower == "composer-runtime-api"
+    match lower.as_str() {
+        "php"
+        | "php-64bit"
+        | "php-ipv6"
+        | "php-zts"
+        | "php-debug"
+        | "hhvm"
+        | "composer"
+        | "composer-plugin-api"
+        | "composer-runtime-api" => true,
+        _ => {
+            (lower.starts_with("ext-") || lower.starts_with("lib-"))
+                && lower[4..]
+                    .chars()
+                    .next()
+                    .is_some_and(|c| c.is_ascii_alphanumeric())
+        }
+    }
 }
 
 // ─── Detection ───────────────────────────────────────────────────────────────
@@ -375,6 +390,16 @@ mod tests {
         assert!(!is_platform_package("psr/log"));
         assert!(!is_platform_package("symfony/console"));
         assert!(!is_platform_package("vendor/package"));
+    }
+
+    #[test]
+    fn test_is_platform_package_php_prefix_vendor() {
+        // Vendor packages whose names happen to start with "php-" are NOT
+        // platform packages. Composer's PLATFORM_PACKAGE_REGEX limits the
+        // `php-` family to a closed set of suffixes (64bit/ipv6/zts/debug).
+        assert!(!is_platform_package("php-http/client-common"));
+        assert!(!is_platform_package("php-http/httplug"));
+        assert!(!is_platform_package("php-amqplib/php-amqplib"));
     }
 
     #[test]
