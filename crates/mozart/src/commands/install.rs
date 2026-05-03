@@ -228,8 +228,10 @@ pub fn compute_operations<'a>(
 ///   visit the package is re-pushed and its requires are pushed afterwards,
 ///   so dep traversal order is the **reverse** of `getRequires` iteration.
 ///
-/// Cycles fall back to input order (Composer rejects cycles earlier; this
-/// branch should not normally fire).
+/// Cycles produce a deterministic root: Composer's `getRootPackages` walks
+/// the sorted map and removes each package's required providers as it goes,
+/// skipping outer packages already removed. So among cycle members, the one
+/// with the highest sort key survives as the entry point.
 fn topological_sort<'a>(
     packages: &[&'a lockfile::LockedPackage],
 ) -> Vec<&'a lockfile::LockedPackage> {
@@ -253,18 +255,24 @@ fn topological_sort<'a>(
         }
     }
 
-    // Identify root packages: those not pulled in by any other package's
-    // requires (counting provides/replaces as a match).
-    let mut required_by_others: IndexSet<String> = IndexSet::new();
+    // Mirror Composer's `getRootPackages`: walk in sorted order, removing
+    // each package's required providers from the candidate-roots set as we
+    // go. Skip outer packages that have already been removed — that ordering
+    // matters in cycles, where the first sorted member's requires strip the
+    // others from the set, leaving a single survivor.
+    let mut roots_set: IndexSet<String> = sorted.iter().map(|p| p.name.to_lowercase()).collect();
     for pkg in &sorted {
         let pkg_lower = pkg.name.to_lowercase();
+        if !roots_set.contains(&pkg_lower) {
+            continue;
+        }
         for dep in pkg.require.keys() {
             let dep_lower = dep.to_lowercase();
             if let Some(matches) = resolves.get(&dep_lower) {
                 for &m in matches {
                     let m_lower = m.name.to_lowercase();
                     if m_lower != pkg_lower {
-                        required_by_others.insert(m_lower);
+                        roots_set.shift_remove(&m_lower);
                     }
                 }
             }
@@ -273,7 +281,7 @@ fn topological_sort<'a>(
 
     let mut stack: Vec<&'a lockfile::LockedPackage> = sorted
         .iter()
-        .filter(|p| !required_by_others.contains(&p.name.to_lowercase()))
+        .filter(|p| roots_set.contains(&p.name.to_lowercase()))
         .copied()
         .collect();
 

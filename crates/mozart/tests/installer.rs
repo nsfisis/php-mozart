@@ -308,7 +308,7 @@ installer_fixture!(partial_update_with_symlinked_path_repos);
 installer_fixture!(partial_update_without_lock);
 installer_fixture!(platform_ext_solver_problems);
 installer_fixture!(plugins_are_installed_first);
-installer_fixture!(prefer_lowest_branches, ignore);
+installer_fixture!(prefer_lowest_branches);
 installer_fixture!(problems_reduce_versions);
 installer_fixture!(provider_can_coexist_with_other_version_of_provided);
 installer_fixture!(provider_conflicts, ignore);
