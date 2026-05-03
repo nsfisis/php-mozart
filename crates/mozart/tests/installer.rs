@@ -275,7 +275,7 @@ installer_fixture!(install_ignore_platform_package_requirements);
 installer_fixture!(install_missing_alias_from_lock, ignore);
 installer_fixture!(install_overridden_platform_packages, ignore);
 installer_fixture!(install_package_and_its_provider_skips_original);
-installer_fixture!(install_prefers_repos_over_package_versions, ignore);
+installer_fixture!(install_prefers_repos_over_package_versions);
 installer_fixture!(install_reference);
 installer_fixture!(install_security_advisory_matching_dependency);
 installer_fixture!(install_self_from_root);
@@ -344,9 +344,9 @@ installer_fixture!(
 );
 installer_fixture!(replacer_satisfies_its_own_requirement);
 installer_fixture!(repositories_priorities, ignore);
-installer_fixture!(repositories_priorities2, ignore);
+installer_fixture!(repositories_priorities2);
 installer_fixture!(repositories_priorities3, ignore);
-installer_fixture!(repositories_priorities4, ignore);
+installer_fixture!(repositories_priorities4);
 installer_fixture!(repositories_priorities5, ignore);
 installer_fixture!(root_alias_change_with_circular_dep, ignore);
 installer_fixture!(root_alias_gets_loaded_for_locked_pkgs);
@@ -413,10 +413,7 @@ installer_fixture!(update_no_install);
 installer_fixture!(update_package_present_in_lock_but_not_at_all_in_remote);
 installer_fixture!(update_package_present_in_lock_but_not_in_remote);
 installer_fixture!(update_package_present_in_lock_but_not_in_remote_due_to_min_stability);
-installer_fixture!(
-    update_package_present_in_lower_repo_prio_but_not_main_due_to_min_stability,
-    ignore
-);
+installer_fixture!(update_package_present_in_lower_repo_prio_but_not_main_due_to_min_stability);
 installer_fixture!(update_picks_up_change_of_vcs_type, ignore);
 installer_fixture!(update_prefer_lowest_stable);
 installer_fixture!(update_reference, ignore);

@@ -7,6 +7,7 @@
 
 use crate::packagist::PackagistVersion;
 use mozart_core::package::RawRepository;
+use std::collections::HashSet;
 
 /// One package extracted from a `type: package` repository.
 pub struct InlinePackage {
@@ -20,8 +21,14 @@ pub struct InlinePackage {
 /// objects. Entries that fail to parse (missing `name`/`version`, etc.) are
 /// silently skipped so the rest of the repositories list still applies —
 /// matching Composer's lenient PackageRepository constructor.
+///
+/// Repositories are processed in declaration order. Once any repository
+/// authoritatively answers for a package name, lower-priority `type: package`
+/// repositories that list the same name are skipped — mirroring Composer's
+/// first-repo-wins priority via `RepositorySet::findPackages`.
 pub fn collect_inline_packages(repositories: &[RawRepository]) -> Vec<InlinePackage> {
     let mut packages = Vec::new();
+    let mut claimed: HashSet<String> = HashSet::new();
     for repo in repositories {
         if repo.repo_type != "package" {
             continue;
@@ -30,21 +37,32 @@ pub fn collect_inline_packages(repositories: &[RawRepository]) -> Vec<InlinePack
             continue;
         };
 
+        let mut from_this_repo: Vec<InlinePackage> = Vec::new();
         match value {
             serde_json::Value::Array(arr) => {
                 for entry in arr {
                     if let Some(pkg) = parse_inline_package(entry) {
-                        packages.push(pkg);
+                        from_this_repo.push(pkg);
                     }
                 }
             }
             serde_json::Value::Object(_) => {
                 if let Some(pkg) = parse_inline_package(value) {
-                    packages.push(pkg);
+                    from_this_repo.push(pkg);
                 }
             }
             _ => {}
         }
+
+        let mut names_this_repo: HashSet<String> = HashSet::new();
+        for pkg in from_this_repo {
+            if claimed.contains(&pkg.name) {
+                continue;
+            }
+            names_this_repo.insert(pkg.name.clone());
+            packages.push(pkg);
+        }
+        claimed.extend(names_this_repo);
     }
     packages
 }
