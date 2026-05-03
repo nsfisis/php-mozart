@@ -435,6 +435,11 @@ pub async fn execute(
             .iter()
             .map(|(k, v)| (k.clone(), v.clone()))
             .collect(),
+        root_conflict: raw
+            .conflict
+            .iter()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect(),
     };
 
     console.info("Resolving dependencies...");

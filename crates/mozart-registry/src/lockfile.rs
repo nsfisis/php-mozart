@@ -1405,6 +1405,7 @@ mod tests {
             raw_repositories: vec![],
             root_provide: IndexMap::new(),
             root_replace: IndexMap::new(),
+            root_conflict: IndexMap::new(),
         };
 
         let resolved = resolve(&resolve_request)

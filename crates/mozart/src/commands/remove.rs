@@ -269,6 +269,11 @@ pub async fn execute(
             .iter()
             .map(|(k, v)| (k.clone(), v.clone()))
             .collect(),
+        root_conflict: raw
+            .conflict
+            .iter()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect(),
     };
 
     // Print header messages
@@ -537,6 +542,11 @@ async fn remove_unused(
             .collect(),
         root_replace: raw
             .replace
+            .iter()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect(),
+        root_conflict: raw
+            .conflict
             .iter()
             .map(|(k, v)| (k.clone(), v.clone()))
             .collect(),
@@ -891,6 +901,7 @@ mod tests {
             raw_repositories: vec![],
             root_provide: IndexMap::new(),
             root_replace: IndexMap::new(),
+            root_conflict: IndexMap::new(),
         };
         let resolved = resolve(&request)
             .await
@@ -945,6 +956,7 @@ mod tests {
             raw_repositories: vec![],
             root_provide: IndexMap::new(),
             root_replace: IndexMap::new(),
+            root_conflict: IndexMap::new(),
         };
         let resolved2 = resolve(&request2)
             .await

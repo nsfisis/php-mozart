@@ -907,6 +907,11 @@ pub async fn run(
             .iter()
             .map(|(k, v)| (k.clone(), v.clone()))
             .collect(),
+        root_conflict: composer_json
+            .conflict
+            .iter()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect(),
     };
 
     // Step 6: Print header and run resolver
@@ -2017,6 +2022,7 @@ mod tests {
             raw_repositories: vec![],
             root_provide: IndexMap::new(),
             root_replace: IndexMap::new(),
+            root_conflict: IndexMap::new(),
         };
 
         let resolved = resolve(&request).await.expect("Resolution should succeed");

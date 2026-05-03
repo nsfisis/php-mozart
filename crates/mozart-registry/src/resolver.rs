@@ -611,6 +611,13 @@ pub struct ResolveRequest {
     /// Root composer.json's `replace` map. Same role as `root_provide` for the
     /// `replace` link: a replaced target counts as fulfilled by the root.
     pub root_replace: IndexMap<String, String>,
+    /// Root composer.json's `conflict` map (target → constraint). Composer's
+    /// `RootPackageRepository` carries these onto the in-pool root package
+    /// entry; the SAT generator then forbids any candidate matching the
+    /// constraint, so a root `conflict` blocks both direct selection of the
+    /// targeted version and any alias / replace / provide that would resolve
+    /// to it.
+    pub root_conflict: IndexMap<String, String>,
 }
 
 /// A single package in the resolution output.
@@ -776,7 +783,15 @@ pub async fn resolve(request: &ResolveRequest) -> Result<Vec<ResolvedPackage>, R
                     source: root_name_lower.clone(),
                 })
                 .collect(),
-            conflicts: vec![],
+            conflicts: request
+                .root_conflict
+                .iter()
+                .map(|(target, constraint)| PoolLink {
+                    target: target.to_lowercase(),
+                    constraint: constraint.clone(),
+                    source: root_name_lower.clone(),
+                })
+                .collect(),
             is_fixed: true,
             is_alias_of: None,
         };
@@ -1410,6 +1425,7 @@ mod tests {
             raw_repositories: vec![],
             root_provide: IndexMap::new(),
             root_replace: IndexMap::new(),
+            root_conflict: IndexMap::new(),
         };
 
         let result = resolve(&request).await;
