@@ -169,6 +169,55 @@ pub struct UpdateChange {
 ///
 /// Recognizes "stable", "RC", "beta", "alpha", "dev" (case-insensitive).
 /// Defaults to `Stability::Stable` for unrecognized values.
+/// `update mirrors` post-process: rewrite each new lock package's source/dist
+/// reference back to the version recorded in the old lock when the source
+/// type (and dist type) match. Mirrors Composer's
+/// `LockTransaction::updateMirrorAndUrls`: a pure URL/mirror change pulls
+/// the new URL block from the repository but keeps the lock's existing
+/// reference, so `composer update mirrors` only rewrites transport metadata
+/// — not the package content the user sees as installed. When the source
+/// type changed the new entry is left untouched so the install step still
+/// emits the Update operation Composer would.
+fn apply_mirror_ref_overrides(new_lock: &mut lockfile::LockFile, old: &lockfile::LockFile) {
+    let old_pkgs: Vec<&lockfile::LockedPackage> = old
+        .packages
+        .iter()
+        .chain(old.packages_dev.iter().flatten())
+        .collect();
+
+    let rewrite = |new_pkg: &mut lockfile::LockedPackage| {
+        let Some(old_pkg) = old_pkgs
+            .iter()
+            .find(|p| p.name.eq_ignore_ascii_case(&new_pkg.name) && p.version == new_pkg.version)
+        else {
+            return;
+        };
+        // source: only override when both sides exist with matching type.
+        if let (Some(old_src), Some(new_src)) = (&old_pkg.source, new_pkg.source.as_mut())
+            && old_src.source_type == new_src.source_type
+            && old_src.reference.is_some()
+        {
+            new_src.reference = old_src.reference.clone();
+        }
+        // dist: only override when both sides exist with matching type.
+        if let (Some(old_dist), Some(new_dist)) = (&old_pkg.dist, new_pkg.dist.as_mut())
+            && old_dist.dist_type == new_dist.dist_type
+            && old_dist.reference.is_some()
+        {
+            new_dist.reference = old_dist.reference.clone();
+        }
+    };
+
+    for pkg in &mut new_lock.packages {
+        rewrite(pkg);
+    }
+    if let Some(dev) = new_lock.packages_dev.as_mut() {
+        for pkg in dev {
+            rewrite(pkg);
+        }
+    }
+}
+
 /// Resolve the root composer.json's `extra.branch-alias` against the root's
 /// `version` field. Returns the alias target (e.g. `"2.0-dev"`) when both
 /// `version` and a matching `branch-alias` entry are present, mirroring
@@ -965,6 +1014,19 @@ pub async fn run(
         return handle_lock_mode(&lock_path, &composer_json_content, args.dry_run, console);
     }
 
+    // The bare-keyword forms `update lock`, `update nothing`, and
+    // `update mirrors` (when used alone) trigger Composer's
+    // `setUpdateMirrors(true)` flow: every locked package is re-required
+    // pinned at its exact version, so the resolver picks the same
+    // versions but freshly loads source/dist metadata from the repository.
+    // Tracked separately from the require/require-dev pipeline below so
+    // root composer.json requires are intentionally skipped.
+    let update_mirrors = !args.packages.is_empty()
+        && args
+            .packages
+            .iter()
+            .all(|p| matches!(p.to_lowercase().as_str(), "lock" | "nothing" | "mirrors"));
+
     let dev_mode = !args.no_dev;
 
     // Build the set of root require names (lowercase, excluding platform
@@ -1118,19 +1180,40 @@ pub async fn run(
             (IndexSet::new(), Vec::new())
         };
 
-    // Step 5: Build the resolve request from composer.json
-    // Filter out platform packages from require list for the resolver (they're handled separately)
-    let require: Vec<(String, String)> = composer_json
-        .require
-        .iter()
-        .map(|(k, v)| (k.clone(), v.clone()))
-        .collect();
-
-    let require_dev: Vec<(String, String)> = composer_json
-        .require_dev
-        .iter()
-        .map(|(k, v)| (k.clone(), v.clone()))
-        .collect();
+    // Step 5: Build the resolve request from composer.json. In `mirrors`
+    // mode, swap the root requires for `==<lock-version>` pins on every
+    // locked package, mirroring `Composer\Installer::requirePackagesForUpdate`
+    // when `updateMirrors` is true: locked versions are preserved, while
+    // source/dist metadata is reloaded fresh from the repository (so a
+    // VCS-type / URL flip on disk shows up in the new lock and trace).
+    // Filter out platform packages from require list for the resolver
+    // (they're handled separately).
+    let (require, require_dev) = if update_mirrors {
+        let mut req: Vec<(String, String)> = Vec::new();
+        let mut req_dev: Vec<(String, String)> = Vec::new();
+        if let Ok(lock) = lockfile::LockFile::read_from_file(&lock_path) {
+            for pkg in &lock.packages {
+                req.push((pkg.name.clone(), format!("=={}", pkg.version)));
+            }
+            for pkg in lock.packages_dev.iter().flatten() {
+                req_dev.push((pkg.name.clone(), format!("=={}", pkg.version)));
+            }
+        }
+        (req, req_dev)
+    } else {
+        (
+            composer_json
+                .require
+                .iter()
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect(),
+            composer_json
+                .require_dev
+                .iter()
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect(),
+        )
+    };
 
     // Parse minimum-stability from composer.json (defaults to "stable")
     let minimum_stability_str = composer_json
@@ -1394,7 +1477,7 @@ pub async fn run(
     // Step 9: Generate new lock file. `include_dev: true` matches Composer:
     // `update --no-dev` still writes a complete lock file with packages-dev
     // populated, so a later `install` (with dev_mode) sees them.
-    let new_lock = lockfile::generate_lock_file(&lockfile::LockFileGenerationRequest {
+    let mut new_lock = lockfile::generate_lock_file(&lockfile::LockFileGenerationRequest {
         resolved_packages: resolved,
         composer_json_content: composer_json_content.clone(),
         composer_json: composer_json.clone(),
@@ -1403,6 +1486,20 @@ pub async fn run(
         previous_lock: old_lock.clone(),
     })
     .await?;
+
+    // In `update mirrors` mode, walk each new lock entry and reset its
+    // source/dist references to the old lock's values when the source/dist
+    // *types* haven't changed. Mirrors Composer's
+    // `LockTransaction::updateMirrorAndUrls`: the URL / mirror block flips
+    // to whatever the repository now advertises, but the reference sticks
+    // to what was already locked, so a pure URL move (e.g. a repo rename)
+    // doesn't masquerade as a content update. When the source or dist type
+    // changed (`hg` → `git`, etc.), the new entry is left as-is so the
+    // change still emits the install-step Update operation.
+    if update_mirrors
+        && let Some(old) = &old_lock {
+            apply_mirror_ref_overrides(&mut new_lock, old);
+        }
 
     // Step 10: Compute and print change report
     let changes = compute_update_changes(old_lock.as_ref(), &new_lock, dev_mode);
