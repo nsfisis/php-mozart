@@ -359,6 +359,23 @@ fn locked_version_normalized(pkg: &lockfile::LockedPackage) -> String {
     })
 }
 
+/// True when a locked package's `transport-options.symlink` is explicitly
+/// `false`. Composer's `PoolBuilder::buildPool` only treats path repos as
+/// "always reload from disk" when symlinks are enabled (the default); a
+/// `symlink: false` path repo is copy-mode and gets pinned at its locked
+/// version on a partial update so only the explicitly requested packages
+/// move. The flag rides on the lock entry under `transport-options`, which
+/// `LockedPackage` parks in `extra_fields` since the schema does not call
+/// it out by name.
+fn is_path_symlink_disabled(pkg: &lockfile::LockedPackage) -> bool {
+    pkg.extra_fields
+        .get("transport-options")
+        .and_then(|v| v.as_object())
+        .and_then(|m| m.get("symlink"))
+        .and_then(|v| v.as_bool())
+        == Some(false)
+}
+
 /// For a partial update (when specific packages are named on the CLI), swap back
 /// the versions of packages that were NOT requested to be updated.
 ///
@@ -1193,12 +1210,21 @@ pub async fn run(
                         if updated.contains(&name_lower) {
                             continue;
                         }
-                        // Path-repo packages are always reloaded from disk
-                        // by Composer (PoolBuilder treats path repos as
-                        // canonical sources, not lock-bound). Skip them so
-                        // the pool sees the live on-disk version, matching
-                        // Composer's "path repos always update" behaviour.
-                        if p.dist.as_ref().map(|d| d.dist_type.as_str()) == Some("path") {
+                        // Path-repo packages backed by a symlink are always
+                        // reloaded from disk by Composer (PoolBuilder treats
+                        // them as canonical sources, not lock-bound). Skip
+                        // them so the pool sees the live on-disk version,
+                        // matching Composer's "path repos always update"
+                        // behaviour. The exception — and the reason for the
+                        // explicit `transport-options.symlink == false`
+                        // check — is a copy-mode path repo: with symlinks
+                        // disabled, Composer keeps the locked entry pinned
+                        // so a partial update only refreshes the named
+                        // package(s), not every path-repo dep on disk.
+                        // Mirrors `PoolBuilder::buildPool` lines 230-235.
+                        if p.dist.as_ref().map(|d| d.dist_type.as_str()) == Some("path")
+                            && !is_path_symlink_disabled(p)
+                        {
                             continue;
                         }
                         names.insert(name_lower.clone());
