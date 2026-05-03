@@ -226,7 +226,7 @@ installer_fixture!(alias_with_reference, ignore);
 installer_fixture!(aliased_priority);
 installer_fixture!(aliased_priority_conflicting);
 installer_fixture!(aliases_with_require_dev, ignore);
-installer_fixture!(broken_deps_do_not_replace, ignore);
+installer_fixture!(broken_deps_do_not_replace);
 installer_fixture!(circular_dependency, ignore);
 installer_fixture!(circular_dependency2);
 installer_fixture!(circular_dependency_errors);
@@ -320,10 +320,7 @@ installer_fixture!(
 installer_fixture!(provider_gets_picked_together_with_other_version_of_provided_indirect);
 installer_fixture!(provider_packages_can_be_installed_if_selected);
 installer_fixture!(provider_packages_can_be_installed_together_with_provided_if_both_installable);
-installer_fixture!(
-    provider_packages_can_not_be_installed_unless_selected,
-    ignore
-);
+installer_fixture!(provider_packages_can_not_be_installed_unless_selected);
 installer_fixture!(provider_satisfies_its_own_requirement);
 installer_fixture!(remove_deletes_unused_deps);
 installer_fixture!(remove_does_nothing_if_removal_requires_update_of_dep);

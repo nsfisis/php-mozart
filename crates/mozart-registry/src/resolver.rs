@@ -1003,25 +1003,44 @@ pub async fn resolve(request: &ResolveRequest) -> Result<Vec<ResolvedPackage>, R
     }
 
     // Collect inline `type: package` repositories. These don't require any
-    // network fetch; they go straight into the pool and are also tracked by
-    // name so the Packagist seed/transitive loops below skip them.
+    // network fetch, but we mirror Composer's `PackageRepository` (which
+    // extends `ArrayRepository`) and only emit packages whose own `name`
+    // matches a queried name — `replace`/`provide` targets do NOT pull in
+    // their replacers eagerly. So we build a name-indexed lookup and add
+    // entries to the builder on demand from the seed/transitive loops.
+    // Loading every inline package up front would let the SAT resolver
+    // pick a replacer that nothing required by name (e.g.
+    // `broken-deps-do-not-replace.test`), where Composer would correctly
+    // surface the broken dependency instead.
     let inline_packages = crate::inline_package::collect_inline_packages(&request.raw_repositories);
-    let mut inline_package_names: IndexSet<String> = IndexSet::new();
+    let mut inline_packages_by_name: IndexMap<String, Vec<&crate::inline_package::InlinePackage>> =
+        IndexMap::new();
     for ipkg in &inline_packages {
-        inline_package_names.insert(ipkg.name.clone());
-        let inputs = packagist_to_pool_inputs(
-            &ipkg.name,
-            &ipkg.version,
-            request.minimum_stability,
-            &stability_flags,
-        );
-        for input in inputs {
-            if !lock_filter_allows(&input.name, &input.version) {
-                continue;
-            }
-            builder.add_package(input);
-        }
+        inline_packages_by_name
+            .entry(ipkg.name.clone())
+            .or_default()
+            .push(ipkg);
     }
+    let add_inline_for = |name: &str, builder: &mut PoolBuilder| -> bool {
+        let Some(packages) = inline_packages_by_name.get(name) else {
+            return false;
+        };
+        for ipkg in packages {
+            let inputs = packagist_to_pool_inputs(
+                &ipkg.name,
+                &ipkg.version,
+                request.minimum_stability,
+                &stability_flags,
+            );
+            for input in inputs {
+                if !lock_filter_allows(&input.name, &input.version) {
+                    continue;
+                }
+                builder.add_package(input);
+            }
+        }
+        true
+    };
 
     // Collect packages from `type: composer` repositories with file:// URLs.
     // The harness rewrites `file://foobar` to `file:///abs/path` before this
@@ -1054,24 +1073,26 @@ pub async fn resolve(request: &ResolveRequest) -> Result<Vec<ResolvedPackage>, R
     // we don't double-load them through this set.
     let repo_set: &RepositorySet = &request.repositories;
 
-    // Seed the builder with packages for root requirements.
+    // Seed the builder with packages for root requirements. Inline
+    // `type: package` matches are added directly via the name-indexed
+    // lookup; everything else falls through to the network-backed
+    // repository set.
     let seed_names: Vec<String> = root_requires
         .keys()
         .filter(|name| !PackageName((*name).clone()).is_platform())
-        .filter(|name| {
-            !vcs_package_names.contains(*name)
-                && !inline_package_names.contains(*name)
-                && !composer_repo_names.contains(*name)
-        })
+        .filter(|name| !vcs_package_names.contains(*name) && !composer_repo_names.contains(*name))
         .cloned()
         .collect();
-    let seed_queries: Vec<PackageQuery<'_>> = seed_names
-        .iter()
-        .map(|n| PackageQuery {
-            name: n.as_str(),
-            constraint: root_requires.get(n).and_then(|c| c.as_deref()),
-        })
-        .collect();
+    let mut seed_queries: Vec<PackageQuery<'_>> = Vec::new();
+    for name in &seed_names {
+        if add_inline_for(name.as_str(), &mut builder) {
+            continue;
+        }
+        seed_queries.push(PackageQuery {
+            name: name.as_str(),
+            constraint: root_requires.get(name).and_then(|c| c.as_deref()),
+        });
+    }
     let seed_results = repo_set
         .load_packages(&seed_queries)
         .await
@@ -1097,11 +1118,14 @@ pub async fn resolve(request: &ResolveRequest) -> Result<Vec<ResolvedPackage>, R
             continue;
         }
 
-        // Skip packages already provided by VCS or inline-package repositories
-        if vcs_package_names.contains(&name)
-            || inline_package_names.contains(&name)
-            || composer_repo_names.contains(&name)
-        {
+        // Skip packages already provided by VCS or `type: composer` repos
+        // (those still get eager-loaded above). Inline `type: package`
+        // matches are loaded on demand by name, mirroring Composer's
+        // ArrayRepository semantics.
+        if vcs_package_names.contains(&name) || composer_repo_names.contains(&name) {
+            continue;
+        }
+        if add_inline_for(name.as_str(), &mut builder) {
             continue;
         }
 
