@@ -13,7 +13,8 @@ use crate::repository::{PackageQuery, RepositorySet};
 use crate::vcs_bridge;
 use mozart_core::package::{RawRepository, Stability};
 use mozart_sat_resolver::{
-    DefaultPolicy, PoolBuilder, PoolPackageInput, RuleSetGenerator, Solver, make_pool_links,
+    DefaultPolicy, PoolBuilder, PoolLink, PoolPackageInput, RuleSetGenerator, Solver,
+    make_pool_links,
 };
 use mozart_semver::Version;
 
@@ -561,6 +562,12 @@ pub struct ResolveRequest {
     /// Root package name from composer.json "name" field (e.g. "laravel/laravel").
     /// Used in error messages. Falls back to `__root__` if empty.
     pub root_name: String,
+    /// Root package version from composer.json "version" field. `None` falls
+    /// back to Composer's `RootPackage::DEFAULT_PRETTY_VERSION` (1.0.0+no-version-set).
+    /// Used to seed a fixed pool entry for the root so transitive requires
+    /// pointing at the root (legal circular dependencies via an intermediate
+    /// package) can be satisfied.
+    pub root_version: Option<String>,
     /// Dependencies from composer.json "require" section.
     pub require: Vec<(String, String)>,
     /// Dependencies from composer.json "require-dev" section.
@@ -730,6 +737,50 @@ pub async fn resolve(request: &ResolveRequest) -> Result<Vec<ResolvedPackage>, R
             is_alias_of: None,
         };
         builder.add_package(input);
+    }
+
+    // Mirror Composer's `RootPackageRepository`: put the root package itself
+    // in the pool as a fixed entry so transitive requires pointing at the
+    // root (legal circular dependencies via an intermediate package) can
+    // resolve. Composer clears the root's `require` / `require-dev` on this
+    // copy because the root requires are already plumbed through the
+    // rule generator's root-require path; carrying them here too would
+    // emit duplicate rules. Provide / replace links survive, so virtual
+    // packages declared on the root keep working for transitive consumers.
+    let root_name_lower = request.root_name.to_lowercase();
+    if !root_name_lower.is_empty() {
+        let (root_pretty, root_normalized) = match request.root_version.as_deref() {
+            Some(v) if !v.is_empty() => (v.to_string(), v.to_string()),
+            _ => ("1.0.0+no-version-set".to_string(), "1.0.0.0".to_string()),
+        };
+        let root_input = PoolPackageInput {
+            name: root_name_lower.clone(),
+            version: root_normalized,
+            pretty_version: root_pretty,
+            requires: vec![],
+            replaces: request
+                .root_replace
+                .iter()
+                .map(|(target, constraint)| PoolLink {
+                    target: target.to_lowercase(),
+                    constraint: constraint.clone(),
+                    source: root_name_lower.clone(),
+                })
+                .collect(),
+            provides: request
+                .root_provide
+                .iter()
+                .map(|(target, constraint)| PoolLink {
+                    target: target.to_lowercase(),
+                    constraint: constraint.clone(),
+                    source: root_name_lower.clone(),
+                })
+                .collect(),
+            conflicts: vec![],
+            is_fixed: true,
+            is_alias_of: None,
+        };
+        builder.add_package(root_input);
     }
 
     // Scan VCS repositories and collect packages from them
@@ -928,6 +979,15 @@ pub async fn resolve(request: &ResolveRequest) -> Result<Vec<ResolvedPackage>, R
 
                 // Skip platform packages from output
                 if PackageName(pkg.name.clone()).is_platform() {
+                    continue;
+                }
+
+                // Skip the root package itself. It's in the pool as a fixed
+                // entry only so transitive requires pointing back at it
+                // can resolve; it must not appear in the lock file or
+                // operations list. Mirrors Composer's `LockTransaction`
+                // which discards fixed packages from the result.
+                if !root_name_lower.is_empty() && pkg.name == root_name_lower {
                     continue;
                 }
 
@@ -1331,6 +1391,7 @@ mod tests {
         use crate::cache::Cache;
         let request = ResolveRequest {
             root_name: String::new(),
+            root_version: None,
             require: vec![("monolog/monolog".to_string(), "^3.0".to_string())],
             require_dev: vec![],
             include_dev: false,

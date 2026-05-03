@@ -409,6 +409,7 @@ pub async fn execute(
 
     let request = ResolveRequest {
         root_name: raw.name.clone(),
+        root_version: raw.version.clone(),
         require,
         require_dev,
         include_dev: dev_mode,

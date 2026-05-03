@@ -883,6 +883,7 @@ pub async fn run(
 
     let request = ResolveRequest {
         root_name: composer_json.name.clone(),
+        root_version: composer_json.version.clone(),
         require,
         require_dev,
         include_dev: dev_mode,
@@ -1993,6 +1994,7 @@ mod tests {
 
         let request = ResolveRequest {
             root_name: String::new(),
+            root_version: None,
             require: vec![("monolog/monolog".to_string(), "^3.0".to_string())],
             require_dev: vec![],
             include_dev: false,

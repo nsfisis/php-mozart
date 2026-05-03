@@ -461,6 +461,13 @@ pub struct RawPackageData {
     #[serde(default = "default_root_package_name")]
     pub name: String,
 
+    /// Root project's version, when explicitly set. Composer falls back to
+    /// `1.0.0+no-version-set` when this is missing; we keep the raw `Option`
+    /// here and let the resolver apply that default so the in-memory shape
+    /// stays close to the JSON input.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub version: Option<String>,
+
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
 
@@ -554,6 +561,7 @@ impl RawPackageData {
     pub fn new(name: String) -> Self {
         Self {
             name,
+            version: None,
             description: None,
             package_type: None,
             homepage: None,
