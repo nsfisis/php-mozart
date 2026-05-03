@@ -391,6 +391,72 @@ fn collect_stale_installed_aliases(
     stale
 }
 
+/// Collect the alias normalized-versions a previous install recorded for
+/// `pkg_name`. Mirrors Composer's `presentAliasMap` seeding:
+/// `LocalRepository::loadPackages` runs every installed entry through
+/// `ArrayLoader`, which surfaces an `AliasPackage` for each
+/// `extra.branch-alias` entry plus the synthetic
+/// `9999999.9999999.9999999.9999999-dev` alias for `default-branch: true`
+/// dev packages without an explicit alias. The new install/upgrade should
+/// only emit a MarkAliasInstalled trace line for an alias that wasn't
+/// already in this set.
+fn previously_installed_alias_versions(
+    installed: &installed::InstalledPackages,
+    pkg_name: &str,
+) -> Vec<String> {
+    let mut out = Vec::new();
+    for entry in &installed.packages {
+        if !entry.name.eq_ignore_ascii_case(pkg_name) {
+            continue;
+        }
+        let version_lower = entry.version.to_lowercase();
+        let is_dev_branch = version_lower.starts_with("dev-") || version_lower.ends_with("-dev");
+        if !is_dev_branch {
+            continue;
+        }
+
+        let mut emitted_explicit_alias = false;
+        if let Some(branch_alias_map) = entry
+            .extra_fields
+            .get("extra")
+            .and_then(|e| e.get("branch-alias"))
+            .and_then(|b| b.as_object())
+        {
+            for (source, target) in branch_alias_map {
+                if !source.eq_ignore_ascii_case(&entry.version) {
+                    continue;
+                }
+                let Some(target_str) = target.as_str() else {
+                    continue;
+                };
+                if !target_str.to_lowercase().ends_with("-dev") {
+                    continue;
+                }
+                if let Some(normalized) =
+                    mozart_registry::resolver::normalize_branch_alias_target(target_str)
+                {
+                    out.push(normalized);
+                    emitted_explicit_alias = true;
+                }
+            }
+        }
+
+        // Synthesize the default-branch alias when `default-branch: true` is
+        // recorded and no explicit branch-alias took its place. Mirrors
+        // `ArrayLoader::getBranchAlias`'s default-branch fallback.
+        if !emitted_explicit_alias
+            && entry
+                .extra_fields
+                .get("default-branch")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false)
+        {
+            out.push("9999999.9999999.9999999.9999999-dev".to_string());
+        }
+    }
+    out
+}
+
 /// Compare an installed-package entry's source/dist references with a
 /// locked package's. Mirrors the reference-equality leg of Composer's
 /// `Transaction::calculateOperations` update-detection: a same-version
@@ -900,9 +966,23 @@ pub async fn install_from_lock(
             // lock was hand-written without a matching `aliases[]` entry).
             // The two sources can name the same alias version, so dedupe by
             // `alias_normalized` to avoid emitting the trace line twice.
+            //
+            // Also skip aliases that were already in installed.json under the
+            // same name+normalized version: Composer's
+            // `Transaction::calculateOperations` only emits a
+            // MarkAliasInstalledOperation when the alias is *not* already in
+            // `presentAliasMap`. An update that keeps the same alias version
+            // (e.g. `dev-main` ref bump on a `default-branch` package) does
+            // not retrigger the alias mark.
+            let already_installed_aliases =
+                previously_installed_alias_versions(&installed, &pkg.name);
             let mut emitted_alias_versions: Vec<String> = Vec::new();
             for alias in &lock.aliases {
                 if alias.package.eq_ignore_ascii_case(&pkg.name) && alias.version == pkg.version {
+                    if already_installed_aliases.contains(&alias.alias_normalized) {
+                        emitted_alias_versions.push(alias.alias_normalized.clone());
+                        continue;
+                    }
                     executor
                         .install_package(
                             PackageOperation::MarkAliasInstalled { alias, target: pkg },
@@ -915,6 +995,10 @@ pub async fn install_from_lock(
             let branch_aliases = lockfile::locked_package_branch_aliases(pkg);
             for alias in &branch_aliases {
                 if emitted_alias_versions.contains(&alias.alias_normalized) {
+                    continue;
+                }
+                if already_installed_aliases.contains(&alias.alias_normalized) {
+                    emitted_alias_versions.push(alias.alias_normalized.clone());
                     continue;
                 }
                 executor

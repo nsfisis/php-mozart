@@ -208,7 +208,7 @@ fn has_numeric_alias_prefix(branch: &str) -> bool {
 /// This is the form Composer's `Locker::lockPackages` writes into the
 /// `aliases` block of `composer.lock` and the form `Pool` indexes for
 /// constraint matching, so Mozart needs to use it too.
-pub(crate) fn normalize_branch_alias_target(alias_target: &str) -> Option<String> {
+pub fn normalize_branch_alias_target(alias_target: &str) -> Option<String> {
     let trimmed = alias_target.trim();
     let lower = trimmed.to_lowercase();
     let base = lower.strip_suffix("-dev")?;

@@ -352,7 +352,7 @@ installer_fixture!(unbounded_conflict_does_not_match_default_branch_with_numeric
 installer_fixture!(unbounded_conflict_matches_default_branch);
 installer_fixture!(update_abandoned_package_required_but_blocked_via_audit_config);
 installer_fixture!(update_alias);
-installer_fixture!(update_alias_lock, ignore);
+installer_fixture!(update_alias_lock);
 installer_fixture!(update_alias_lock2);
 installer_fixture!(update_all);
 installer_fixture!(update_all_dry_run);
@@ -380,8 +380,8 @@ installer_fixture!(
 installer_fixture!(update_allow_list_with_dependency_conflict);
 installer_fixture!(update_changes_url, ignore);
 installer_fixture!(update_dev_ignores_providers);
-installer_fixture!(update_dev_packages_updates_repo_url, ignore);
-installer_fixture!(update_dev_to_new_ref_picks_up_changes, ignore);
+installer_fixture!(update_dev_packages_updates_repo_url);
+installer_fixture!(update_dev_to_new_ref_picks_up_changes);
 installer_fixture!(update_downgrades_unstable_packages, ignore);
 installer_fixture!(update_ignore_platform_package_requirement_list);
 installer_fixture!(update_ignore_platform_package_requirement_list_upper_bounds);
