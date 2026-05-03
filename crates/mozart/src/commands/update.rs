@@ -1102,7 +1102,12 @@ pub async fn run(
         root_version: composer_json.version.clone(),
         require,
         require_dev,
-        include_dev: dev_mode,
+        // Mirrors `Composer\Installer::doUpdate` line 498:
+        // `requirePackagesForUpdate($request, $lockedRepo, true)` —
+        // require-dev is always part of the first solve, regardless of
+        // --no-dev. The flag only affects what gets installed and the
+        // packages-dev split in the lock file.
+        include_dev: true,
         minimum_stability,
         stability_flags: IndexMap::new(),
         prefer_stable,
@@ -1283,12 +1288,14 @@ pub async fn run(
         resolved = apply_patch_only(resolved, lock);
     }
 
-    // Step 9: Generate new lock file
+    // Step 9: Generate new lock file. `include_dev: true` matches Composer:
+    // `update --no-dev` still writes a complete lock file with packages-dev
+    // populated, so a later `install` (with dev_mode) sees them.
     let new_lock = lockfile::generate_lock_file(&lockfile::LockFileGenerationRequest {
         resolved_packages: resolved,
         composer_json_content: composer_json_content.clone(),
         composer_json: composer_json.clone(),
-        include_dev: dev_mode,
+        include_dev: true,
         repositories: repositories.clone(),
         previous_lock: old_lock.clone(),
     })

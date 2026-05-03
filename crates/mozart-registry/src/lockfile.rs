@@ -669,46 +669,52 @@ fn packagist_version_to_locked_package(name: &str, pv: &PackagistVersion) -> Loc
 /// A package is dev-only if it is NOT reachable from the non-dev dependency tree
 /// (i.e., only reachable through require-dev paths).
 ///
-/// `package_metadata` must be pre-fetched full `PackagistVersion` data for each resolved package.
+/// `requires_by_name` and `providers_by_name` are keyed by lowercase package
+/// names. `providers_by_name` maps a satisfied name (own name + each `provide`
+/// or `replace` target) to the list of resolved package names that satisfy it,
+/// so a non-dev `require` like `provided/pkg` reaches `b/b` when `b/b`
+/// declares `provide: { provided/pkg: 1.0.0 }`.
 fn classify_dev_packages(
     resolved: &[ResolvedPackage],
     require: &BTreeMap<String, String>,
     _require_dev: &BTreeMap<String, String>,
     requires_by_name: &IndexMap<String, Vec<String>>,
+    providers_by_name: &IndexMap<String, Vec<String>>,
 ) -> IndexSet<String> {
-    // Build set of all resolved package names for quick lookup
-    let resolved_names: IndexSet<&str> = resolved.iter().map(|p| p.name.as_str()).collect();
-
     // BFS from non-dev root dependencies through each package's `require` map.
     // All reachable packages are production packages.
     let mut production: IndexSet<String> = IndexSet::new();
     let mut queue: VecDeque<String> = VecDeque::new();
 
-    // Seed queue with non-dev root dependencies that are actual packages (not platform)
-    for name in require.keys() {
+    let visit = |name: &str, production: &mut IndexSet<String>, queue: &mut VecDeque<String>| {
         let name_lower = name.to_lowercase();
-        // Skip platform packages (php, ext-*, lib-*, etc.)
         if is_platform_name(&name_lower) {
-            continue;
+            return;
         }
-        if resolved_names.contains(name_lower.as_str()) && production.insert(name_lower.clone()) {
-            queue.push_back(name_lower);
+        // A required name is satisfied either by a resolved package whose own
+        // name matches (the common case, captured here as `providers_by_name`
+        // also indexes own names) or by a resolved package that provides /
+        // replaces it. Mirrors Composer's `extractDevPackages` second-solve
+        // semantics, which walks the same provide/replace edges through a
+        // real Solver call.
+        if let Some(provs) = providers_by_name.get(&name_lower) {
+            for prov in provs {
+                let prov_lower = prov.to_lowercase();
+                if production.insert(prov_lower.clone()) {
+                    queue.push_back(prov_lower);
+                }
+            }
         }
+    };
+
+    for name in require.keys() {
+        visit(name, &mut production, &mut queue);
     }
 
-    // BFS: walk transitive `require` deps of each production package
     while let Some(pkg_name) = queue.pop_front() {
         if let Some(deps) = requires_by_name.get(&pkg_name) {
-            for dep_name in deps {
-                let dep_lower = dep_name.to_lowercase();
-                if is_platform_name(&dep_lower) {
-                    continue;
-                }
-                if resolved_names.contains(dep_lower.as_str())
-                    && production.insert(dep_lower.clone())
-                {
-                    queue.push_back(dep_lower);
-                }
+            for dep_name in deps.clone() {
+                visit(&dep_name, &mut production, &mut queue);
             }
         }
     }
@@ -716,7 +722,7 @@ fn classify_dev_packages(
     // Any resolved package not in `production` is dev-only
     resolved
         .iter()
-        .filter(|p| !production.contains(&p.name))
+        .filter(|p| !production.contains(&p.name.to_lowercase()))
         .map(|p| p.name.clone())
         .collect()
 }
@@ -867,19 +873,45 @@ pub async fn generate_lock_file(request: &LockFileGenerationRequest) -> anyhow::
     // preserved-from-old-lock requires when available so a partial update
     // sees the same dev-classification graph the previous lock did.
     let mut requires_by_name: IndexMap<String, Vec<String>> = IndexMap::new();
+    // Inverse map: `satisfied name → list of resolved packages that satisfy it`.
+    // A resolved package satisfies its own name plus each `provide` / `replace`
+    // target (Composer's `extractDevPackages` reaches the same edges through
+    // its second Solver run; we walk them directly during the dev BFS).
+    let mut providers_by_name: IndexMap<String, Vec<String>> = IndexMap::new();
     for (name, pv) in &package_metadata {
-        let keys: Vec<String> = if let Some(rel) = preserved_rel.get(name) {
-            rel.require.keys().cloned().collect()
-        } else {
-            pv.require.keys().cloned().collect()
-        };
-        requires_by_name.insert(name.to_lowercase(), keys);
+        let name_lower = name.to_lowercase();
+        let (require_keys, provide_keys, replace_keys): (Vec<String>, Vec<String>, Vec<String>) =
+            if let Some(rel) = preserved_rel.get(name) {
+                (
+                    rel.require.keys().cloned().collect(),
+                    rel.provide.keys().cloned().collect(),
+                    rel.replace.keys().cloned().collect(),
+                )
+            } else {
+                (
+                    pv.require.keys().cloned().collect(),
+                    pv.provide.keys().cloned().collect(),
+                    pv.replace.keys().cloned().collect(),
+                )
+            };
+        requires_by_name.insert(name_lower.clone(), require_keys);
+        providers_by_name
+            .entry(name_lower.clone())
+            .or_default()
+            .push(name_lower.clone());
+        for target in provide_keys.iter().chain(replace_keys.iter()) {
+            providers_by_name
+                .entry(target.to_lowercase())
+                .or_default()
+                .push(name_lower.clone());
+        }
     }
     let dev_only = classify_dev_packages(
         &real_owned,
         &request.composer_json.require,
         &request.composer_json.require_dev,
         &requires_by_name,
+        &providers_by_name,
     );
 
     // 3. Build LockedPackage lists.
@@ -1340,7 +1372,20 @@ mod tests {
             .iter()
             .map(|(name, pv)| (name.to_lowercase(), pv.require.keys().cloned().collect()))
             .collect();
-        let dev_only = classify_dev_packages(&resolved, &require, &require_dev, &requires_by_name);
+        let providers_by_name: IndexMap<String, Vec<String>> = metadata
+            .keys()
+            .map(|name| {
+                let lower = name.to_lowercase();
+                (lower.clone(), vec![lower])
+            })
+            .collect();
+        let dev_only = classify_dev_packages(
+            &resolved,
+            &require,
+            &require_dev,
+            &requires_by_name,
+            &providers_by_name,
+        );
 
         assert!(!dev_only.contains("vendor/a"), "A is a production package");
         assert!(dev_only.contains("vendor/b"), "B is dev-only");
@@ -1416,7 +1461,20 @@ mod tests {
             .iter()
             .map(|(name, pv)| (name.to_lowercase(), pv.require.keys().cloned().collect()))
             .collect();
-        let dev_only = classify_dev_packages(&resolved, &require, &require_dev, &requires_by_name);
+        let providers_by_name: IndexMap<String, Vec<String>> = metadata
+            .keys()
+            .map(|name| {
+                let lower = name.to_lowercase();
+                (lower.clone(), vec![lower])
+            })
+            .collect();
+        let dev_only = classify_dev_packages(
+            &resolved,
+            &require,
+            &require_dev,
+            &requires_by_name,
+            &providers_by_name,
+        );
 
         assert!(!dev_only.contains("vendor/a"), "A is a production package");
         assert!(dev_only.contains("vendor/b"), "B is dev-only");

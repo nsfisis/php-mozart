@@ -311,7 +311,7 @@ installer_fixture!(provider_can_coexist_with_other_version_of_provided);
 installer_fixture!(provider_conflicts);
 installer_fixture!(provider_conflicts2);
 installer_fixture!(provider_conflicts3);
-installer_fixture!(provider_dev_require_can_satisfy_require, ignore);
+installer_fixture!(provider_dev_require_can_satisfy_require);
 installer_fixture!(provider_gets_picked_together_with_other_version_of_provided);
 installer_fixture!(
     provider_gets_picked_together_with_other_version_of_provided_conflict,
