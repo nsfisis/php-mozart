@@ -299,7 +299,7 @@ installer_fixture!(
     ignore
 );
 installer_fixture!(partial_update_with_dependencies_provide);
-installer_fixture!(partial_update_with_dependencies_replace, ignore);
+installer_fixture!(partial_update_with_dependencies_replace);
 installer_fixture!(partial_update_with_deps_warns_root);
 installer_fixture!(partial_update_with_symlinked_path_repos);
 installer_fixture!(partial_update_without_lock);

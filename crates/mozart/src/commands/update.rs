@@ -587,6 +587,7 @@ pub fn expand_with_direct_dependencies(
     repo_requires: &IndexMap<String, IndexSet<String>>,
 ) -> Vec<String> {
     let lock_map = build_lock_map(lock);
+    let replace_map = build_lock_replace_map(lock);
     let mut result_set: IndexSet<String> = packages.iter().cloned().collect();
     let mut queue: Vec<String> = packages.clone();
     let mut result: Vec<String> = packages;
@@ -603,9 +604,11 @@ pub fn expand_with_direct_dependencies(
             if root_requires.contains(&dep_name) {
                 continue;
             }
-            if result_set.insert(dep_name.clone()) {
-                result.push(dep_name.clone());
-                queue.push(dep_name);
+            for actual in resolve_dep_via_replace(&dep_name, &lock_map, &replace_map) {
+                if result_set.insert(actual.clone()) {
+                    result.push(actual.clone());
+                    queue.push(actual);
+                }
             }
         }
     }
@@ -622,6 +625,7 @@ pub fn expand_with_all_dependencies(
     repo_requires: &IndexMap<String, IndexSet<String>>,
 ) -> Vec<String> {
     let lock_map = build_lock_map(lock);
+    let replace_map = build_lock_replace_map(lock);
     let mut result_set: IndexSet<String> = packages.iter().cloned().collect();
     let mut queue: Vec<String> = packages.clone();
     let mut result: Vec<String> = packages;
@@ -634,14 +638,58 @@ pub fn expand_with_all_dependencies(
             if is_platform_dep(&dep_name) {
                 continue;
             }
-            if result_set.insert(dep_name.clone()) {
-                result.push(dep_name.clone());
-                queue.push(dep_name);
+            for actual in resolve_dep_via_replace(&dep_name, &lock_map, &replace_map) {
+                if result_set.insert(actual.clone()) {
+                    result.push(actual.clone());
+                    queue.push(actual);
+                }
             }
         }
     }
 
     result
+}
+
+/// Build a `replaced_name → list of replacing package names` index over the
+/// lock, so a dependency on a virtual / replaced name reaches the actual
+/// locked package that owns it. Mirrors the replace branch of Composer's
+/// `PoolBuilder::loadPackage`: a partial update with `--with-dependencies`
+/// must unlock the replacer when a transitive require points at the
+/// replaced name, otherwise the resolver leaves the replacer pinned at
+/// its lock version and silently fails to upgrade.
+fn build_lock_replace_map(lock: &lockfile::LockFile) -> IndexMap<String, Vec<String>> {
+    let mut map: IndexMap<String, Vec<String>> = IndexMap::new();
+    for pkg in lock
+        .packages
+        .iter()
+        .chain(lock.packages_dev.iter().flatten())
+    {
+        for replaced in pkg.replace.keys() {
+            map.entry(replaced.to_lowercase())
+                .or_default()
+                .push(pkg.name.to_lowercase());
+        }
+    }
+    map
+}
+
+/// Translate a dependency name into the list of locked package names that
+/// effectively own it: either the package directly named (the common case)
+/// or, when the name is virtual / replaced, every locked package whose
+/// `replace` map covers it. The result is what should enter the unlock set
+/// during `--with-(all-)dependencies` expansion.
+fn resolve_dep_via_replace(
+    dep_name: &str,
+    lock_map: &IndexMap<String, &lockfile::LockedPackage>,
+    replace_map: &IndexMap<String, Vec<String>>,
+) -> Vec<String> {
+    if lock_map.contains_key(dep_name) {
+        vec![dep_name.to_string()]
+    } else if let Some(replacers) = replace_map.get(dep_name) {
+        replacers.clone()
+    } else {
+        vec![dep_name.to_string()]
+    }
 }
 
 /// Expand the package list applying wildcard matching and optional dependency expansion.
