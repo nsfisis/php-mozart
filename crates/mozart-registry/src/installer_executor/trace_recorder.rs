@@ -69,6 +69,7 @@ impl InstallerExecutor for TraceRecorderExecutor {
             }
             PackageOperation::Update {
                 from_version,
+                from_full_pretty,
                 package,
             } => {
                 let action = if is_upgrade(from_version, &package.version) {
@@ -80,7 +81,7 @@ impl InstallerExecutor for TraceRecorderExecutor {
                     "{} {} ({} => {})",
                     action,
                     package.name,
-                    from_version,
+                    from_full_pretty,
                     format_full_pretty_version(package)
                 ));
             }

@@ -5,6 +5,7 @@ use mozart_core::console_format;
 use mozart_registry::installed;
 use mozart_registry::installer_executor::{
     ExecuteContext, FilesystemExecutor, InstallerExecutor, PackageOperation,
+    format_full_pretty_version_for_installed,
 };
 use mozart_registry::lockfile;
 use std::collections::BTreeMap;
@@ -185,17 +186,20 @@ pub fn compute_operations<'a>(
 
     let mut ops: Vec<(&'a lockfile::LockedPackage, Action)> = Vec::new();
     for pkg in ordered {
-        if installed.is_installed(&pkg.name, &pkg.version) {
-            ops.push((pkg, Action::Skip));
-        } else if installed
+        let installed_entry = installed
             .packages
             .iter()
-            .any(|p| p.name.eq_ignore_ascii_case(&pkg.name))
-        {
-            ops.push((pkg, Action::Update));
-        } else {
-            ops.push((pkg, Action::Install));
-        }
+            .find(|p| p.name.eq_ignore_ascii_case(&pkg.name));
+        let action = match installed_entry {
+            None => Action::Install,
+            Some(entry) if entry.version != pkg.version => Action::Update,
+            // Same version present — Composer's Transaction also fires an
+            // UpdateOperation when the source/dist reference moved (e.g. a
+            // root require pinned a new commit via `dev-main#abcd`).
+            Some(entry) if !installed_refs_match_locked(entry, pkg) => Action::Update,
+            Some(_) => Action::Skip,
+        };
+        ops.push((pkg, action));
     }
 
     // Compute removals: packages in installed but not in locked
@@ -323,6 +327,30 @@ fn topological_sort<'a>(
     }
 
     ordered
+}
+
+/// Compare an installed-package entry's source/dist references with a
+/// locked package's. Mirrors the reference-equality leg of Composer's
+/// `Transaction::calculateOperations` update-detection: a same-version
+/// install is upgraded (or downgraded) when either reference has shifted,
+/// so users who pinned a new commit via `dev-main#abcd` see the move.
+fn installed_refs_match_locked(
+    entry: &installed::InstalledPackageEntry,
+    locked: &lockfile::LockedPackage,
+) -> bool {
+    let installed_source_ref = entry
+        .source
+        .as_ref()
+        .and_then(|v| v.get("reference"))
+        .and_then(|v| v.as_str());
+    let installed_dist_ref = entry
+        .dist
+        .as_ref()
+        .and_then(|v| v.get("reference"))
+        .and_then(|v| v.as_str());
+    let locked_source_ref = locked.source.as_ref().and_then(|s| s.reference.as_deref());
+    let locked_dist_ref = locked.dist.as_ref().and_then(|d| d.reference.as_deref());
+    installed_source_ref == locked_source_ref && installed_dist_ref == locked_dist_ref
 }
 
 /// Convert a LockedPackage to an InstalledPackageEntry.
@@ -647,6 +675,10 @@ pub async fn install_from_lock(
         }
 
         for (pkg, action) in &ops {
+            // Owned scratch buffer the Update branch borrows for
+            // `PackageOperation::Update::from_version`. Declared at loop
+            // scope so the borrow outlives the await call.
+            let from_version_buf;
             let op = match action {
                 Action::Skip => continue,
                 Action::Install => {
@@ -665,15 +697,22 @@ pub async fn install_from_lock(
                     ));
                     // Pull the previously-installed version from installed.json
                     // so the trace recorder can format
-                    // `Upgrading pkg (oldVersion => newVersion)`.
-                    let from_version = installed
+                    // `Upgrading pkg (oldVersion => newVersion)`. The plain
+                    // version drives the upgrade/downgrade direction; the
+                    // full-pretty form (with the dev reference suffix) is
+                    // what shows up in the trace, mirroring Composer's
+                    // `UpdateOperation::format`.
+                    let from_entry = installed
                         .packages
                         .iter()
-                        .find(|p| p.name.eq_ignore_ascii_case(&pkg.name))
-                        .map(|p| p.version.as_str())
-                        .unwrap_or("");
+                        .find(|p| p.name.eq_ignore_ascii_case(&pkg.name));
+                    let from_version = from_entry.map(|p| p.version.as_str()).unwrap_or("");
+                    from_version_buf = from_entry
+                        .map(format_full_pretty_version_for_installed)
+                        .unwrap_or_default();
                     PackageOperation::Update {
                         from_version,
+                        from_full_pretty: &from_version_buf,
                         package: pkg,
                     }
                 }

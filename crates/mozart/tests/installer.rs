@@ -416,8 +416,8 @@ installer_fixture!(update_package_present_in_lock_but_not_in_remote_due_to_min_s
 installer_fixture!(update_package_present_in_lower_repo_prio_but_not_main_due_to_min_stability);
 installer_fixture!(update_picks_up_change_of_vcs_type, ignore);
 installer_fixture!(update_prefer_lowest_stable);
-installer_fixture!(update_reference, ignore);
-installer_fixture!(update_reference_picks_latest, ignore);
+installer_fixture!(update_reference);
+installer_fixture!(update_reference_picks_latest);
 installer_fixture!(update_removes_unused_locked_dep, ignore);
 installer_fixture!(update_requiring_decision_reverts_and_learning_positive_literals);
 installer_fixture!(update_security_advisory_matching_direct_dependency, ignore);
@@ -431,4 +431,4 @@ installer_fixture!(update_to_empty_from_locked, ignore);
 installer_fixture!(update_with_all_dependencies);
 installer_fixture!(update_without_lock);
 installer_fixture!(updating_dev_from_lock_removes_old_deps, ignore);
-installer_fixture!(updating_dev_updates_url_and_reference, ignore);
+installer_fixture!(updating_dev_updates_url_and_reference);

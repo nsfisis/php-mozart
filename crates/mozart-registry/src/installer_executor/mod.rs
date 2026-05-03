@@ -15,6 +15,7 @@
 
 use std::path::PathBuf;
 
+use crate::installed::InstalledPackageEntry;
 use crate::lockfile::{LockAlias, LockedPackage};
 
 pub mod filesystem;
@@ -30,9 +31,13 @@ pub enum PackageOperation<'a> {
     /// `package.dist`/`package.source`.
     Install { package: &'a LockedPackage },
     /// Replace an existing install with a new version. `from_version` is the
-    /// pretty version that was installed before.
+    /// pretty version that was installed before (no reference suffix —
+    /// drives the upgrade-vs-downgrade direction). `from_full_pretty` is the
+    /// formatted display string (`dev-master abc123`) used verbatim in the
+    /// trace output.
     Update {
         from_version: &'a str,
+        from_full_pretty: &'a str,
         package: &'a LockedPackage,
     },
     /// Mark an alias of a real package as installed. No filesystem effects —
@@ -72,15 +77,65 @@ pub fn format_full_pretty_version(pkg: &LockedPackage) -> String {
 /// alternate pretty version (used by `MarkAliasInstalled` so the alias's
 /// `3.2.x-dev` text is rendered with the *target's* reference).
 pub fn format_full_pretty_with_pretty(pretty_version: &str, pkg: &LockedPackage) -> String {
-    let is_dev = mozart_semver::Version::parse(&pkg.version)
+    let source_ref = pkg.source.as_ref().and_then(|s| s.reference.as_deref());
+    let dist_ref = pkg.dist.as_ref().and_then(|d| d.reference.as_deref());
+    let source_type = pkg.source.as_ref().map(|s| s.source_type.as_str());
+    format_full_pretty_with_refs(
+        pretty_version,
+        &pkg.version,
+        source_ref,
+        dist_ref,
+        source_type,
+    )
+}
+
+/// Mirror Composer's `BasePackage::getFullPrettyVersion()` for an
+/// `InstalledPackageEntry`. Same display rules as
+/// [`format_full_pretty_version`] but pulls source/dist info out of the
+/// installed.json `source`/`dist` JSON values.
+pub fn format_full_pretty_version_for_installed(entry: &InstalledPackageEntry) -> String {
+    let source_ref = entry
+        .source
+        .as_ref()
+        .and_then(|v| v.get("reference"))
+        .and_then(|v| v.as_str());
+    let dist_ref = entry
+        .dist
+        .as_ref()
+        .and_then(|v| v.get("reference"))
+        .and_then(|v| v.as_str());
+    let source_type = entry
+        .source
+        .as_ref()
+        .and_then(|v| v.get("type"))
+        .and_then(|v| v.as_str());
+    format_full_pretty_with_refs(
+        &entry.version,
+        &entry.version,
+        source_ref,
+        dist_ref,
+        source_type,
+    )
+}
+
+/// Core of `BasePackage::getFullPrettyVersion()` factored over raw
+/// fields so both [`LockedPackage`] and [`InstalledPackageEntry`] can share
+/// the rendering logic. `version` drives the dev-stability check; the result
+/// is `pretty_version` plus a reference suffix when the package is a dev
+/// branch backed by git/hg (with sha1 references truncated to 7 chars).
+fn format_full_pretty_with_refs(
+    pretty_version: &str,
+    version: &str,
+    source_ref: Option<&str>,
+    dist_ref: Option<&str>,
+    source_type: Option<&str>,
+) -> String {
+    let is_dev = mozart_semver::Version::parse(version)
         .map(|v| matches!(v.pre_release.as_deref(), Some("dev")) || v.is_dev_branch)
         .unwrap_or(false);
     if !is_dev {
         return pretty_version.to_string();
     }
-    let source_ref = pkg.source.as_ref().and_then(|s| s.reference.as_deref());
-    let dist_ref = pkg.dist.as_ref().and_then(|d| d.reference.as_deref());
-    let source_type = pkg.source.as_ref().map(|s| s.source_type.as_str());
     // Composer falls back to dist reference only when no source type is set
     // (or the package isn't git/hg — in which case the dev display is skipped
     // entirely above).
