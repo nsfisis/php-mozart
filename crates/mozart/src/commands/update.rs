@@ -506,20 +506,42 @@ fn is_platform_dep(dep_name: &str) -> bool {
         || dep_name == "php-debug"
 }
 
-/// Look up the require-list for `name`: prefer the lock entry (the version
-/// that will stay if not unlocked) and fall back to the union of repo
-/// requires for not-yet-locked packages. Lowercase names returned.
+/// Look up the require-list for `name`, unioning the lock entry's
+/// requires with every available version's requires from inline /
+/// composer-repo entries. Lowercase names returned, deduped.
+///
+/// Composer's `PoolBuilder::loadPackage` dynamically unlocks any locked
+/// dependency referenced by an allow-listed package's *new* (about-to-be-
+/// resolved) version. Mozart pre-computes the unlock set, so it has to
+/// consider not only the lock-pinned version's requires but also every
+/// candidate version the resolver might pick — otherwise upgrading a
+/// locked package whose new version added a requirement on another
+/// locked package leaves that other package pinned, and the resolver
+/// silently keeps the old version.
 fn requires_for_name(
     name: &str,
     lock_map: &IndexMap<String, &lockfile::LockedPackage>,
     repo_requires: &IndexMap<String, IndexSet<String>>,
 ) -> Option<Vec<String>> {
+    let mut deps: IndexSet<String> = IndexSet::new();
+    let mut seen = false;
     if let Some(pkg) = lock_map.get(name) {
-        return Some(pkg.require.keys().map(|k| k.to_lowercase()).collect());
+        seen = true;
+        for k in pkg.require.keys() {
+            deps.insert(k.to_lowercase());
+        }
     }
-    repo_requires
-        .get(name)
-        .map(|set| set.iter().cloned().collect())
+    if let Some(set) = repo_requires.get(name) {
+        seen = true;
+        for k in set {
+            deps.insert(k.clone());
+        }
+    }
+    if seen {
+        Some(deps.into_iter().collect())
+    } else {
+        None
+    }
 }
 
 /// Expand the allow-list with transitive `require` dependencies, stopping at
