@@ -222,7 +222,7 @@ installer_fixture!(alias_in_lock2, ignore);
 installer_fixture!(alias_on_unloadable_package);
 installer_fixture!(alias_solver_problems);
 installer_fixture!(alias_solver_problems2);
-installer_fixture!(alias_with_reference, ignore);
+installer_fixture!(alias_with_reference);
 installer_fixture!(aliased_priority);
 installer_fixture!(aliased_priority_conflicting);
 installer_fixture!(aliases_with_require_dev, ignore);

@@ -110,6 +110,30 @@ pub fn format_full_pretty_with_pretty(pretty_version: &str, pkg: &LockedPackage)
     )
 }
 
+/// Render an alias's full pretty version: the alias's own pretty form for
+/// the visible text, the alias's *normalized* version for the dev-stability
+/// gate, and the target package's source/dist references for the suffix.
+/// Mirrors `AliasPackage::getFullPrettyVersion`, where the alias decides on
+/// its own whether to append a reference based on its own stability — so a
+/// stable alias like `1.0.0` skips the suffix even when the target is a dev
+/// branch.
+pub fn format_full_pretty_alias(
+    alias_pretty: &str,
+    alias_version: &str,
+    target: &LockedPackage,
+) -> String {
+    let source_ref = target.source.as_ref().and_then(|s| s.reference.as_deref());
+    let dist_ref = target.dist.as_ref().and_then(|d| d.reference.as_deref());
+    let source_type = target.source.as_ref().map(|s| s.source_type.as_str());
+    format_full_pretty_with_refs(
+        alias_pretty,
+        alias_version,
+        source_ref,
+        dist_ref,
+        source_type,
+    )
+}
+
 /// Same as [`format_full_pretty_version_for_installed`] but lets the caller
 /// supply an alternate pretty version. Used when emitting
 /// `MarkAliasUninstalled`: the alias's `1.0.x-dev` text needs to be rendered

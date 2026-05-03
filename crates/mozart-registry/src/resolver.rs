@@ -288,7 +288,11 @@ struct RootAlias {
 /// the cleaned constraint plus the `(left, right)` pieces when an alias is
 /// present. Mirrors Composer's `VersionParser::parseConstraint` `as`-strip:
 /// the constraint passed to the resolver is the LEFT side, and a separate
-/// alias entry is recorded for the RIGHT side.
+/// alias entry is recorded for the RIGHT side. A trailing `#hex` reference
+/// (`dev-main#abcd`) is also stripped — Composer's `extractAliases` regex
+/// `([^,\s#|]+)(?:#[^ ]+)?` excludes it from the captured constraint, and
+/// `RootPackageLoader::extractReferences` records the hash separately for
+/// the post-resolve `setSourceDistReferences` pass.
 fn strip_root_alias_clause(constraint: &str) -> (String, Option<(String, String)>) {
     let trimmed = constraint.trim();
     if let Some(idx) = trimmed.find(" as ") {
@@ -299,13 +303,28 @@ fn strip_root_alias_clause(constraint: &str) -> (String, Option<(String, String)
             && !before.contains([' ', '\t', ',', '|'])
             && !after.contains([' ', '\t', ',', '|'])
         {
-            return (
-                before.to_string(),
-                Some((before.to_string(), after.to_string())),
-            );
+            let cleaned = strip_inline_reference(before);
+            return (cleaned.clone(), Some((cleaned, after.to_string())));
         }
     }
-    (trimmed.to_string(), None)
+    (strip_inline_reference(trimmed), None)
+}
+
+/// Drop a trailing `#hex` reference from a single-atom `dev-*` / `*-dev`
+/// constraint, matching Composer's `'{^[^,\s@]+?#([a-f0-9]+)$}'` guard.
+/// Lockfile generation records the reference separately via
+/// `extract_root_references` and applies it after resolution, so the SAT
+/// constraint itself only needs the bare branch name.
+fn strip_inline_reference(s: &str) -> String {
+    if let Some((head, hash)) = s.rsplit_once('#')
+        && !hash.is_empty()
+        && hash.chars().all(|c| c.is_ascii_hexdigit())
+        && !head.contains([' ', '\t', ',', '@'])
+        && (head.to_lowercase().starts_with("dev-") || head.to_lowercase().ends_with("-dev"))
+    {
+        return head.to_string();
+    }
+    s.to_string()
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

@@ -17,8 +17,8 @@
 use mozart_semver::Version;
 
 use super::{
-    ExecuteContext, InstallerExecutor, PackageOperation, format_full_pretty_version,
-    format_full_pretty_with_pretty,
+    ExecuteContext, InstallerExecutor, PackageOperation, format_full_pretty_alias,
+    format_full_pretty_version,
 };
 
 /// Recording-only executor. Construct with [`TraceRecorderExecutor::new`],
@@ -84,7 +84,8 @@ impl InstallerExecutor for TraceRecorderExecutor {
                 ));
             }
             PackageOperation::MarkAliasInstalled { alias, target } => {
-                let alias_full = format_full_pretty_with_pretty(&alias.alias, target);
+                let alias_full =
+                    format_full_pretty_alias(&alias.alias, &alias.alias_normalized, target);
                 let target_full = format_full_pretty_version(target);
                 self.trace.push(format!(
                     "Marking {} ({}) as installed, alias of {} ({})",
