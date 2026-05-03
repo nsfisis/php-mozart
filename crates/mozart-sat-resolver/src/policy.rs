@@ -86,7 +86,23 @@ impl DefaultPolicy {
             };
         }
 
-        // Different names: sort by package ID for reproducibility
+        // Different names: when one package replaces the other, prefer the
+        // *replaced* original. Mirrors the `replaces()` shortcut in
+        // Composer's `DefaultPolicy::compareByPriority` (the cross-package
+        // `ignoreReplace=false` pass). Without this, a request like
+        // `update a/installed` where the pool also contains an
+        // `a/replacer` declaring `replace: { "a/installed": "dev-master" }`
+        // could fall through to package-id tie-break and land on the
+        // replacer instead of the package the user actually asked for.
+        if pkg_a.replaces.iter().any(|link| link.target == pkg_b.name) {
+            return std::cmp::Ordering::Greater;
+        }
+        if pkg_b.replaces.iter().any(|link| link.target == pkg_a.name) {
+            return std::cmp::Ordering::Less;
+        }
+
+        // Different names, no replace relationship: sort by package ID
+        // for reproducibility.
         pkg_a.id.cmp(&pkg_b.id)
     }
 

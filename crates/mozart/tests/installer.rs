@@ -391,7 +391,7 @@ installer_fixture!(
 );
 installer_fixture!(update_allow_list_with_dependency_conflict, ignore);
 installer_fixture!(update_changes_url, ignore);
-installer_fixture!(update_dev_ignores_providers, ignore);
+installer_fixture!(update_dev_ignores_providers);
 installer_fixture!(update_dev_packages_updates_repo_url, ignore);
 installer_fixture!(update_dev_to_new_ref_picks_up_changes, ignore);
 installer_fixture!(update_downgrades_unstable_packages, ignore);
