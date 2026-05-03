@@ -350,10 +350,7 @@ installer_fixture!(suggest_uninstalled);
 installer_fixture!(unbounded_conflict_does_not_match_default_branch_with_branch_alias);
 installer_fixture!(unbounded_conflict_does_not_match_default_branch_with_numeric_branch);
 installer_fixture!(unbounded_conflict_matches_default_branch);
-installer_fixture!(
-    update_abandoned_package_required_but_blocked_via_audit_config,
-    ignore
-);
+installer_fixture!(update_abandoned_package_required_but_blocked_via_audit_config);
 installer_fixture!(update_alias);
 installer_fixture!(update_alias_lock, ignore);
 installer_fixture!(update_alias_lock2);

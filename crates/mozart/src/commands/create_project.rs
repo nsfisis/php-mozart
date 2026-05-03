@@ -442,6 +442,7 @@ pub async fn execute(
             .collect(),
         locked_package_names: indexmap::IndexSet::new(),
         locked_packages: Vec::new(),
+        block_abandoned: false,
     };
 
     console.info("Resolving dependencies...");

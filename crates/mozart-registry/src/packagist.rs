@@ -135,6 +135,13 @@ pub struct PackagistVersion {
     /// `crate::resolver::packagist_to_pool_inputs`.
     #[serde(rename = "default-branch", default)]
     pub default_branch: bool,
+
+    /// Abandonment marker. Composer accepts `abandoned: true` (no replacement
+    /// suggested) or `abandoned: "<replacement-package>"`. Anything else
+    /// (absent, `false`, empty string) means the package is active. Mirrors
+    /// `Composer\Package\CompletePackage::isAbandoned`.
+    #[serde(default, deserialize_with = "deserialize_unset_as_none")]
+    pub abandoned: Option<serde_json::Value>,
 }
 
 impl PackagistVersion {

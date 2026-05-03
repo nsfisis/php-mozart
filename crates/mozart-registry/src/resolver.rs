@@ -483,6 +483,19 @@ fn should_skip_platform_dep(
 // Packagist → PoolPackageInput conversion
 // ─────────────────────────────────────────────────────────────────────────────
 
+/// Mirrors `Composer\Package\CompletePackage::isAbandoned`: any
+/// `abandoned: true` or `abandoned: "<replacement>"` value is truthy.
+/// `abandoned: false` and an empty string both register as not-abandoned.
+fn is_abandoned(pv: &packagist::PackagistVersion) -> bool {
+    match &pv.abandoned {
+        None => false,
+        Some(serde_json::Value::Null) => false,
+        Some(serde_json::Value::Bool(b)) => *b,
+        Some(serde_json::Value::String(s)) => !s.is_empty(),
+        Some(_) => true,
+    }
+}
+
 /// Convert a Packagist version entry to PoolPackageInput(s).
 /// May return multiple entries if branch aliases are present.
 fn packagist_to_pool_inputs(
@@ -705,6 +718,13 @@ pub struct ResolveRequest {
     /// version (whether directly or via another package's `replace`). Empty
     /// for installs and full updates.
     pub locked_packages: Vec<LockedPackageInfo>,
+    /// When true, drop abandoned packages (`abandoned: true|<replacement>`)
+    /// from the pool before solving. Mirrors Composer's
+    /// `audit.block-abandoned` config feeding into
+    /// `SecurityAdvisoryPoolFilter`: the resolver simply never sees these
+    /// versions, so a root requirement that only matches abandoned candidates
+    /// fails with the standard "could not be resolved" error.
+    pub block_abandoned: bool,
 }
 
 /// Full data for a lock-pinned package, used in partial updates. Carried on
@@ -1026,6 +1046,9 @@ pub async fn resolve(request: &ResolveRequest) -> Result<Vec<ResolvedPackage>, R
             return false;
         };
         for ipkg in packages {
+            if request.block_abandoned && is_abandoned(&ipkg.version) {
+                continue;
+            }
             let inputs = packagist_to_pool_inputs(
                 &ipkg.name,
                 &ipkg.version,
@@ -1052,6 +1075,9 @@ pub async fn resolve(request: &ResolveRequest) -> Result<Vec<ResolvedPackage>, R
     let mut composer_repo_names: IndexSet<String> = IndexSet::new();
     for cpkg in &composer_repo_packages {
         composer_repo_names.insert(cpkg.name.clone());
+        if request.block_abandoned && is_abandoned(&cpkg.version) {
+            continue;
+        }
         let inputs = packagist_to_pool_inputs(
             &cpkg.name,
             &cpkg.version,
@@ -1098,6 +1124,9 @@ pub async fn resolve(request: &ResolveRequest) -> Result<Vec<ResolvedPackage>, R
         .await
         .map_err(|e| ResolveError::DependencyFetchError(e.to_string()))?;
     for r in &seed_results {
+        if request.block_abandoned && is_abandoned(&r.version) {
+            continue;
+        }
         let inputs = packagist_to_pool_inputs(
             &r.name,
             &r.version,
@@ -1143,6 +1172,9 @@ pub async fn resolve(request: &ResolveRequest) -> Result<Vec<ResolvedPackage>, R
             }
         };
         for r in &results {
+            if request.block_abandoned && is_abandoned(&r.version) {
+                continue;
+            }
             let inputs = packagist_to_pool_inputs(
                 &r.name,
                 &r.version,
@@ -1705,6 +1737,7 @@ mod tests {
             root_conflict: IndexMap::new(),
             locked_package_names: IndexSet::new(),
             locked_packages: Vec::new(),
+            block_abandoned: false,
         };
 
         let result = resolve(&request).await;

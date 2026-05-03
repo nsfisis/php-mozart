@@ -1009,6 +1009,17 @@ pub async fn run(
         platform.apply_overrides(overrides);
     }
 
+    // Mirrors `Composer\Advisory\AuditConfig::fromConfig`: read
+    // `config.audit.block-abandoned` straight off composer.json. Defaults to
+    // false; when true the resolver drops abandoned packages from the pool.
+    let block_abandoned = composer_json
+        .extra_fields
+        .get("config")
+        .and_then(|c| c.get("audit"))
+        .and_then(|a| a.get("block-abandoned"))
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+
     let request = ResolveRequest {
         root_name: composer_json.name.clone(),
         root_version: composer_json.version.clone(),
@@ -1042,6 +1053,7 @@ pub async fn run(
             .collect(),
         locked_package_names,
         locked_packages,
+        block_abandoned,
     };
 
     // Step 6: Print header and run resolver
@@ -2168,6 +2180,7 @@ mod tests {
             root_conflict: IndexMap::new(),
             locked_package_names: IndexSet::new(),
             locked_packages: Vec::new(),
+            block_abandoned: false,
         };
 
         let resolved = resolve(&request).await.expect("Resolution should succeed");

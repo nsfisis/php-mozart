@@ -199,6 +199,7 @@ mod tests {
             extra: None,
             notification_url: None,
             default_branch: false,
+            abandoned: None,
         }
     }
 

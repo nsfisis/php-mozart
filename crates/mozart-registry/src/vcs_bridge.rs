@@ -188,6 +188,7 @@ pub fn vcs_to_packagist_version(vpkg: &VcsPackageVersion) -> PackagistVersion {
         extra: vpkg.composer_json.get("extra").cloned(),
         notification_url: None,
         default_branch: vpkg.is_default_branch,
+        abandoned: vpkg.composer_json.get("abandoned").cloned(),
     }
 }
 

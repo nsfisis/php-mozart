@@ -276,6 +276,7 @@ pub async fn execute(
             .collect(),
         locked_package_names: indexmap::IndexSet::new(),
         locked_packages: Vec::new(),
+        block_abandoned: false,
     };
 
     // Print header messages
@@ -554,6 +555,7 @@ async fn remove_unused(
             .collect(),
         locked_package_names: indexmap::IndexSet::new(),
         locked_packages: Vec::new(),
+        block_abandoned: false,
     };
 
     console.info("Resolving dependencies to detect unused packages...");
@@ -908,6 +910,7 @@ mod tests {
             root_conflict: IndexMap::new(),
             locked_package_names: IndexSet::new(),
             locked_packages: Vec::new(),
+            block_abandoned: false,
         };
         let resolved = resolve(&request)
             .await
@@ -965,6 +968,7 @@ mod tests {
             root_conflict: IndexMap::new(),
             locked_package_names: IndexSet::new(),
             locked_packages: Vec::new(),
+            block_abandoned: false,
         };
         let resolved2 = resolve(&request2)
             .await

@@ -1092,6 +1092,7 @@ mod tests {
             extra: Some(serde_json::json!({"branch-alias": {"dev-main": "1.0.x-dev"}})),
             notification_url: Some("https://packagist.org/downloads/".to_string()),
             default_branch: false,
+            abandoned: None,
         }
     }
 
@@ -1167,6 +1168,7 @@ mod tests {
             extra: None,
             notification_url: None,
             default_branch: false,
+            abandoned: None,
         };
 
         let locked = packagist_version_to_locked_package("vendor/pkg", &pv);
@@ -1506,6 +1508,7 @@ mod tests {
             root_conflict: IndexMap::new(),
             locked_package_names: IndexSet::new(),
             locked_packages: Vec::new(),
+            block_abandoned: false,
         };
 
         let resolved = resolve(&resolve_request)

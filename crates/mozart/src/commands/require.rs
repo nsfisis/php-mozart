@@ -664,6 +664,7 @@ pub async fn execute(
             .collect(),
         locked_package_names: indexmap::IndexSet::new(),
         locked_packages: Vec::new(),
+        block_abandoned: false,
     };
 
     // Print header messages
@@ -1066,6 +1067,7 @@ mod tests {
             root_conflict: IndexMap::new(),
             locked_package_names: IndexSet::new(),
             locked_packages: Vec::new(),
+            block_abandoned: false,
         };
 
         let resolved = resolver::resolve(&request)
@@ -1141,6 +1143,7 @@ mod tests {
             root_conflict: IndexMap::new(),
             locked_package_names: IndexSet::new(),
             locked_packages: Vec::new(),
+            block_abandoned: false,
         };
 
         let resolved = resolver::resolve(&request)
