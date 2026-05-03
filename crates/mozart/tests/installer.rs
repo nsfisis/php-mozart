@@ -371,7 +371,7 @@ installer_fixture!(update_allow_list_warns_non_existing_patterns);
 installer_fixture!(update_allow_list_with_dependencies);
 installer_fixture!(update_allow_list_with_dependencies_alias, ignore);
 installer_fixture!(update_allow_list_with_dependencies_new_requirement, ignore);
-installer_fixture!(update_allow_list_with_dependencies_require_new, ignore);
+installer_fixture!(update_allow_list_with_dependencies_require_new);
 installer_fixture!(update_allow_list_with_dependencies_require_new_replace);
 installer_fixture!(
     update_allow_list_with_dependencies_require_new_replace_mutual,

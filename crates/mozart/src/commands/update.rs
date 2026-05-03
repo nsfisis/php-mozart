@@ -463,6 +463,65 @@ fn build_lock_map(lock: &lockfile::LockFile) -> IndexMap<String, &lockfile::Lock
     map
 }
 
+/// Build a `name → union of require keys` lookup from inline `type: package`
+/// and `type: composer` repository entries declared in `composer.json`.
+///
+/// Used by `expand_with_direct_dependencies` / `expand_with_all_dependencies`
+/// to walk the require list of allow-listed packages that are NOT yet in the
+/// lock (e.g. a newly added root require). Mirrors the dynamic unlock side
+/// effect Composer's `PoolBuilder::loadPackage` produces when it loads a
+/// not-yet-locked package — every require that currently sits in
+/// `skippedLoad` becomes a candidate for unlocking. We approximate that here
+/// by unioning the require *names* across every available version, since at
+/// allow-list expansion time we don't yet know which version the resolver
+/// will pick.
+pub fn collect_repo_requires(
+    repositories: &[mozart_core::package::RawRepository],
+) -> IndexMap<String, IndexSet<String>> {
+    let mut out: IndexMap<String, IndexSet<String>> = IndexMap::new();
+    for ipkg in mozart_registry::inline_package::collect_inline_packages(repositories) {
+        let entry = out.entry(ipkg.name.to_lowercase()).or_default();
+        for req in ipkg.version.require.keys() {
+            entry.insert(req.to_lowercase());
+        }
+    }
+    for cpkg in mozart_registry::composer_repo::collect_composer_packages(repositories) {
+        let entry = out.entry(cpkg.name.to_lowercase()).or_default();
+        for req in cpkg.version.require.keys() {
+            entry.insert(req.to_lowercase());
+        }
+    }
+    out
+}
+
+/// Whether `dep_name` is a platform package (php / ext-* / lib-*) and so
+/// should be skipped from allow-list expansion.
+fn is_platform_dep(dep_name: &str) -> bool {
+    dep_name == "php"
+        || dep_name.starts_with("ext-")
+        || dep_name.starts_with("lib-")
+        || dep_name == "php-64bit"
+        || dep_name == "php-ipv6"
+        || dep_name == "php-zts"
+        || dep_name == "php-debug"
+}
+
+/// Look up the require-list for `name`: prefer the lock entry (the version
+/// that will stay if not unlocked) and fall back to the union of repo
+/// requires for not-yet-locked packages. Lowercase names returned.
+fn requires_for_name(
+    name: &str,
+    lock_map: &IndexMap<String, &lockfile::LockedPackage>,
+    repo_requires: &IndexMap<String, IndexSet<String>>,
+) -> Option<Vec<String>> {
+    if let Some(pkg) = lock_map.get(name) {
+        return Some(pkg.require.keys().map(|k| k.to_lowercase()).collect());
+    }
+    repo_requires
+        .get(name)
+        .map(|set| set.iter().cloned().collect())
+}
+
 /// Expand the allow-list with transitive `require` dependencies, stopping at
 /// any dependency that is also a root requirement.
 ///
@@ -472,10 +531,16 @@ fn build_lock_map(lock: &lockfile::LockFile) -> IndexMap<String, &lockfile::Lock
 /// unlocked and re-loaded — but only when it is NOT itself a root require.
 /// A root require hit acts as a barrier: the locked version stays, a
 /// warning is issued, and the cascade through that node stops.
+///
+/// `repo_requires` supplies the require list for allow-listed packages that
+/// are not yet in the lock (e.g. a freshly added root require). It is built
+/// via `collect_repo_requires` from the inline / composer-repo entries in
+/// `composer.json`.
 pub fn expand_with_direct_dependencies(
     packages: Vec<String>,
     lock: &lockfile::LockFile,
     root_requires: &IndexSet<String>,
+    repo_requires: &IndexMap<String, IndexSet<String>>,
 ) -> Vec<String> {
     let lock_map = build_lock_map(lock);
     let mut result_set: IndexSet<String> = packages.iter().cloned().collect();
@@ -483,28 +548,20 @@ pub fn expand_with_direct_dependencies(
     let mut result: Vec<String> = packages;
 
     while let Some(name) = queue.pop() {
-        if let Some(pkg) = lock_map.get(&name) {
-            for dep_name in pkg.require.keys() {
-                // Skip platform packages (php, ext-*, lib-*)
-                if dep_name == "php"
-                    || dep_name.starts_with("ext-")
-                    || dep_name.starts_with("lib-")
-                    || dep_name == "php-64bit"
-                    || dep_name == "php-ipv6"
-                    || dep_name == "php-zts"
-                    || dep_name == "php-debug"
-                {
-                    continue;
-                }
-                let lower = dep_name.to_lowercase();
-                // Root-require barrier: don't unlock and don't recurse.
-                if root_requires.contains(&lower) {
-                    continue;
-                }
-                if result_set.insert(lower.clone()) {
-                    result.push(lower.clone());
-                    queue.push(lower);
-                }
+        let Some(deps) = requires_for_name(&name, &lock_map, repo_requires) else {
+            continue;
+        };
+        for dep_name in deps {
+            if is_platform_dep(&dep_name) {
+                continue;
+            }
+            // Root-require barrier: don't unlock and don't recurse.
+            if root_requires.contains(&dep_name) {
+                continue;
+            }
+            if result_set.insert(dep_name.clone()) {
+                result.push(dep_name.clone());
+                queue.push(dep_name);
             }
         }
     }
@@ -513,10 +570,12 @@ pub fn expand_with_direct_dependencies(
 }
 
 /// Given a set of package names, recursively expand their full transitive
-/// `require` dependency tree from the lock file.
+/// `require` dependency tree from the lock file (and from inline /
+/// composer-repo entries for packages not yet in the lock).
 pub fn expand_with_all_dependencies(
     packages: Vec<String>,
     lock: &lockfile::LockFile,
+    repo_requires: &IndexMap<String, IndexSet<String>>,
 ) -> Vec<String> {
     let lock_map = build_lock_map(lock);
     let mut result_set: IndexSet<String> = packages.iter().cloned().collect();
@@ -524,24 +583,16 @@ pub fn expand_with_all_dependencies(
     let mut result: Vec<String> = packages;
 
     while let Some(name) = queue.pop() {
-        if let Some(pkg) = lock_map.get(&name) {
-            for dep_name in pkg.require.keys() {
-                // Skip platform packages
-                if dep_name == "php"
-                    || dep_name.starts_with("ext-")
-                    || dep_name.starts_with("lib-")
-                    || dep_name == "php-64bit"
-                    || dep_name == "php-ipv6"
-                    || dep_name == "php-zts"
-                    || dep_name == "php-debug"
-                {
-                    continue;
-                }
-                let lower = dep_name.to_lowercase();
-                if result_set.insert(lower.clone()) {
-                    result.push(lower.clone());
-                    queue.push(lower);
-                }
+        let Some(deps) = requires_for_name(&name, &lock_map, repo_requires) else {
+            continue;
+        };
+        for dep_name in deps {
+            if is_platform_dep(&dep_name) {
+                continue;
+            }
+            if result_set.insert(dep_name.clone()) {
+                result.push(dep_name.clone());
+                queue.push(dep_name);
             }
         }
     }
@@ -558,6 +609,7 @@ pub fn expand_packages(
     with_dependencies: bool,
     with_all_dependencies: bool,
     root_requires: &IndexSet<String>,
+    repo_requires: &IndexMap<String, IndexSet<String>>,
     console: &mozart_core::console::Console,
 ) -> Vec<String> {
     let mut packages: Vec<String> = if let Some(lock) = lock {
@@ -570,9 +622,10 @@ pub fn expand_packages(
     // Then expand dependencies if requested
     if let Some(lock) = lock {
         if with_all_dependencies {
-            packages = expand_with_all_dependencies(packages, lock);
+            packages = expand_with_all_dependencies(packages, lock, repo_requires);
         } else if with_dependencies {
-            packages = expand_with_direct_dependencies(packages, lock, root_requires);
+            packages =
+                expand_with_direct_dependencies(packages, lock, root_requires, repo_requires);
         }
     }
 
@@ -911,12 +964,14 @@ pub async fn run(
                     // (line 524: when a propagated package's `require`
                     // points at a `skippedLoad` entry, the dep is unlocked
                     // and re-loaded).
+                    let repo_requires = collect_repo_requires(&composer_json.repositories);
                     let updated: IndexSet<String> = expand_packages(
                         &raw_packages,
                         Some(&l),
                         args.with_dependencies,
                         args.with_all_dependencies,
                         &root_requires,
+                        &repo_requires,
                         console,
                     )
                     .into_iter()
@@ -1126,12 +1181,14 @@ pub async fn run(
             }
             Some(lock) => {
                 // 1. Expand wildcards
+                let repo_requires = collect_repo_requires(&composer_json.repositories);
                 let mut expanded = expand_packages(
                     &effective_packages,
                     Some(lock),
                     args.with_dependencies,
                     args.with_all_dependencies,
                     &root_requires,
+                    &repo_requires,
                     console,
                 );
 
@@ -2002,6 +2059,7 @@ mod tests {
             vec!["monolog/monolog".to_string()],
             &lock,
             &IndexSet::new(),
+            &IndexMap::new(),
         );
         let mut result_sorted = result.clone();
         result_sorted.sort();
@@ -2023,6 +2081,7 @@ mod tests {
             vec!["monolog/monolog".to_string()],
             &lock,
             &IndexSet::new(),
+            &IndexMap::new(),
         );
         // Should NOT include php or ext-json
         assert!(!result.contains(&"php".to_string()));
@@ -2048,6 +2107,7 @@ mod tests {
             vec!["foo/a".to_string(), "foo/b".to_string()],
             &lock,
             &IndexSet::new(),
+            &IndexMap::new(),
         );
         let psr_count = result.iter().filter(|s| s.as_str() == "psr/log").count();
         assert_eq!(psr_count, 1, "psr/log should appear only once");
@@ -2070,7 +2130,8 @@ mod tests {
 
         let lock = minimal_lock(vec![pkg_a, pkg_b, pkg_c]);
 
-        let result = expand_with_all_dependencies(vec!["foo/a".to_string()], &lock);
+        let result =
+            expand_with_all_dependencies(vec!["foo/a".to_string()], &lock, &IndexMap::new());
         assert!(result.contains(&"foo/a".to_string()));
         assert!(result.contains(&"foo/b".to_string()));
         assert!(result.contains(&"foo/c".to_string()));
@@ -2091,7 +2152,8 @@ mod tests {
         let lock = minimal_lock(vec![pkg_a, pkg_b]);
 
         // Must not loop infinitely
-        let result = expand_with_all_dependencies(vec!["foo/a".to_string()], &lock);
+        let result =
+            expand_with_all_dependencies(vec!["foo/a".to_string()], &lock, &IndexMap::new());
         assert!(result.contains(&"foo/a".to_string()));
         assert!(result.contains(&"foo/b".to_string()));
         assert_eq!(result.len(), 2);
@@ -2115,6 +2177,7 @@ mod tests {
             true,  // with_dependencies
             false, // with_all_dependencies
             &IndexSet::new(),
+            &IndexMap::new(),
             &test_console(),
         );
 

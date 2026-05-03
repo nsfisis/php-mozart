@@ -335,14 +335,20 @@ pub async fn execute(
             .map(|s| s.trim().to_lowercase())
             .collect();
 
+        let repo_requires = super::update::collect_repo_requires(&raw.repositories);
         let allow_list = if args.no_update_with_dependencies {
             // Only the removed packages themselves are freed
             removed_names
         } else if with_all_deps {
-            super::update::expand_with_all_dependencies(removed_names, lock)
+            super::update::expand_with_all_dependencies(removed_names, lock, &repo_requires)
         } else {
             // Default: freed packages + their direct dependencies
-            super::update::expand_with_direct_dependencies(removed_names, lock, &IndexSet::new())
+            super::update::expand_with_direct_dependencies(
+                removed_names,
+                lock,
+                &IndexSet::new(),
+                &repo_requires,
+            )
         };
 
         // For --minimal-changes, additionally pin packages beyond the allow list

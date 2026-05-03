@@ -730,10 +730,16 @@ pub async fn execute(
         let newly_required: Vec<String> =
             additions.iter().map(|(name, _, _)| name.clone()).collect();
 
+        let repo_requires = super::update::collect_repo_requires(&raw.repositories);
         let allow_list = if with_all_deps {
-            super::update::expand_with_all_dependencies(newly_required, lock)
+            super::update::expand_with_all_dependencies(newly_required, lock, &repo_requires)
         } else if with_deps {
-            super::update::expand_with_direct_dependencies(newly_required, lock, &IndexSet::new())
+            super::update::expand_with_direct_dependencies(
+                newly_required,
+                lock,
+                &IndexSet::new(),
+                &repo_requires,
+            )
         } else {
             // Default for `require`: only the newly added packages are allowed to change.
             additions.iter().map(|(name, _, _)| name.clone()).collect()
