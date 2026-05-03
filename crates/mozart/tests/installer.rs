@@ -333,7 +333,7 @@ installer_fixture!(
     remove_does_nothing_if_removal_requires_update_of_dep,
     ignore
 );
-installer_fixture!(replace_alias, ignore);
+installer_fixture!(replace_alias);
 installer_fixture!(replace_priorities);
 installer_fixture!(replace_range_require_single_version);
 installer_fixture!(replace_root_require);

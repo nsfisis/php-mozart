@@ -120,11 +120,24 @@ impl Default for PoolBuilder {
 }
 
 /// Helper to convert (name, constraint) pairs from Packagist into PoolLinks.
-pub fn make_pool_links(source: &str, deps: &[(String, String)]) -> Vec<PoolLink> {
+///
+/// `source_version` is the normalized version of the package declaring these
+/// links; it replaces any `"self.version"` constraint, mirroring Composer's
+/// `ArrayLoader::createLink` (and `AliasPackage::replaceSelfVersionDependencies`,
+/// which feeds the alias's own version in for the same purpose).
+pub fn make_pool_links(
+    source: &str,
+    source_version: &str,
+    deps: &[(String, String)],
+) -> Vec<PoolLink> {
     deps.iter()
         .map(|(target, constraint)| PoolLink {
             target: target.clone(),
-            constraint: constraint.clone(),
+            constraint: if constraint.trim() == "self.version" {
+                source_version.to_string()
+            } else {
+                constraint.clone()
+            },
             source: source.to_string(),
         })
         .collect()

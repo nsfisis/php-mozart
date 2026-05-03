@@ -73,6 +73,7 @@ pub fn vcs_to_pool_inputs(
         pretty_version: vpkg.version.clone(),
         requires: make_pool_links(
             &vpkg.name,
+            &vpkg.version_normalized,
             &require
                 .iter()
                 .map(|(k, v)| (k.clone(), v.clone()))
@@ -80,6 +81,7 @@ pub fn vcs_to_pool_inputs(
         ),
         replaces: make_pool_links(
             &vpkg.name,
+            &vpkg.version_normalized,
             &replace
                 .iter()
                 .map(|(k, v)| (k.clone(), v.clone()))
@@ -87,6 +89,7 @@ pub fn vcs_to_pool_inputs(
         ),
         provides: make_pool_links(
             &vpkg.name,
+            &vpkg.version_normalized,
             &provide
                 .iter()
                 .map(|(k, v)| (k.clone(), v.clone()))
@@ -94,6 +97,7 @@ pub fn vcs_to_pool_inputs(
         ),
         conflicts: make_pool_links(
             &vpkg.name,
+            &vpkg.version_normalized,
             &conflict
                 .iter()
                 .map(|(k, v)| (k.clone(), v.clone()))

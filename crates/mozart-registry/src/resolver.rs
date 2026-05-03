@@ -409,6 +409,7 @@ fn packagist_to_pool_inputs(
             pretty_version: version_str.to_string(),
             requires: make_pool_links(
                 package_name,
+                version_normalized,
                 &pv.require
                     .iter()
                     .map(|(k, v)| (k.clone(), v.clone()))
@@ -416,6 +417,7 @@ fn packagist_to_pool_inputs(
             ),
             replaces: make_pool_links(
                 package_name,
+                version_normalized,
                 &pv.replace
                     .iter()
                     .map(|(k, v)| (k.clone(), v.clone()))
@@ -423,6 +425,7 @@ fn packagist_to_pool_inputs(
             ),
             provides: make_pool_links(
                 package_name,
+                version_normalized,
                 &pv.provide
                     .iter()
                     .map(|(k, v)| (k.clone(), v.clone()))
@@ -430,6 +433,7 @@ fn packagist_to_pool_inputs(
             ),
             conflicts: make_pool_links(
                 package_name,
+                version_normalized,
                 &pv.conflict
                     .iter()
                     .map(|(k, v)| (k.clone(), v.clone()))
