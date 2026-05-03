@@ -441,6 +441,7 @@ pub async fn execute(
             .map(|(k, v)| (k.clone(), v.clone()))
             .collect(),
         locked_package_names: indexmap::IndexSet::new(),
+        locked_packages: Vec::new(),
     };
 
     console.info("Resolving dependencies...");

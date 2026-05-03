@@ -1,5 +1,5 @@
 use clap::Args;
-use indexmap::IndexMap;
+use indexmap::{IndexMap, IndexSet};
 use mozart_core::console::Verbosity;
 use mozart_core::console_format;
 use mozart_core::package::{self, Stability};
@@ -663,6 +663,7 @@ pub async fn execute(
             .map(|(k, v)| (k.clone(), v.clone()))
             .collect(),
         locked_package_names: indexmap::IndexSet::new(),
+        locked_packages: Vec::new(),
     };
 
     // Print header messages
@@ -731,7 +732,7 @@ pub async fn execute(
         let allow_list = if with_all_deps {
             super::update::expand_with_all_dependencies(newly_required, lock)
         } else if with_deps {
-            super::update::expand_with_direct_dependencies(newly_required, lock)
+            super::update::expand_with_direct_dependencies(newly_required, lock, &IndexSet::new())
         } else {
             // Default for `require`: only the newly added packages are allowed to change.
             additions.iter().map(|(name, _, _)| name.clone()).collect()
@@ -1064,6 +1065,7 @@ mod tests {
             root_replace: IndexMap::new(),
             root_conflict: IndexMap::new(),
             locked_package_names: IndexSet::new(),
+            locked_packages: Vec::new(),
         };
 
         let resolved = resolver::resolve(&request)
@@ -1138,6 +1140,7 @@ mod tests {
             root_replace: IndexMap::new(),
             root_conflict: IndexMap::new(),
             locked_package_names: IndexSet::new(),
+            locked_packages: Vec::new(),
         };
 
         let resolved = resolver::resolve(&request)

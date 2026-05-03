@@ -696,6 +696,31 @@ pub struct ResolveRequest {
     /// `require: "X as Y"` root aliases. Empty for installs and full updates,
     /// where every package can take aliases as usual.
     pub locked_package_names: IndexSet<String>,
+    /// Full data of packages pinned to their lock-file version (a partial
+    /// update). Each entry is added to the pool as a fixed entry, mirroring
+    /// Composer's `Request::lockPackage` + `PoolBuilder::buildPool`'s
+    /// `getFixedOrLockedPackages` loop: a locked-only package's pretty/normalized
+    /// version, requires, replaces, provides and conflicts all enter the pool
+    /// at exactly one version, so the SAT solver cannot pick a different
+    /// version (whether directly or via another package's `replace`). Empty
+    /// for installs and full updates.
+    pub locked_packages: Vec<LockedPackageInfo>,
+}
+
+/// Full data for a lock-pinned package, used in partial updates. Carried on
+/// `ResolveRequest::locked_packages` and turned into a fixed pool entry
+/// inside `resolve()`. Mirrors what Composer's `PoolBuilder` reads off a
+/// `BasePackage` retrieved from the locked repository.
+pub struct LockedPackageInfo {
+    pub name: String,
+    /// Pretty (display) version, e.g. "1.2.3".
+    pub pretty_version: String,
+    /// Normalized version, e.g. "1.2.3.0".
+    pub version_normalized: String,
+    pub requires: Vec<(String, String)>,
+    pub replaces: Vec<(String, String)>,
+    pub provides: Vec<(String, String)>,
+    pub conflicts: Vec<(String, String)>,
 }
 
 /// A single package in the resolution output.
@@ -899,6 +924,65 @@ pub async fn resolve(request: &ResolveRequest) -> Result<Vec<ResolvedPackage>, R
         builder.add_package(root_input);
     }
 
+    // Add lock-pinned packages as pool entries (partial-update case).
+    //
+    // Mirrors Composer's `PoolBuilder::buildPool` flow: every locked package
+    // not in the `updateAllowList` is added through `Request::lockPackage`,
+    // then re-entered into the pool via the `getFixedOrLockedPackages`
+    // loop. Crucially, a *locked* package is NOT a *fixed* package
+    // (Request.php:89-98): the SAT solver does not force its installation,
+    // so a locked package whose root require has been removed will simply
+    // drop out of the result. The locked entry's purpose is to constrain
+    // the pool to *only* the locked version for that name — every other
+    // version is filtered out below — so other packages cannot pick a
+    // different version (whether directly, or via `replace`, which would
+    // otherwise let an upgraded replacer silently drop the dependency).
+    //
+    // Build a map first so the filter below knows which (name, version)
+    // pairs are the only allowed entries for locked names.
+    let locked_name_to_version: IndexMap<String, String> = request
+        .locked_packages
+        .iter()
+        .map(|p| (p.name.to_lowercase(), p.version_normalized.clone()))
+        .collect();
+    let lock_filter_allows = |name: &str, version: &str| -> bool {
+        match locked_name_to_version.get(&name.to_lowercase()) {
+            Some(locked_version) => locked_version == version,
+            None => true,
+        }
+    };
+    for locked in &request.locked_packages {
+        let locked_name_lower = locked.name.to_lowercase();
+        let input = PoolPackageInput {
+            name: locked_name_lower.clone(),
+            version: locked.version_normalized.clone(),
+            pretty_version: locked.pretty_version.clone(),
+            requires: make_pool_links(
+                &locked_name_lower,
+                &locked.version_normalized,
+                &locked.requires,
+            ),
+            replaces: make_pool_links(
+                &locked_name_lower,
+                &locked.version_normalized,
+                &locked.replaces,
+            ),
+            provides: make_pool_links(
+                &locked_name_lower,
+                &locked.version_normalized,
+                &locked.provides,
+            ),
+            conflicts: make_pool_links(
+                &locked_name_lower,
+                &locked.version_normalized,
+                &locked.conflicts,
+            ),
+            is_fixed: false,
+            is_alias_of: None,
+        };
+        builder.add_package(input);
+    }
+
     // Scan VCS repositories and collect packages from them
     let vcs_packages = vcs_bridge::scan_vcs_repositories(&request.raw_repositories).await;
     let mut vcs_package_names: IndexSet<String> = IndexSet::new();
@@ -911,6 +995,9 @@ pub async fn resolve(request: &ResolveRequest) -> Result<Vec<ResolvedPackage>, R
         let inputs =
             vcs_bridge::vcs_to_pool_inputs(vpkg, request.minimum_stability, &stability_flags);
         for input in inputs {
+            if !lock_filter_allows(&input.name, &input.version) {
+                continue;
+            }
             builder.add_package(input);
         }
     }
@@ -929,6 +1016,9 @@ pub async fn resolve(request: &ResolveRequest) -> Result<Vec<ResolvedPackage>, R
             &stability_flags,
         );
         for input in inputs {
+            if !lock_filter_allows(&input.name, &input.version) {
+                continue;
+            }
             builder.add_package(input);
         }
     }
@@ -950,6 +1040,9 @@ pub async fn resolve(request: &ResolveRequest) -> Result<Vec<ResolvedPackage>, R
             &stability_flags,
         );
         for input in inputs {
+            if !lock_filter_allows(&input.name, &input.version) {
+                continue;
+            }
             builder.add_package(input);
         }
     }
@@ -991,6 +1084,9 @@ pub async fn resolve(request: &ResolveRequest) -> Result<Vec<ResolvedPackage>, R
             &stability_flags,
         );
         for input in inputs {
+            if !lock_filter_allows(&input.name, &input.version) {
+                continue;
+            }
             builder.add_package(input);
         }
     }
@@ -1030,6 +1126,9 @@ pub async fn resolve(request: &ResolveRequest) -> Result<Vec<ResolvedPackage>, R
                 &request.stability_flags,
             );
             for input in inputs {
+                if !lock_filter_allows(&input.name, &input.version) {
+                    continue;
+                }
                 builder.add_package(input);
             }
         }
@@ -1581,6 +1680,7 @@ mod tests {
             root_replace: IndexMap::new(),
             root_conflict: IndexMap::new(),
             locked_package_names: IndexSet::new(),
+            locked_packages: Vec::new(),
         };
 
         let result = resolve(&request).await;

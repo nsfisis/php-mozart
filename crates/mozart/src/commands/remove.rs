@@ -1,5 +1,5 @@
 use clap::Args;
-use indexmap::IndexMap;
+use indexmap::{IndexMap, IndexSet};
 use mozart_core::console::Verbosity;
 use mozart_core::console_format;
 use mozart_core::package;
@@ -275,6 +275,7 @@ pub async fn execute(
             .map(|(k, v)| (k.clone(), v.clone()))
             .collect(),
         locked_package_names: indexmap::IndexSet::new(),
+        locked_packages: Vec::new(),
     };
 
     // Print header messages
@@ -340,7 +341,7 @@ pub async fn execute(
             super::update::expand_with_all_dependencies(removed_names, lock)
         } else {
             // Default: freed packages + their direct dependencies
-            super::update::expand_with_direct_dependencies(removed_names, lock)
+            super::update::expand_with_direct_dependencies(removed_names, lock, &IndexSet::new())
         };
 
         // For --minimal-changes, additionally pin packages beyond the allow list
@@ -552,6 +553,7 @@ async fn remove_unused(
             .map(|(k, v)| (k.clone(), v.clone()))
             .collect(),
         locked_package_names: indexmap::IndexSet::new(),
+        locked_packages: Vec::new(),
     };
 
     console.info("Resolving dependencies to detect unused packages...");
@@ -905,6 +907,7 @@ mod tests {
             root_replace: IndexMap::new(),
             root_conflict: IndexMap::new(),
             locked_package_names: IndexSet::new(),
+            locked_packages: Vec::new(),
         };
         let resolved = resolve(&request)
             .await
@@ -961,6 +964,7 @@ mod tests {
             root_replace: IndexMap::new(),
             root_conflict: IndexMap::new(),
             locked_package_names: IndexSet::new(),
+            locked_packages: Vec::new(),
         };
         let resolved2 = resolve(&request2)
             .await

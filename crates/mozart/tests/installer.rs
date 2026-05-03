@@ -247,7 +247,7 @@ installer_fixture!(deduplicate_solver_problems);
 installer_fixture!(disjunctive_multi_constraints);
 installer_fixture!(full_update_minimal_changes, ignore);
 installer_fixture!(github_issues_4319);
-installer_fixture!(github_issues_4795, ignore);
+installer_fixture!(github_issues_4795);
 installer_fixture!(github_issues_4795_2);
 installer_fixture!(github_issues_7051, ignore);
 installer_fixture!(github_issues_8902);
@@ -298,9 +298,9 @@ installer_fixture!(
     partial_update_security_advisory_matching_locked_dep_with_dependencies,
     ignore
 );
-installer_fixture!(partial_update_with_dependencies_provide, ignore);
+installer_fixture!(partial_update_with_dependencies_provide);
 installer_fixture!(partial_update_with_dependencies_replace, ignore);
-installer_fixture!(partial_update_with_deps_warns_root, ignore);
+installer_fixture!(partial_update_with_deps_warns_root);
 installer_fixture!(partial_update_with_symlinked_path_repos);
 installer_fixture!(partial_update_without_lock);
 installer_fixture!(platform_ext_solver_problems);
@@ -326,10 +326,7 @@ installer_fixture!(
 );
 installer_fixture!(provider_satisfies_its_own_requirement);
 installer_fixture!(remove_deletes_unused_deps);
-installer_fixture!(
-    remove_does_nothing_if_removal_requires_update_of_dep,
-    ignore
-);
+installer_fixture!(remove_does_nothing_if_removal_requires_update_of_dep);
 installer_fixture!(replace_alias);
 installer_fixture!(replace_priorities);
 installer_fixture!(replace_range_require_single_version);
@@ -377,7 +374,7 @@ installer_fixture!(update_allow_list_patterns_with_dependencies);
 installer_fixture!(update_allow_list_patterns_with_root_dependencies);
 installer_fixture!(update_allow_list_patterns_without_dependencies);
 installer_fixture!(update_allow_list_reads_lock);
-installer_fixture!(update_allow_list_removes_unused, ignore);
+installer_fixture!(update_allow_list_removes_unused);
 installer_fixture!(update_allow_list_require_new_replace);
 installer_fixture!(update_allow_list_warns_non_existing_patterns);
 installer_fixture!(update_allow_list_with_dependencies);
@@ -389,7 +386,7 @@ installer_fixture!(
     update_allow_list_with_dependencies_require_new_replace_mutual,
     ignore
 );
-installer_fixture!(update_allow_list_with_dependency_conflict, ignore);
+installer_fixture!(update_allow_list_with_dependency_conflict);
 installer_fixture!(update_changes_url, ignore);
 installer_fixture!(update_dev_ignores_providers);
 installer_fixture!(update_dev_packages_updates_repo_url, ignore);

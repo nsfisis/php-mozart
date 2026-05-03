@@ -4,7 +4,9 @@ use mozart_core::console;
 use mozart_core::console_format;
 use mozart_core::package::{self, Stability};
 use mozart_registry::lockfile;
-use mozart_registry::resolver::{self, PlatformConfig, ResolveRequest, ResolvedPackage};
+use mozart_registry::resolver::{
+    self, LockedPackageInfo, PlatformConfig, ResolveRequest, ResolvedPackage,
+};
 
 #[derive(Args)]
 pub struct UpdateArgs {
@@ -461,17 +463,26 @@ fn build_lock_map(lock: &lockfile::LockFile) -> IndexMap<String, &lockfile::Lock
     map
 }
 
-/// Given a set of package names, add their direct `require` dependencies from
-/// the lock file to the set.  Returns the augmented set.
+/// Expand the allow-list with transitive `require` dependencies, stopping at
+/// any dependency that is also a root requirement.
+///
+/// Mirrors Composer's `--with-dependencies` (UPDATE_LISTED_WITH_TRANSITIVE_DEPS_NO_ROOT_REQUIRE)
+/// behaviour: in `PoolBuilder::loadPackage`, when a propagated package's
+/// require points at a still-skipped (locked) dependency, the dependency is
+/// unlocked and re-loaded — but only when it is NOT itself a root require.
+/// A root require hit acts as a barrier: the locked version stays, a
+/// warning is issued, and the cascade through that node stops.
 pub fn expand_with_direct_dependencies(
     packages: Vec<String>,
     lock: &lockfile::LockFile,
+    root_requires: &IndexSet<String>,
 ) -> Vec<String> {
     let lock_map = build_lock_map(lock);
     let mut result_set: IndexSet<String> = packages.iter().cloned().collect();
+    let mut queue: Vec<String> = packages.clone();
     let mut result: Vec<String> = packages;
 
-    for name in result.clone() {
+    while let Some(name) = queue.pop() {
         if let Some(pkg) = lock_map.get(&name) {
             for dep_name in pkg.require.keys() {
                 // Skip platform packages (php, ext-*, lib-*)
@@ -486,8 +497,13 @@ pub fn expand_with_direct_dependencies(
                     continue;
                 }
                 let lower = dep_name.to_lowercase();
+                // Root-require barrier: don't unlock and don't recurse.
+                if root_requires.contains(&lower) {
+                    continue;
+                }
                 if result_set.insert(lower.clone()) {
-                    result.push(lower);
+                    result.push(lower.clone());
+                    queue.push(lower);
                 }
             }
         }
@@ -541,6 +557,7 @@ pub fn expand_packages(
     lock: Option<&lockfile::LockFile>,
     with_dependencies: bool,
     with_all_dependencies: bool,
+    root_requires: &IndexSet<String>,
     console: &mozart_core::console::Console,
 ) -> Vec<String> {
     let mut packages: Vec<String> = if let Some(lock) = lock {
@@ -555,7 +572,7 @@ pub fn expand_packages(
         if with_all_dependencies {
             packages = expand_with_all_dependencies(packages, lock);
         } else if with_dependencies {
-            packages = expand_with_direct_dependencies(packages, lock);
+            packages = expand_with_direct_dependencies(packages, lock, root_requires);
         }
     }
 
@@ -805,6 +822,30 @@ pub async fn run(
 
     let dev_mode = !args.no_dev;
 
+    // Build the set of root require names (lowercase, excluding platform
+    // packages). Used as the barrier for `--with-dependencies` transitive
+    // expansion: Composer's UPDATE_LISTED_WITH_TRANSITIVE_DEPS_NO_ROOT_REQUIRE
+    // mode (Request.php) leaves root requires locked even when they are
+    // depended on by an allow-listed package, emitting a warning instead.
+    let root_requires: IndexSet<String> = {
+        let mut s: IndexSet<String> = composer_json
+            .require
+            .keys()
+            .filter(|k| !is_platform_package(k))
+            .map(|k| k.to_lowercase())
+            .collect();
+        if dev_mode {
+            s.extend(
+                composer_json
+                    .require_dev
+                    .keys()
+                    .filter(|k| !is_platform_package(k))
+                    .map(|k| k.to_lowercase()),
+            );
+        }
+        s
+    };
+
     // Fix 1C + Fix 2: Parse --with constraints and inline constraint shorthand.
     let mut temporary_constraints: IndexMap<String, String> = IndexMap::new();
 
@@ -844,39 +885,91 @@ pub async fn run(
         .collect();
 
     // For partial updates (specific package names given), eagerly read the
-    // lock file to collect names that stay pinned across this resolve.
-    // The resolver uses this set to skip materializing root `as` aliases
-    // for those packages — Composer's `PoolBuilder::loadPackage` only
-    // applies a root alias when the package's update is being propagated,
-    // so a locked-only package keeps its locked version unaliased.
+    // lock file to gather both the names that stay pinned across this
+    // resolve *and* the full package data needed to seed fixed pool
+    // entries for those names. The resolver uses the names to skip
+    // materializing root `as` aliases (Composer's `propagateUpdate=false`
+    // branch in `PoolBuilder::loadPackage`) and the full data to add a
+    // fixed entry per locked package — without the fixed entry the SAT
+    // solver may pick a different version of a locked package, including
+    // one that `replace`s an allow-listed dependency, silently dropping
+    // it from the install plan.
     //
-    // Only the *names* are needed — the full lock is re-read below for
-    // change reporting and `apply_partial_update` post-processing. Reading
-    // it twice is fine: it's a small JSON file. Errors here fall back to
-    // an empty set (treat as full update); the later read surfaces the
+    // The full lock is re-read below for change reporting and
+    // `apply_partial_update` post-processing. Reading it twice is fine:
+    // it's a small JSON file. Errors here fall back to empty
+    // collections (treat as full update); the later read surfaces the
     // failure to the user.
-    let locked_package_names: IndexSet<String> = if !raw_packages.is_empty() && lock_path.exists() {
-        match lockfile::LockFile::read_from_file(&lock_path) {
-            Ok(l) => {
-                let updated: IndexSet<String> =
-                    raw_packages.iter().map(|s| s.to_lowercase()).collect();
-                l.packages
-                    .iter()
-                    .map(|p| p.name.to_lowercase())
-                    .chain(
-                        l.packages_dev
-                            .iter()
-                            .flatten()
-                            .map(|p| p.name.to_lowercase()),
+    let (locked_package_names, locked_packages): (IndexSet<String>, Vec<LockedPackageInfo>) =
+        if !raw_packages.is_empty() && lock_path.exists() {
+            match lockfile::LockFile::read_from_file(&lock_path) {
+                Ok(l) => {
+                    // Apply `--with-dependencies` / `--with-all-dependencies`
+                    // expansion so transitive deps of allow-listed packages
+                    // are not held back at their locked version. Mirrors
+                    // Composer's `PoolBuilder::loadPackage` unlock cascade
+                    // (line 524: when a propagated package's `require`
+                    // points at a `skippedLoad` entry, the dep is unlocked
+                    // and re-loaded).
+                    let updated: IndexSet<String> = expand_packages(
+                        &raw_packages,
+                        Some(&l),
+                        args.with_dependencies,
+                        args.with_all_dependencies,
+                        &root_requires,
+                        console,
                     )
-                    .filter(|n| !updated.contains(n))
-                    .collect()
+                    .into_iter()
+                    .collect();
+                    let mut names: IndexSet<String> = IndexSet::new();
+                    let mut infos: Vec<LockedPackageInfo> = Vec::new();
+                    for p in l.packages.iter().chain(l.packages_dev.iter().flatten()) {
+                        let name_lower = p.name.to_lowercase();
+                        if updated.contains(&name_lower) {
+                            continue;
+                        }
+                        // Path-repo packages are always reloaded from disk
+                        // by Composer (PoolBuilder treats path repos as
+                        // canonical sources, not lock-bound). Skip them so
+                        // the pool sees the live on-disk version, matching
+                        // Composer's "path repos always update" behaviour.
+                        if p.dist.as_ref().map(|d| d.dist_type.as_str()) == Some("path") {
+                            continue;
+                        }
+                        names.insert(name_lower.clone());
+                        infos.push(LockedPackageInfo {
+                            name: name_lower,
+                            pretty_version: p.version.clone(),
+                            version_normalized: locked_version_normalized(p),
+                            requires: p
+                                .require
+                                .iter()
+                                .map(|(k, v)| (k.to_lowercase(), v.clone()))
+                                .collect(),
+                            replaces: p
+                                .replace
+                                .iter()
+                                .map(|(k, v)| (k.to_lowercase(), v.clone()))
+                                .collect(),
+                            provides: p
+                                .provide
+                                .iter()
+                                .map(|(k, v)| (k.to_lowercase(), v.clone()))
+                                .collect(),
+                            conflicts: p
+                                .conflict
+                                .iter()
+                                .map(|(k, v)| (k.to_lowercase(), v.clone()))
+                                .collect(),
+                        });
+                    }
+                    (names, infos)
+                }
+                Err(_) => (IndexSet::new(), Vec::new()),
             }
-            Err(_) => IndexSet::new(),
-        }
-    } else {
-        IndexSet::new()
-    };
+        } else {
+            (IndexSet::new(), Vec::new())
+        };
 
     // Step 5: Build the resolve request from composer.json
     // Filter out platform packages from require list for the resolver (they're handled separately)
@@ -948,6 +1041,7 @@ pub async fn run(
             .map(|(k, v)| (k.clone(), v.clone()))
             .collect(),
         locked_package_names,
+        locked_packages,
     };
 
     // Step 6: Print header and run resolver
@@ -1025,6 +1119,7 @@ pub async fn run(
                     Some(lock),
                     args.with_dependencies,
                     args.with_all_dependencies,
+                    &root_requires,
                     console,
                 );
 
@@ -1891,7 +1986,11 @@ mod tests {
 
         let lock = minimal_lock(vec![pkg, make_locked_package("psr/log", "3.0.0")]);
 
-        let result = expand_with_direct_dependencies(vec!["monolog/monolog".to_string()], &lock);
+        let result = expand_with_direct_dependencies(
+            vec!["monolog/monolog".to_string()],
+            &lock,
+            &IndexSet::new(),
+        );
         let mut result_sorted = result.clone();
         result_sorted.sort();
         assert!(result_sorted.contains(&"monolog/monolog".to_string()));
@@ -1908,7 +2007,11 @@ mod tests {
 
         let lock = minimal_lock(vec![pkg, make_locked_package("psr/log", "3.0.0")]);
 
-        let result = expand_with_direct_dependencies(vec!["monolog/monolog".to_string()], &lock);
+        let result = expand_with_direct_dependencies(
+            vec!["monolog/monolog".to_string()],
+            &lock,
+            &IndexSet::new(),
+        );
         // Should NOT include php or ext-json
         assert!(!result.contains(&"php".to_string()));
         assert!(!result.contains(&"ext-json".to_string()));
@@ -1929,8 +2032,11 @@ mod tests {
 
         let lock = minimal_lock(vec![pkg_a, pkg_b, make_locked_package("psr/log", "3.0.0")]);
 
-        let result =
-            expand_with_direct_dependencies(vec!["foo/a".to_string(), "foo/b".to_string()], &lock);
+        let result = expand_with_direct_dependencies(
+            vec!["foo/a".to_string(), "foo/b".to_string()],
+            &lock,
+            &IndexSet::new(),
+        );
         let psr_count = result.iter().filter(|s| s.as_str() == "psr/log").count();
         assert_eq!(psr_count, 1, "psr/log should appear only once");
     }
@@ -1996,6 +2102,7 @@ mod tests {
             Some(&lock),
             true,  // with_dependencies
             false, // with_all_dependencies
+            &IndexSet::new(),
             &test_console(),
         );
 
@@ -2060,6 +2167,7 @@ mod tests {
             root_replace: IndexMap::new(),
             root_conflict: IndexMap::new(),
             locked_package_names: IndexSet::new(),
+            locked_packages: Vec::new(),
         };
 
         let resolved = resolve(&request).await.expect("Resolution should succeed");
