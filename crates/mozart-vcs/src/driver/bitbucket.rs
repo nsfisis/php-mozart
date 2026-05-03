@@ -1,4 +1,5 @@
-use std::collections::{BTreeMap, HashMap};
+use indexmap::IndexMap;
+use std::collections::BTreeMap;
 
 use anyhow::{Result, bail};
 use regex::Regex;
@@ -16,7 +17,7 @@ pub struct BitbucketDriver {
     root_identifier: Option<String>,
     tags: Option<BTreeMap<String, String>>,
     branches: Option<BTreeMap<String, String>>,
-    info_cache: HashMap<String, Option<serde_json::Value>>,
+    info_cache: IndexMap<String, Option<serde_json::Value>>,
     git_driver: Option<Box<GitDriver>>,
     http_client: Client,
     config: DriverConfig,
@@ -34,7 +35,7 @@ impl BitbucketDriver {
             root_identifier: None,
             tags: None,
             branches: None,
-            info_cache: HashMap::new(),
+            info_cache: IndexMap::new(),
             git_driver: None,
             http_client: Client::new(),
             config,

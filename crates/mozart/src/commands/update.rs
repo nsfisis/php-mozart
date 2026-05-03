@@ -1,10 +1,10 @@
 use clap::Args;
+use indexmap::{IndexMap, IndexSet};
 use mozart_core::console;
 use mozart_core::console_format;
 use mozart_core::package::{self, Stability};
 use mozart_registry::lockfile;
 use mozart_registry::resolver::{self, PlatformConfig, ResolveRequest, ResolvedPackage};
-use std::collections::{HashMap, HashSet};
 
 #[derive(Args)]
 pub struct UpdateArgs {
@@ -198,7 +198,7 @@ pub fn compute_update_changes(
     dev_mode: bool,
 ) -> Vec<UpdateChange> {
     // Build map of old lock packages keyed by lowercase name -> version string
-    let mut old_map: HashMap<String, String> = HashMap::new();
+    let mut old_map: IndexMap<String, String> = IndexMap::new();
     if let Some(old) = old_lock {
         for pkg in &old.packages {
             old_map.insert(pkg.name.to_lowercase(), pkg.version.clone());
@@ -211,7 +211,7 @@ pub fn compute_update_changes(
     }
 
     // Build map of new lock packages keyed by lowercase name -> version string
-    let mut new_map: HashMap<String, String> = HashMap::new();
+    let mut new_map: IndexMap<String, String> = IndexMap::new();
     for pkg in &new_lock.packages {
         new_map.insert(pkg.name.to_lowercase(), pkg.version.clone());
     }
@@ -302,11 +302,11 @@ pub fn apply_partial_update(
     update_packages: &[String],
 ) -> Vec<ResolvedPackage> {
     // Build a set of normalized package names we want to update
-    let update_set: std::collections::HashSet<String> =
+    let update_set: indexmap::IndexSet<String> =
         update_packages.iter().map(|s| s.to_lowercase()).collect();
 
     // Build a map of old locked packages by name -> (version, version_normalized, is_dev)
-    let mut old_pkg_map: HashMap<String, &lockfile::LockedPackage> = HashMap::new();
+    let mut old_pkg_map: IndexMap<String, &lockfile::LockedPackage> = IndexMap::new();
     for pkg in &old_lock.packages {
         old_pkg_map.insert(pkg.name.to_lowercase(), pkg);
     }
@@ -414,7 +414,7 @@ pub fn expand_wildcards(
         .collect();
 
     let mut result: Vec<String> = Vec::new();
-    let mut seen: HashSet<String> = HashSet::new();
+    let mut seen: IndexSet<String> = IndexSet::new();
 
     for spec in specifiers {
         if spec.contains('*') {
@@ -448,8 +448,8 @@ pub fn expand_wildcards(
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Build a lookup map from package name (lowercase) to its LockedPackage.
-fn build_lock_map(lock: &lockfile::LockFile) -> HashMap<String, &lockfile::LockedPackage> {
-    let mut map = HashMap::new();
+fn build_lock_map(lock: &lockfile::LockFile) -> IndexMap<String, &lockfile::LockedPackage> {
+    let mut map = IndexMap::new();
     for pkg in &lock.packages {
         map.insert(pkg.name.to_lowercase(), pkg);
     }
@@ -468,7 +468,7 @@ pub fn expand_with_direct_dependencies(
     lock: &lockfile::LockFile,
 ) -> Vec<String> {
     let lock_map = build_lock_map(lock);
-    let mut result_set: HashSet<String> = packages.iter().cloned().collect();
+    let mut result_set: IndexSet<String> = packages.iter().cloned().collect();
     let mut result: Vec<String> = packages;
 
     for name in result.clone() {
@@ -503,7 +503,7 @@ pub fn expand_with_all_dependencies(
     lock: &lockfile::LockFile,
 ) -> Vec<String> {
     let lock_map = build_lock_map(lock);
-    let mut result_set: HashSet<String> = packages.iter().cloned().collect();
+    let mut result_set: IndexSet<String> = packages.iter().cloned().collect();
     let mut queue: Vec<String> = packages.clone();
     let mut result: Vec<String> = packages;
 
@@ -665,7 +665,7 @@ pub fn apply_patch_only(
     resolved: Vec<ResolvedPackage>,
     old_lock: &lockfile::LockFile,
 ) -> Vec<ResolvedPackage> {
-    let mut old_pkg_map: HashMap<String, &lockfile::LockedPackage> = HashMap::new();
+    let mut old_pkg_map: IndexMap<String, &lockfile::LockedPackage> = IndexMap::new();
     for pkg in &old_lock.packages {
         old_pkg_map.insert(pkg.name.to_lowercase(), pkg);
     }
@@ -806,7 +806,7 @@ pub async fn run(
     let dev_mode = !args.no_dev;
 
     // Fix 1C + Fix 2: Parse --with constraints and inline constraint shorthand.
-    let mut temporary_constraints: HashMap<String, String> = HashMap::new();
+    let mut temporary_constraints: IndexMap<String, String> = IndexMap::new();
 
     // Parse --with constraints (format: "vendor/package:constraint")
     for with_entry in &args.with {
@@ -887,7 +887,7 @@ pub async fn run(
         require_dev,
         include_dev: dev_mode,
         minimum_stability,
-        stability_flags: HashMap::new(),
+        stability_flags: IndexMap::new(),
         prefer_stable,
         prefer_lowest: args.prefer_lowest,
         platform,
@@ -1166,7 +1166,7 @@ pub async fn run(
         let bump_require_dev = mode == "all" || mode == "dev";
 
         // Build locked versions map from the new lock
-        let mut locked_versions: HashMap<String, (String, Option<String>)> = HashMap::new();
+        let mut locked_versions: IndexMap<String, (String, Option<String>)> = IndexMap::new();
         for pkg in &new_lock.packages {
             locked_versions.insert(
                 pkg.name.to_lowercase(),
@@ -1997,7 +1997,7 @@ mod tests {
             require_dev: vec![],
             include_dev: false,
             minimum_stability: Stability::Stable,
-            stability_flags: HashMap::new(),
+            stability_flags: IndexMap::new(),
             prefer_stable: true,
             prefer_lowest: false,
             platform: PlatformConfig::new(),
@@ -2011,10 +2011,10 @@ mod tests {
                     ),
                 ),
             ),
-            temporary_constraints: HashMap::new(),
+            temporary_constraints: IndexMap::new(),
             raw_repositories: vec![],
-            root_provide: HashMap::new(),
-            root_replace: HashMap::new(),
+            root_provide: IndexMap::new(),
+            root_replace: IndexMap::new(),
         };
 
         let resolved = resolve(&request).await.expect("Resolution should succeed");

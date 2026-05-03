@@ -139,7 +139,7 @@ pub async fn execute(
 
         // Deduplicate to unique vendor names (Composer returns vendor-only names
         // for SEARCH_VENDOR mode).
-        let mut seen = std::collections::HashSet::new();
+        let mut seen = indexmap::IndexSet::new();
         let mut vendor_names: Vec<String> = Vec::new();
         for r in &results {
             let vendor = r.name.split('/').next().unwrap_or("").to_string();
@@ -515,7 +515,7 @@ mod tests {
         ];
         let refs: Vec<&SearchResult> = results.iter().collect();
 
-        let mut seen = std::collections::HashSet::new();
+        let mut seen = indexmap::IndexSet::new();
         let mut vendor_names: Vec<String> = Vec::new();
         for r in &refs {
             let vendor = r.name.split('/').next().unwrap_or("").to_string();

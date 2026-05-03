@@ -421,7 +421,7 @@ fn check_scripts_orphans(
     obj: &serde_json::Map<String, serde_json::Value>,
     result: &mut ValidationResult,
 ) {
-    let script_keys: std::collections::HashSet<&str> = obj
+    let script_keys: indexmap::IndexSet<&str> = obj
         .get("scripts")
         .and_then(|v| v.as_object())
         .map(|m| m.keys().map(|k| k.as_str()).collect())

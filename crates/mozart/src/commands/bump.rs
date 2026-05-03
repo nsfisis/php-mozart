@@ -1,7 +1,7 @@
 use clap::Args;
+use indexmap::IndexMap;
 use mozart_core::console::Verbosity;
 use mozart_core::console_format;
-use std::collections::HashMap;
 use std::path::PathBuf;
 
 /// Exit code for stale lock file (matches Composer's BumpCommand::ERROR_LOCK_OUTDATED)
@@ -226,8 +226,8 @@ pub async fn execute(
 /// Build a map of lowercase package names to (pretty_version, version_normalized) from composer.lock.
 fn build_locked_versions_map(
     lock: &mozart_registry::lockfile::LockFile,
-) -> HashMap<String, (String, Option<String>)> {
-    let mut map: HashMap<String, (String, Option<String>)> = HashMap::new();
+) -> IndexMap<String, (String, Option<String>)> {
+    let mut map: IndexMap<String, (String, Option<String>)> = IndexMap::new();
 
     let all_packages = lock
         .packages

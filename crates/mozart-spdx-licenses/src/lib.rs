@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use indexmap::IndexMap;
 use std::sync::LazyLock;
 
 include!(concat!(env!("OUT_DIR"), "/spdx_data.rs"));
@@ -21,16 +21,16 @@ pub struct ExceptionInfo {
 
 /// SPDX license database with expression validation.
 pub struct SpdxLicenses {
-    licenses: HashMap<&'static str, LicenseInfo>,
-    exceptions: HashMap<&'static str, ExceptionInfo>,
-    name_to_id: HashMap<&'static str, &'static str>,
+    licenses: IndexMap<&'static str, LicenseInfo>,
+    exceptions: IndexMap<&'static str, ExceptionInfo>,
+    name_to_id: IndexMap<&'static str, &'static str>,
 }
 
 impl SpdxLicenses {
     /// Build the license database from generated data.
     pub fn new() -> Self {
-        let mut licenses = HashMap::with_capacity(LICENSES.len());
-        let mut name_to_id = HashMap::with_capacity(LICENSES.len());
+        let mut licenses = IndexMap::with_capacity(LICENSES.len());
+        let mut name_to_id = IndexMap::with_capacity(LICENSES.len());
         for &(lower, id, full_name, osi, deprecated) in LICENSES {
             licenses.insert(
                 lower,
@@ -44,7 +44,7 @@ impl SpdxLicenses {
             name_to_id.insert(full_name, id);
         }
 
-        let mut exceptions = HashMap::with_capacity(EXCEPTIONS.len());
+        let mut exceptions = IndexMap::with_capacity(EXCEPTIONS.len());
         for &(lower, id, full_name) in EXCEPTIONS {
             exceptions.insert(
                 lower,

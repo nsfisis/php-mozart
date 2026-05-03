@@ -117,10 +117,10 @@ impl RepositorySet {
         &self,
         queries: &[PackageQuery<'_>],
     ) -> anyhow::Result<Vec<NamedPackagistVersion>> {
-        use std::collections::HashSet;
+        use indexmap::IndexSet;
 
         let mut packages: Vec<NamedPackagistVersion> = Vec::new();
-        let mut answered: HashSet<String> = HashSet::new();
+        let mut answered: IndexSet<String> = IndexSet::new();
 
         for repo in &self.repos {
             let pending: Vec<PackageQuery<'_>> = queries

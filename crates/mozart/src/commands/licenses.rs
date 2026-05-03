@@ -1,7 +1,7 @@
 use clap::Args;
+use indexmap::IndexSet;
 use mozart_core::console::{Console, Verbosity};
 use serde::Serialize;
-use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 #[derive(Args)]
@@ -102,7 +102,7 @@ fn load_installed_licenses(working_dir: &Path, no_dev: bool) -> anyhow::Result<V
     let vendor_dir = working_dir.join("vendor");
     let installed = mozart_registry::installed::InstalledPackages::read(&vendor_dir)?;
 
-    let dev_names: HashSet<String> = installed
+    let dev_names: IndexSet<String> = installed
         .dev_package_names
         .iter()
         .map(|n| n.to_lowercase())

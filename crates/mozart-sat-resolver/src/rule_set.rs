@@ -1,5 +1,5 @@
 use crate::rule::{Rule, RuleType};
-use std::collections::HashMap;
+use indexmap::IndexMap;
 
 /// A unique identifier for a rule within the RuleSet.
 pub type RuleId = usize;
@@ -18,7 +18,7 @@ pub struct RuleSet {
     /// Total rule count.
     next_rule_id: usize,
     /// Deduplication index.
-    rules_by_hash: HashMap<String, Vec<usize>>,
+    rules_by_hash: IndexMap<String, Vec<usize>>,
     /// Maps rule ID → (type, index within type's vec).
     rule_type_index: Vec<(RuleType, usize)>,
 }
@@ -31,7 +31,7 @@ impl RuleSet {
             request_rules: Vec::new(),
             learned_rules: Vec::new(),
             next_rule_id: 0,
-            rules_by_hash: HashMap::new(),
+            rules_by_hash: IndexMap::new(),
             rule_type_index: Vec::new(),
         }
     }

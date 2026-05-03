@@ -5,6 +5,7 @@ edition.workspace = true
 
 [dependencies]
 anyhow.workspace = true
+indexmap.workspace = true
 regex.workspace = true
 serde_json.workspace = true
 tempfile.workspace = true

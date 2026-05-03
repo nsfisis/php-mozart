@@ -1085,7 +1085,7 @@ mod tests {
         });
         let result = normalize_repositories(&val);
         assert_eq!(result.len(), 2);
-        let names: std::collections::HashSet<&str> = result
+        let names: indexmap::IndexSet<&str> = result
             .iter()
             .filter_map(|v| v.get("name").and_then(|n| n.as_str()))
             .collect();

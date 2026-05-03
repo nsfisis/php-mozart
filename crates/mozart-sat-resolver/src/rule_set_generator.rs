@@ -1,8 +1,10 @@
 use crate::pool::{Literal, PackageId, Pool, PoolLink};
 use crate::rule::{ReasonData, Rule, RuleReason, RuleType};
 use crate::rule_set::RuleSet;
+use indexmap::IndexMap;
+use indexmap::IndexSet;
 use mozart_semver::VersionConstraint;
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::VecDeque;
 
 /// Generates SAT rules from the pool and request.
 ///
@@ -11,11 +13,11 @@ pub struct RuleSetGenerator<'a> {
     pool: &'a mut Pool,
     rules: RuleSet,
     /// Packages already processed.
-    added_map: HashSet<PackageId>,
+    added_map: IndexSet<PackageId>,
     /// Package names → list of package IDs with that name (non-alias).
-    added_packages_by_name: HashMap<String, Vec<PackageId>>,
+    added_packages_by_name: IndexMap<String, Vec<PackageId>>,
     /// Specific platform packages to ignore (from `--ignore-platform-req=name`).
-    ignore_platform_reqs: HashSet<String>,
+    ignore_platform_reqs: IndexSet<String>,
     /// When true, every platform package is treated as ignored.
     /// Mirrors `--ignore-platform-reqs` (no value).
     ignore_all_platform_reqs: bool,
@@ -26,15 +28,15 @@ impl<'a> RuleSetGenerator<'a> {
         RuleSetGenerator {
             pool,
             rules: RuleSet::new(),
-            added_map: HashSet::new(),
-            added_packages_by_name: HashMap::new(),
-            ignore_platform_reqs: HashSet::new(),
+            added_map: IndexSet::new(),
+            added_packages_by_name: IndexMap::new(),
+            ignore_platform_reqs: IndexSet::new(),
             ignore_all_platform_reqs: false,
         }
     }
 
     /// Set platform requirements to ignore.
-    pub fn set_ignore_platform_reqs(&mut self, names: HashSet<String>) {
+    pub fn set_ignore_platform_reqs(&mut self, names: IndexSet<String>) {
         self.ignore_platform_reqs = names;
     }
 
@@ -76,10 +78,10 @@ impl<'a> RuleSetGenerator<'a> {
     /// unresolvable problem.
     pub fn generate(
         mut self,
-        requires: &HashMap<String, Option<String>>,
+        requires: &IndexMap<String, Option<String>>,
         fixed_packages: &[PackageId],
-        root_provides: &HashMap<String, String>,
-        root_replaces: &HashMap<String, String>,
+        root_provides: &IndexMap<String, String>,
+        root_replaces: &IndexMap<String, String>,
     ) -> (RuleSet, Vec<(String, Option<String>)>) {
         let mut missing_root_requires: Vec<(String, Option<String>)> = Vec::new();
         // Process fixed packages
@@ -351,7 +353,7 @@ impl<'a> RuleSetGenerator<'a> {
 fn root_self_fulfills(
     target: &str,
     require_constraint: Option<&str>,
-    root_links: &HashMap<String, String>,
+    root_links: &IndexMap<String, String>,
 ) -> bool {
     let Some(link_constraint_str) = root_links.get(target) else {
         return false;
@@ -394,11 +396,11 @@ mod tests {
             vec![],
         );
 
-        let mut requires = HashMap::new();
+        let mut requires = IndexMap::new();
         requires.insert("a/a".to_string(), None);
 
         let generator = RuleSetGenerator::new(&mut pool);
-        let (rules, _) = generator.generate(&requires, &[], &HashMap::new(), &HashMap::new());
+        let (rules, _) = generator.generate(&requires, &[], &IndexMap::new(), &IndexMap::new());
 
         // Should have a request rule: (1 | 2)
         let request_count = rules.iter_type(RuleType::Request).count();
@@ -434,11 +436,11 @@ mod tests {
             vec![],
         );
 
-        let mut requires = HashMap::new();
+        let mut requires = IndexMap::new();
         requires.insert("a/a".to_string(), None);
 
         let generator = RuleSetGenerator::new(&mut pool);
-        let (rules, _) = generator.generate(&requires, &[], &HashMap::new(), &HashMap::new());
+        let (rules, _) = generator.generate(&requires, &[], &IndexMap::new(), &IndexMap::new());
 
         // Should have:
         // 1. Request rule: (1) — root requires a/a
@@ -452,7 +454,7 @@ mod tests {
 
         let generator = RuleSetGenerator::new(&mut pool);
         let (rules, _) =
-            generator.generate(&HashMap::new(), &[1], &HashMap::new(), &HashMap::new());
+            generator.generate(&IndexMap::new(), &[1], &IndexMap::new(), &IndexMap::new());
 
         // Should have an assertion rule: (1)
         let request_rules: Vec<_> = rules.iter_type(RuleType::Request).collect();

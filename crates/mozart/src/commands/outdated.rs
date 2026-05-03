@@ -1,7 +1,7 @@
 use clap::Args;
+use indexmap::IndexSet;
 use mozart_core::matches_wildcard;
 use std::cmp::Ordering;
-use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 #[derive(Args)]
@@ -136,14 +136,14 @@ pub async fn execute(
     };
 
     // Build set of direct dependency names
-    let direct_names: HashSet<String> = if let Some(ref root) = root_package {
-        let mut names: HashSet<String> = root.require.keys().map(|k| k.to_lowercase()).collect();
+    let direct_names: IndexSet<String> = if let Some(ref root) = root_package {
+        let mut names: IndexSet<String> = root.require.keys().map(|k| k.to_lowercase()).collect();
         if !args.no_dev {
             names.extend(root.require_dev.keys().map(|k| k.to_lowercase()));
         }
         names
     } else {
-        HashSet::new()
+        IndexSet::new()
     };
 
     // Process each package
@@ -242,7 +242,7 @@ fn load_installed_packages(working_dir: &Path, no_dev: bool) -> anyhow::Result<V
     let vendor_dir = working_dir.join("vendor");
     let installed = mozart_registry::installed::InstalledPackages::read(&vendor_dir)?;
 
-    let dev_names: HashSet<String> = installed
+    let dev_names: IndexSet<String> = installed
         .dev_package_names
         .iter()
         .map(|n| n.to_lowercase())

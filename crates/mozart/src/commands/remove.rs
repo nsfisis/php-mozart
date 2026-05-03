@@ -1,11 +1,11 @@
 use clap::Args;
+use indexmap::IndexMap;
 use mozart_core::console::Verbosity;
 use mozart_core::console_format;
 use mozart_core::package;
 use mozart_core::validation;
 use mozart_registry::lockfile;
 use mozart_registry::resolver::{self, PlatformConfig, ResolveRequest};
-use std::collections::HashMap;
 
 #[derive(Args)]
 pub struct RemoveArgs {
@@ -247,7 +247,7 @@ pub async fn execute(
         require_dev,
         include_dev: dev_mode,
         minimum_stability,
-        stability_flags: HashMap::new(),
+        stability_flags: IndexMap::new(),
         prefer_stable: composer_prefer_stable,
         prefer_lowest: false,
         platform: PlatformConfig::new(),
@@ -256,7 +256,7 @@ pub async fn execute(
         repositories: std::sync::Arc::new(
             mozart_registry::repository::RepositorySet::with_packagist(repo_cache.clone()),
         ),
-        temporary_constraints: HashMap::new(),
+        temporary_constraints: IndexMap::new(),
         raw_repositories: raw.repositories.clone(),
         root_provide: raw
             .provide
@@ -517,7 +517,7 @@ async fn remove_unused(
         require_dev,
         include_dev: dev_mode,
         minimum_stability,
-        stability_flags: HashMap::new(),
+        stability_flags: IndexMap::new(),
         prefer_stable: composer_prefer_stable,
         prefer_lowest: false,
         platform: PlatformConfig::new(),
@@ -526,7 +526,7 @@ async fn remove_unused(
         repositories: std::sync::Arc::new(
             mozart_registry::repository::RepositorySet::with_packagist(repo_cache.clone()),
         ),
-        temporary_constraints: HashMap::new(),
+        temporary_constraints: IndexMap::new(),
         raw_repositories: raw.repositories.clone(),
         root_provide: raw
             .provide
@@ -550,7 +550,7 @@ async fn remove_unused(
     })?;
 
     // Build set of resolved package names
-    let resolved_names: std::collections::HashSet<String> =
+    let resolved_names: indexmap::IndexSet<String> =
         resolved.iter().map(|p| p.name.to_lowercase()).collect();
 
     // Find packages in the old lock that are not in the new resolution
@@ -847,9 +847,9 @@ mod tests {
     #[tokio::test]
     #[ignore]
     async fn test_remove_full_e2e() {
+        use indexmap::IndexMap;
         use mozart_registry::lockfile::{LockFileGenerationRequest, generate_lock_file};
         use mozart_registry::resolver::{ResolveRequest, resolve};
-        use std::collections::HashMap;
         use tempfile::tempdir;
 
         let dir = tempdir().unwrap();
@@ -870,7 +870,7 @@ mod tests {
             require_dev: vec![],
             include_dev: false,
             minimum_stability: mozart_core::package::Stability::Stable,
-            stability_flags: HashMap::new(),
+            stability_flags: IndexMap::new(),
             prefer_stable: true,
             prefer_lowest: false,
             platform: mozart_registry::resolver::PlatformConfig::new(),
@@ -884,10 +884,10 @@ mod tests {
                     ),
                 ),
             ),
-            temporary_constraints: HashMap::new(),
+            temporary_constraints: IndexMap::new(),
             raw_repositories: vec![],
-            root_provide: HashMap::new(),
-            root_replace: HashMap::new(),
+            root_provide: IndexMap::new(),
+            root_replace: IndexMap::new(),
         };
         let resolved = resolve(&request)
             .await
@@ -923,7 +923,7 @@ mod tests {
             require_dev: vec![],
             include_dev: false,
             minimum_stability: mozart_core::package::Stability::Stable,
-            stability_flags: HashMap::new(),
+            stability_flags: IndexMap::new(),
             prefer_stable: true,
             prefer_lowest: false,
             platform: mozart_registry::resolver::PlatformConfig::new(),
@@ -937,10 +937,10 @@ mod tests {
                     ),
                 ),
             ),
-            temporary_constraints: HashMap::new(),
+            temporary_constraints: IndexMap::new(),
             raw_repositories: vec![],
-            root_provide: HashMap::new(),
-            root_replace: HashMap::new(),
+            root_provide: IndexMap::new(),
+            root_replace: IndexMap::new(),
         };
         let resolved2 = resolve(&request2)
             .await

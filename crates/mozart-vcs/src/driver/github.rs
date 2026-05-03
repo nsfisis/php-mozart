@@ -1,4 +1,5 @@
-use std::collections::{BTreeMap, HashMap};
+use indexmap::IndexMap;
+use std::collections::BTreeMap;
 
 use anyhow::{Result, bail};
 use regex::Regex;
@@ -19,7 +20,7 @@ pub struct GitHubDriver {
     tags: Option<BTreeMap<String, String>>,
     branches: Option<BTreeMap<String, String>>,
     repo_data: Option<serde_json::Value>,
-    info_cache: HashMap<String, Option<serde_json::Value>>,
+    info_cache: IndexMap<String, Option<serde_json::Value>>,
     git_driver: Option<Box<GitDriver>>,
     http_client: Client,
     config: DriverConfig,
@@ -37,7 +38,7 @@ impl GitHubDriver {
             tags: None,
             branches: None,
             repo_data: None,
-            info_cache: HashMap::new(),
+            info_cache: IndexMap::new(),
             git_driver: None,
             http_client: Client::new(),
             config,

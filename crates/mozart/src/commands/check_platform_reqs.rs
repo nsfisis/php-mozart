@@ -227,7 +227,7 @@ fn collect_from_installed_data(
     no_dev: bool,
     requirements: &mut BTreeMap<String, Vec<PlatformRequirement>>,
 ) {
-    let dev_names: std::collections::HashSet<String> = installed
+    let dev_names: indexmap::IndexSet<String> = installed
         .dev_package_names
         .iter()
         .map(|n| n.to_lowercase())

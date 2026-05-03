@@ -1,6 +1,6 @@
 use crate::decisions::Decisions;
 use crate::pool::{PackageId, Pool, literal_to_package_id};
-use std::collections::{HashMap, HashSet};
+use indexmap::{IndexMap, IndexSet};
 
 /// An operation to perform on a package.
 ///
@@ -104,14 +104,14 @@ impl<'a> Transaction<'a> {
     /// Calculate the delta between present and result packages.
     fn calculate_operations(&mut self) {
         // Build maps: name -> package_id for present packages
-        let mut present_by_name: HashMap<&str, PackageId> = HashMap::new();
+        let mut present_by_name: IndexMap<&str, PackageId> = IndexMap::new();
         for &id in &self.present_ids {
             let pkg = self.pool.package_by_id(id);
             present_by_name.insert(&pkg.name, id);
         }
 
         // Track which present packages have been matched
-        let mut matched_present: HashSet<PackageId> = HashSet::new();
+        let mut matched_present: IndexSet<PackageId> = IndexSet::new();
 
         // Build topologically sorted result packages via DFS
         let sorted_results = self.topological_sort();
@@ -158,9 +158,9 @@ impl<'a> Transaction<'a> {
     /// Topologically sort result packages by their dependency order.
     /// Uses DFS: dependencies are processed before dependents.
     fn topological_sort(&self) -> Vec<PackageId> {
-        let result_set: HashSet<PackageId> = self.result_ids.iter().copied().collect();
-        let result_by_name: HashMap<&str, Vec<PackageId>> = {
-            let mut map: HashMap<&str, Vec<PackageId>> = HashMap::new();
+        let result_set: IndexSet<PackageId> = self.result_ids.iter().copied().collect();
+        let result_by_name: IndexMap<&str, Vec<PackageId>> = {
+            let mut map: IndexMap<&str, Vec<PackageId>> = IndexMap::new();
             for &id in &self.result_ids {
                 let pkg = self.pool.package_by_id(id);
                 map.entry(&pkg.name).or_default().push(id);
@@ -168,7 +168,7 @@ impl<'a> Transaction<'a> {
             map
         };
 
-        let mut visited: HashSet<PackageId> = HashSet::new();
+        let mut visited: IndexSet<PackageId> = IndexSet::new();
         let mut order: Vec<PackageId> = Vec::new();
 
         // Find root packages (not required by any other result package)
@@ -221,11 +221,11 @@ impl<'a> Transaction<'a> {
     /// Find root packages: result packages not required by any other result package.
     fn get_root_packages(
         &self,
-        result_set: &HashSet<PackageId>,
-        _result_by_name: &HashMap<&str, Vec<PackageId>>,
+        result_set: &IndexSet<PackageId>,
+        _result_by_name: &IndexMap<&str, Vec<PackageId>>,
     ) -> Vec<PackageId> {
         // Collect all required package names
-        let mut required_names: HashSet<&str> = HashSet::new();
+        let mut required_names: IndexSet<&str> = IndexSet::new();
         for &id in result_set {
             let pkg = self.pool.package_by_id(id);
             for req in &pkg.requires {
@@ -270,7 +270,7 @@ impl<'a> LockTransaction<'a> {
     pub fn new(
         pool: &'a Pool,
         present_ids: Vec<PackageId>,
-        unlockable_ids: HashSet<PackageId>,
+        unlockable_ids: IndexSet<PackageId>,
         decisions: &Decisions,
     ) -> Self {
         // Extract result packages from decisions
@@ -300,7 +300,7 @@ impl<'a> LockTransaction<'a> {
     /// Set the non-dev packages from an extraction-only solve result.
     /// `extraction_ids` are the package IDs that were resolved without dev deps.
     pub fn set_non_dev_packages(&mut self, extraction_ids: &[PackageId]) {
-        let extraction_names: HashSet<String> = extraction_ids
+        let extraction_names: IndexSet<String> = extraction_ids
             .iter()
             .map(|&id| self.transaction.pool.package_by_id(id).name.clone())
             .collect();

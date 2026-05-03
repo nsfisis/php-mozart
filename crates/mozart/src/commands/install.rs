@@ -1,4 +1,5 @@
 use clap::Args;
+use indexmap::IndexSet;
 use mozart_core::console;
 use mozart_core::console_format;
 use mozart_registry::installed;
@@ -6,7 +7,7 @@ use mozart_registry::installer_executor::{
     ExecuteContext, FilesystemExecutor, InstallerExecutor, PackageOperation,
 };
 use mozart_registry::lockfile;
-use std::collections::{BTreeMap, HashSet};
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 #[derive(Args)]
@@ -198,7 +199,7 @@ pub fn compute_operations<'a>(
     }
 
     // Compute removals: packages in installed but not in locked
-    let locked_names: HashSet<String> = locked.iter().map(|p| p.name.to_lowercase()).collect();
+    let locked_names: IndexSet<String> = locked.iter().map(|p| p.name.to_lowercase()).collect();
 
     let removals: Vec<String> = installed
         .packages
@@ -254,7 +255,7 @@ fn topological_sort<'a>(
 
     // Identify root packages: those not pulled in by any other package's
     // requires (counting provides/replaces as a match).
-    let mut required_by_others: HashSet<String> = HashSet::new();
+    let mut required_by_others: IndexSet<String> = IndexSet::new();
     for pkg in &sorted {
         let pkg_lower = pkg.name.to_lowercase();
         for dep in pkg.require.keys() {
@@ -276,8 +277,8 @@ fn topological_sort<'a>(
         .copied()
         .collect();
 
-    let mut visited: HashSet<String> = HashSet::new();
-    let mut processed: HashSet<String> = HashSet::new();
+    let mut visited: IndexSet<String> = IndexSet::new();
+    let mut processed: IndexSet<String> = IndexSet::new();
     let mut ordered: Vec<&'a lockfile::LockedPackage> = Vec::with_capacity(packages.len());
 
     while let Some(pkg) = stack.pop() {
@@ -444,7 +445,7 @@ fn check_platform_requirements_against(
         return Vec::new();
     }
 
-    let ignored: HashSet<String> = ignore_platform_req
+    let ignored: IndexSet<String> = ignore_platform_req
         .iter()
         .map(|s| s.to_lowercase())
         .collect();
@@ -503,7 +504,7 @@ fn warn_platform_requirements(
         return;
     }
 
-    let ignored_set: HashSet<String> = ignore_platform_req
+    let ignored_set: IndexSet<String> = ignore_platform_req
         .iter()
         .map(|s| s.to_lowercase())
         .collect();

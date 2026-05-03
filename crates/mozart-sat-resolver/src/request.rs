@@ -1,5 +1,5 @@
 use crate::pool::PackageId;
-use std::collections::HashMap;
+use indexmap::IndexMap;
 
 /// A requirement: package name + version constraint string.
 #[derive(Debug, Clone)]
@@ -14,7 +14,7 @@ pub struct Require {
 #[derive(Debug, Clone)]
 pub struct Request {
     /// Root requirements: package name → constraint string.
-    pub requires: HashMap<String, Option<String>>,
+    pub requires: IndexMap<String, Option<String>>,
     /// Fixed packages (must be installed, cannot be modified).
     pub fixed_packages: Vec<PackageId>,
     /// Locked packages (installed but can be removed if nothing requires them).
@@ -24,7 +24,7 @@ pub struct Request {
 impl Request {
     pub fn new() -> Self {
         Request {
-            requires: HashMap::new(),
+            requires: IndexMap::new(),
             fixed_packages: Vec::new(),
             locked_packages: Vec::new(),
         }

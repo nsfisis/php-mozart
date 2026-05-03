@@ -112,7 +112,7 @@ pub async fn execute(
 
     // Step 5: Determine packages to reinstall.
     //         Build the full set of installed packages (prod + dev unless --no-dev).
-    let dev_package_names: std::collections::HashSet<String> = installed
+    let dev_package_names: indexmap::IndexSet<String> = installed
         .dev_package_names
         .iter()
         .map(|n| n.to_lowercase())
@@ -666,7 +666,7 @@ mod tests {
         installed.packages.push(e2.clone());
         installed.dev_package_names = vec!["phpunit/phpunit".to_string()];
 
-        let dev_package_names: std::collections::HashSet<String> = installed
+        let dev_package_names: indexmap::IndexSet<String> = installed
             .dev_package_names
             .iter()
             .map(|n| n.to_lowercase())

@@ -3,7 +3,8 @@
 //! Scans VCS repositories defined in composer.json and converts
 //! discovered package versions into pool inputs for the SAT resolver.
 
-use std::collections::{BTreeMap, HashMap};
+use indexmap::IndexMap;
+use std::collections::BTreeMap;
 
 use mozart_core::package::{RawRepository, Stability};
 use mozart_sat_resolver::{PoolPackageInput, make_pool_links};
@@ -57,7 +58,7 @@ pub async fn scan_vcs_repositories(repositories: &[RawRepository]) -> Vec<VcsPac
 pub fn vcs_to_pool_inputs(
     vpkg: &VcsPackageVersion,
     minimum_stability: Stability,
-    stability_flags: &HashMap<String, Stability>,
+    stability_flags: &IndexMap<String, Stability>,
 ) -> Vec<PoolPackageInput> {
     let mut results = Vec::new();
 
@@ -207,7 +208,7 @@ fn passes_vcs_stability_filter(
     package_name: &str,
     version: &mozart_semver::Version,
     minimum_stability: Stability,
-    stability_flags: &HashMap<String, Stability>,
+    stability_flags: &IndexMap<String, Stability>,
 ) -> bool {
     let stability = version_stability(version);
     let pkg_flag = stability_flags.get(&package_name.to_lowercase());

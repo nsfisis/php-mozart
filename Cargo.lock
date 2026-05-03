@@ -666,9 +666,9 @@ dependencies = [
 
 [[package]]
 name = "hashbrown"
-version = "0.16.1"
+version = "0.17.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "841d1cc9bed7f9236f321df977030373f4a4163ae1a7dbfe1a51a2c1a51d9100"
+checksum = "4f467dd6dccf739c208452f8014c75c18bb8301b050ad1cfb27153803edb0f51"
 
 [[package]]
 name = "heck"
@@ -888,12 +888,12 @@ dependencies = [
 
 [[package]]
 name = "indexmap"
-version = "2.13.0"
+version = "2.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7714e70437a7dc3ac8eb7e6f8df75fd8eb422675fc7678aff7364301092b1017"
+checksum = "d466e9454f08e4a911e14806c24e16fba1b4c121d1ea474396f396069cf949d9"
 dependencies = [
  "equivalent",
- "hashbrown 0.16.1",
+ "hashbrown 0.17.0",
  "serde",
  "serde_core",
 ]
@@ -1087,6 +1087,7 @@ dependencies = [
  "clap",
  "clap_complete",
  "colored",
+ "indexmap",
  "mozart-archiver",
  "mozart-autoload",
  "mozart-core",
@@ -1128,6 +1129,7 @@ name = "mozart-autoload"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "indexmap",
  "md5",
  "mozart-class-map-generator",
  "mozart-registry",
@@ -1184,6 +1186,7 @@ dependencies = [
  "async-trait",
  "filetime",
  "flate2",
+ "indexmap",
  "md5",
  "mozart-core",
  "mozart-metadata-minifier",
@@ -1205,6 +1208,7 @@ dependencies = [
 name = "mozart-sat-resolver"
 version = "0.1.0"
 dependencies = [
+ "indexmap",
  "mozart-core",
  "mozart-semver",
 ]
@@ -1217,6 +1221,7 @@ version = "0.1.0"
 name = "mozart-spdx-licenses"
 version = "0.1.0"
 dependencies = [
+ "indexmap",
  "serde",
  "serde_json",
 ]
@@ -1226,6 +1231,7 @@ name = "mozart-test-harness"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "indexmap",
  "regex",
  "serde_json",
  "tempfile",
@@ -1237,6 +1243,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "base64",
+ "indexmap",
  "mozart-core",
  "mozart-semver",
  "regex",

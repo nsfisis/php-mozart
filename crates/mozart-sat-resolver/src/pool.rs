@@ -1,5 +1,5 @@
+use indexmap::IndexMap;
 use mozart_semver::VersionConstraint;
-use std::collections::HashMap;
 use std::fmt;
 
 /// Unique identifier for a package in the pool. 1-based.
@@ -122,9 +122,9 @@ pub struct Pool {
     /// All packages, indexed by (id - 1).
     packages: Vec<PoolPackage>,
     /// Index: package name → list of package IDs providing that name.
-    package_by_name: HashMap<String, Vec<PackageId>>,
+    package_by_name: IndexMap<String, Vec<PackageId>>,
     /// Cache for what_provides results.
-    provider_cache: HashMap<(String, String), Vec<PackageId>>,
+    provider_cache: IndexMap<(String, String), Vec<PackageId>>,
     /// Packages that are fixed/locked but unacceptable (e.g. failed stability).
     unacceptable_fixed_packages: Vec<PackageId>,
 }
@@ -133,7 +133,7 @@ impl Pool {
     /// Create a new pool from a list of package inputs.
     pub fn new(inputs: Vec<PoolPackageInput>, unacceptable_fixed_ids: Vec<PackageId>) -> Self {
         let mut packages: Vec<PoolPackage> = Vec::with_capacity(inputs.len());
-        let mut package_by_name: HashMap<String, Vec<PackageId>> = HashMap::new();
+        let mut package_by_name: IndexMap<String, Vec<PackageId>> = IndexMap::new();
         // Collect alias links (alias_idx, target_name, target_normalized) for
         // a second pass once every input has a stable ID.
         let mut pending_aliases: Vec<(usize, String, String)> = Vec::new();
@@ -189,7 +189,7 @@ impl Pool {
         Pool {
             packages,
             package_by_name,
-            provider_cache: HashMap::new(),
+            provider_cache: IndexMap::new(),
             unacceptable_fixed_packages: unacceptable_fixed_ids,
         }
     }

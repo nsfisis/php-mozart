@@ -1,5 +1,5 @@
 use crate::pool::{Literal, Pool};
-use std::collections::HashMap;
+use indexmap::IndexMap;
 
 /// Version selection policy: decides which version to prefer when multiple
 /// candidates satisfy a requirement.
@@ -35,7 +35,7 @@ impl DefaultPolicy {
         }
 
         // Group literals by package name
-        let mut groups: HashMap<&str, Vec<Literal>> = HashMap::new();
+        let mut groups: IndexMap<&str, Vec<Literal>> = IndexMap::new();
         for &lit in literals {
             let pkg = pool.literal_to_package(lit);
             groups.entry(pkg.name.as_str()).or_default().push(lit);

@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use indexmap::IndexMap;
 use std::path::Path;
 use std::process::Command;
 use std::time::{Duration, Instant};
@@ -18,7 +18,7 @@ pub struct ProcessOutput {
 /// Corresponds to Composer's `ProcessExecutor`.
 pub struct ProcessExecutor {
     timeout: Option<Duration>,
-    env_overrides: HashMap<String, Option<String>>,
+    env_overrides: IndexMap<String, Option<String>>,
 }
 
 impl Default for ProcessExecutor {
@@ -31,14 +31,14 @@ impl ProcessExecutor {
     pub fn new() -> Self {
         Self {
             timeout: None,
-            env_overrides: HashMap::new(),
+            env_overrides: IndexMap::new(),
         }
     }
 
     pub fn with_timeout(secs: u64) -> Self {
         Self {
             timeout: Some(Duration::from_secs(secs)),
-            env_overrides: HashMap::new(),
+            env_overrides: IndexMap::new(),
         }
     }
 

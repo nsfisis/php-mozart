@@ -1,4 +1,5 @@
-use std::collections::{BTreeMap, HashMap};
+use indexmap::IndexMap;
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use anyhow::Result;
@@ -17,7 +18,7 @@ pub struct GitDriver {
     root_identifier: Option<String>,
     tags: Option<BTreeMap<String, String>>,
     branches: Option<BTreeMap<String, String>>,
-    info_cache: HashMap<String, Option<serde_json::Value>>,
+    info_cache: IndexMap<String, Option<serde_json::Value>>,
     git_util: GitUtil,
     is_local: bool,
 }
@@ -37,7 +38,7 @@ impl GitDriver {
             root_identifier: None,
             tags: None,
             branches: None,
-            info_cache: HashMap::new(),
+            info_cache: IndexMap::new(),
             git_util,
             is_local,
         }
@@ -85,7 +86,7 @@ impl GitDriver {
     fn parse_tags(output: &str) -> BTreeMap<String, String> {
         let mut tags = BTreeMap::new();
         // First pass: collect dereferenced tags (^{})
-        let mut dereferenced = HashMap::new();
+        let mut dereferenced = IndexMap::new();
         for line in output.lines() {
             let line = line.trim();
             if line.is_empty() {

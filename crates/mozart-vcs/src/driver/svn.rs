@@ -1,4 +1,5 @@
-use std::collections::{BTreeMap, HashMap};
+use indexmap::IndexMap;
+use std::collections::BTreeMap;
 
 use anyhow::Result;
 use regex::Regex;
@@ -20,7 +21,7 @@ pub struct SvnDriver {
     root_identifier: Option<String>,
     tags: Option<BTreeMap<String, String>>,
     branches: Option<BTreeMap<String, String>>,
-    info_cache: HashMap<String, Option<serde_json::Value>>,
+    info_cache: IndexMap<String, Option<serde_json::Value>>,
     svn_util: SvnUtil,
 }
 
@@ -36,7 +37,7 @@ impl SvnDriver {
             root_identifier: None,
             tags: None,
             branches: None,
-            info_cache: HashMap::new(),
+            info_cache: IndexMap::new(),
             svn_util: SvnUtil::new(process),
         }
     }

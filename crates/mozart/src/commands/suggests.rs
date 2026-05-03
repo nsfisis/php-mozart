@@ -1,8 +1,10 @@
 use clap::Args;
+use indexmap::IndexMap;
+use indexmap::IndexSet;
 use mozart_core::console;
 use mozart_core::console::Verbosity;
 use mozart_core::console_format;
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 #[derive(Args)]
@@ -76,17 +78,17 @@ pub async fn execute(
     };
 
     // 3. Determine direct-deps-only filter
-    let (package_filter, direct_deps_only): (HashSet<String>, Option<HashSet<String>>) = {
+    let (package_filter, direct_deps_only): (IndexSet<String>, Option<IndexSet<String>>) = {
         if !args.packages.is_empty() {
             // Filter by the explicitly named packages
-            let filter: HashSet<String> = args.packages.iter().map(|s| s.to_lowercase()).collect();
+            let filter: IndexSet<String> = args.packages.iter().map(|s| s.to_lowercase()).collect();
             (filter, None)
         } else if args.all {
-            (HashSet::new(), None)
+            (IndexSet::new(), None)
         } else {
             // Default: only direct deps from composer.json
             let direct = compute_direct_deps(&working_dir)?;
-            (HashSet::new(), Some(direct))
+            (IndexSet::new(), Some(direct))
         }
     };
 
@@ -210,7 +212,7 @@ fn collect_suggestions_from_installed(
         }
     }
 
-    let dev_names: HashSet<String> = installed
+    let dev_names: IndexSet<String> = installed
         .dev_package_names
         .iter()
         .map(|n| n.to_lowercase())
@@ -273,11 +275,11 @@ fn collect_suggestions_from_root(working_dir: &Path) -> anyhow::Result<Vec<Sugge
 fn collect_installed_names_from_lock(
     working_dir: &Path,
     no_dev: bool,
-) -> anyhow::Result<HashSet<String>> {
+) -> anyhow::Result<IndexSet<String>> {
     let lock_path = working_dir.join("composer.lock");
     let lock = mozart_registry::lockfile::LockFile::read_from_file(&lock_path)?;
 
-    let mut names: HashSet<String> = HashSet::new();
+    let mut names: IndexSet<String> = IndexSet::new();
 
     let mut all_packages: Vec<&mozart_registry::lockfile::LockedPackage> =
         lock.packages.iter().collect();
@@ -309,17 +311,17 @@ fn collect_installed_names_from_lock(
 fn collect_installed_names_from_installed(
     working_dir: &Path,
     no_dev: bool,
-) -> anyhow::Result<HashSet<String>> {
+) -> anyhow::Result<IndexSet<String>> {
     let vendor_dir = working_dir.join("vendor");
     let installed = mozart_registry::installed::InstalledPackages::read(&vendor_dir)?;
 
-    let dev_names: HashSet<String> = installed
+    let dev_names: IndexSet<String> = installed
         .dev_package_names
         .iter()
         .map(|n| n.to_lowercase())
         .collect();
 
-    let mut names: HashSet<String> = HashSet::new();
+    let mut names: IndexSet<String> = IndexSet::new();
 
     for pkg in &installed.packages {
         if no_dev && dev_names.contains(&pkg.name.to_lowercase()) {
@@ -356,7 +358,7 @@ fn collect_installed_names_from_installed(
 
 fn add_platform_names_from_lock(
     lock: &mozart_registry::lockfile::LockFile,
-    names: &mut HashSet<String>,
+    names: &mut IndexSet<String>,
 ) {
     // Collect platform keys from the lock's platform and platform_dev objects
     if let Some(obj) = lock.platform.as_object() {
@@ -382,13 +384,13 @@ fn is_platform_package(name: &str) -> bool {
 
 // ─── Direct deps helper ───────────────────────────────────────────────────────
 
-fn compute_direct_deps(working_dir: &Path) -> anyhow::Result<HashSet<String>> {
+fn compute_direct_deps(working_dir: &Path) -> anyhow::Result<IndexSet<String>> {
     let composer_json_path = working_dir.join("composer.json");
     if !composer_json_path.exists() {
-        return Ok(HashSet::new());
+        return Ok(IndexSet::new());
     }
     let root = mozart_core::package::read_from_file(&composer_json_path)?;
-    let mut deps: HashSet<String> = HashSet::new();
+    let mut deps: IndexSet<String> = IndexSet::new();
     // Include the root package itself so its suggestions are shown
     if !root.name.is_empty() {
         deps.insert(root.name.to_lowercase());
@@ -417,7 +419,7 @@ fn sanitize_reason(reason: &str) -> String {
 /// If the same source suggests the same target multiple times, the last reason wins.
 /// This matches Composer's behavior where map insertion overwrites previous entries.
 fn deduplicate_suggestions(suggestions: Vec<Suggestion>) -> Vec<Suggestion> {
-    let mut seen: HashMap<(String, String), usize> = HashMap::new();
+    let mut seen: IndexMap<(String, String), usize> = IndexMap::new();
     let mut deduped: Vec<Suggestion> = Vec::new();
 
     for s in suggestions {
@@ -648,7 +650,7 @@ mod tests {
         ];
         let refs: Vec<&Suggestion> = suggestions.iter().collect();
 
-        let mut installed: HashSet<String> = HashSet::new();
+        let mut installed: IndexSet<String> = IndexSet::new();
         installed.insert("ext-intl".to_string());
         installed.insert("ext-mbstring".to_string());
 
@@ -671,7 +673,7 @@ mod tests {
         ];
         let refs: Vec<&Suggestion> = suggestions.iter().collect();
 
-        let mut filter: HashSet<String> = HashSet::new();
+        let mut filter: IndexSet<String> = IndexSet::new();
         filter.insert("vendor/a".to_string());
         filter.insert("vendor/c".to_string());
 
@@ -694,7 +696,7 @@ mod tests {
         ];
         let refs: Vec<&Suggestion> = suggestions.iter().collect();
 
-        let mut direct: HashSet<String> = HashSet::new();
+        let mut direct: IndexSet<String> = IndexSet::new();
         direct.insert("vendor/direct".to_string());
 
         let filtered: Vec<&Suggestion> = refs
@@ -715,7 +717,7 @@ mod tests {
             make_suggestion("vendor/c", "vendor/z", ""),
         ];
         let refs: Vec<&Suggestion> = suggestions.iter().collect();
-        let installed: HashSet<String> = HashSet::new();
+        let installed: IndexSet<String> = IndexSet::new();
 
         let filtered: Vec<&Suggestion> = refs
             .iter()
@@ -755,7 +757,7 @@ mod tests {
         let suggestions = collect_suggestions_from_locked(working_dir, false).unwrap();
         assert_eq!(suggestions.len(), 2);
         assert!(suggestions.iter().all(|s| s.source == "vendor/a"));
-        let targets: HashSet<&str> = suggestions.iter().map(|s| s.target.as_str()).collect();
+        let targets: IndexSet<&str> = suggestions.iter().map(|s| s.target.as_str()).collect();
         assert!(targets.contains("ext-intl"));
         assert!(targets.contains("vendor/optional"));
     }

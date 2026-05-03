@@ -1,9 +1,11 @@
 use crate::packagist::{PackagistDist, PackagistSource, PackagistVersion};
 use crate::repository::RepositorySet;
 use crate::resolver::ResolvedPackage;
+use indexmap::IndexMap;
+use indexmap::IndexSet;
 use mozart_core::package::{RawPackageData, to_json_pretty};
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
+use std::collections::{BTreeMap, VecDeque};
 use std::fs;
 use std::path::Path;
 
@@ -566,14 +568,14 @@ fn classify_dev_packages(
     resolved: &[ResolvedPackage],
     require: &BTreeMap<String, String>,
     _require_dev: &BTreeMap<String, String>,
-    package_metadata: &HashMap<String, PackagistVersion>,
-) -> HashSet<String> {
+    package_metadata: &IndexMap<String, PackagistVersion>,
+) -> IndexSet<String> {
     // Build set of all resolved package names for quick lookup
-    let resolved_names: HashSet<&str> = resolved.iter().map(|p| p.name.as_str()).collect();
+    let resolved_names: IndexSet<&str> = resolved.iter().map(|p| p.name.as_str()).collect();
 
     // BFS from non-dev root dependencies through each package's `require` map.
     // All reachable packages are production packages.
-    let mut production: HashSet<String> = HashSet::new();
+    let mut production: IndexSet<String> = IndexSet::new();
     let mut queue: VecDeque<String> = VecDeque::new();
 
     // Seed queue with non-dev root dependencies that are actual packages (not platform)
@@ -659,7 +661,7 @@ pub async fn generate_lock_file(request: &LockFileGenerationRequest) -> anyhow::
     // — short-circuit those before hitting the network. Everything else goes
     // through `RepositorySet`, which today contains only Packagist; future
     // steps will move VCS / inline through the same set.
-    let mut package_metadata: HashMap<String, PackagistVersion> = HashMap::new();
+    let mut package_metadata: IndexMap<String, PackagistVersion> = IndexMap::new();
     let repo_set = &request.repositories;
     for pkg in &real_resolved {
         if let Some(inline) = request.inline_lookup(&pkg.name, &pkg.version_normalized) {
@@ -1120,7 +1122,7 @@ mod tests {
         let mut require_dev = BTreeMap::new();
         require_dev.insert("vendor/b".to_string(), "^1.0".to_string());
 
-        let mut metadata: HashMap<String, PackagistVersion> = HashMap::new();
+        let mut metadata: IndexMap<String, PackagistVersion> = IndexMap::new();
 
         // A requires C
         let mut a_require = BTreeMap::new();
@@ -1196,7 +1198,7 @@ mod tests {
         let mut require_dev = BTreeMap::new();
         require_dev.insert("vendor/b".to_string(), "^1.0".to_string());
 
-        let mut metadata: HashMap<String, PackagistVersion> = HashMap::new();
+        let mut metadata: IndexMap<String, PackagistVersion> = IndexMap::new();
 
         // A requires C
         let mut a_require = BTreeMap::new();
@@ -1388,7 +1390,7 @@ mod tests {
             require_dev: vec![],
             include_dev: false,
             minimum_stability: Stability::Stable,
-            stability_flags: HashMap::new(),
+            stability_flags: IndexMap::new(),
             prefer_stable: true,
             prefer_lowest: false,
             platform: PlatformConfig::new(),
@@ -1398,10 +1400,10 @@ mod tests {
                 std::env::temp_dir().join("mozart-test-cache"),
                 false,
             ))),
-            temporary_constraints: HashMap::new(),
+            temporary_constraints: IndexMap::new(),
             raw_repositories: vec![],
-            root_provide: HashMap::new(),
-            root_replace: HashMap::new(),
+            root_provide: IndexMap::new(),
+            root_replace: IndexMap::new(),
         };
 
         let resolved = resolve(&resolve_request)

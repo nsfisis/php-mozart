@@ -75,7 +75,7 @@ impl Problem {
         }
 
         // Deduplicate
-        let mut seen = std::collections::HashSet::new();
+        let mut seen = indexmap::IndexSet::new();
         let mut unique = Vec::new();
         for msg in messages {
             if seen.insert(msg.clone()) {
@@ -367,7 +367,7 @@ fn rule_pretty_string(pool: &Pool, rule: &Rule) -> String {
 /// Similar to Composer's formatPackagesUnique.
 fn format_providers(pool: &Pool, literals: &[Literal]) -> String {
     // Group by package name
-    let mut groups: std::collections::HashMap<&str, Vec<&str>> = std::collections::HashMap::new();
+    let mut groups: indexmap::IndexMap<&str, Vec<&str>> = indexmap::IndexMap::new();
     for &lit in literals {
         let pkg = pool.literal_to_package(lit);
         groups

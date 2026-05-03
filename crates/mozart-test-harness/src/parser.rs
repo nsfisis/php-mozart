@@ -1,5 +1,5 @@
 use anyhow::{Context, Result, bail};
-use std::collections::HashMap;
+use indexmap::IndexMap;
 use std::fs;
 use std::path::Path;
 
@@ -53,7 +53,7 @@ pub fn parse_test_str(content: &str) -> Result<ParsedTest> {
         }
     }
 
-    let mut take = |key: &str| sections.remove(key);
+    let mut take = |key: &str| sections.shift_remove(key);
 
     let test = take("TEST").unwrap();
     let composer = take("COMPOSER").unwrap();
@@ -86,10 +86,10 @@ pub fn parse_test_str(content: &str) -> Result<ParsedTest> {
     })
 }
 
-fn split_sections(content: &str) -> Result<HashMap<String, String>> {
+fn split_sections(content: &str) -> Result<IndexMap<String, String>> {
     let header_re = regex::Regex::new(r"^--([A-Z][A-Z-]*)--$").unwrap();
 
-    let mut sections: HashMap<String, String> = HashMap::new();
+    let mut sections: IndexMap<String, String> = IndexMap::new();
     let mut current_section: Option<String> = None;
     let mut current_body = String::new();
 

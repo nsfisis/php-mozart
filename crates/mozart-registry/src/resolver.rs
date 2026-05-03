@@ -4,7 +4,7 @@
 //! candidate packages, generates SAT rules, and runs the CDCL solver to find
 //! a compatible set of packages to install.
 
-use std::collections::{HashMap, HashSet};
+use indexmap::{IndexMap, IndexSet};
 use std::fmt;
 use std::sync::Arc;
 
@@ -275,7 +275,7 @@ impl PackageName {
 /// Platform package configuration.
 /// Maps package names to version strings (normalized, e.g. "8.1.0.0").
 pub struct PlatformConfig {
-    pub packages: HashMap<String, String>,
+    pub packages: IndexMap<String, String>,
 }
 
 impl Default for PlatformConfig {
@@ -288,7 +288,7 @@ impl PlatformConfig {
     /// Detect platform packages from the local PHP installation.
     pub fn new() -> Self {
         let detected = mozart_core::platform::detect_platform();
-        let mut packages = HashMap::new();
+        let mut packages = IndexMap::new();
         for pkg in detected {
             packages.insert(pkg.name, pkg.version);
         }
@@ -308,7 +308,7 @@ impl PlatformConfig {
         for (name, value) in obj {
             let key = name.to_lowercase();
             if value.as_bool() == Some(false) {
-                self.packages.remove(&key);
+                self.packages.shift_remove(&key);
                 continue;
             }
             if let Some(s) = value.as_str() {
@@ -318,7 +318,7 @@ impl PlatformConfig {
     }
 
     /// Parse platform packages into `Version` values.
-    pub fn to_versions(&self) -> HashMap<String, Version> {
+    pub fn to_versions(&self) -> IndexMap<String, Version> {
         self.packages
             .iter()
             .filter_map(|(name, version_str)| {
@@ -380,7 +380,7 @@ fn passes_stability_filter(
     package_name: &str,
     version: &Version,
     minimum_stability: Stability,
-    stability_flags: &HashMap<String, Stability>,
+    stability_flags: &IndexMap<String, Stability>,
 ) -> bool {
     let min_stability = stability_flags
         .get(package_name)
@@ -417,7 +417,7 @@ fn packagist_to_pool_inputs(
     package_name: &str,
     pv: &packagist::PackagistVersion,
     minimum_stability: Stability,
-    stability_flags: &HashMap<String, Stability>,
+    stability_flags: &IndexMap<String, Stability>,
 ) -> Vec<PoolPackageInput> {
     let mut results = Vec::new();
 
@@ -570,7 +570,7 @@ pub struct ResolveRequest {
     /// Minimum stability from composer.json.
     pub minimum_stability: Stability,
     /// Per-package stability overrides.
-    pub stability_flags: HashMap<String, Stability>,
+    pub stability_flags: IndexMap<String, Stability>,
     /// Whether prefer-stable is enabled.
     pub prefer_stable: bool,
     /// Whether prefer-lowest is enabled.
@@ -589,7 +589,7 @@ pub struct ResolveRequest {
     pub repositories: Arc<RepositorySet>,
     /// Temporary version constraint overrides (from --with flag).
     /// Maps package name (lowercase) to constraint string.
-    pub temporary_constraints: HashMap<String, String>,
+    pub temporary_constraints: IndexMap<String, String>,
     /// VCS / inline-package repository entries from composer.json's
     /// `repositories` section, used by the eager VCS scan and inline-package
     /// preload that still live in `resolve()` (Step B follow-up will move
@@ -600,10 +600,10 @@ pub struct ResolveRequest {
     /// `require` names something the root itself `provide`s with a matching
     /// constraint, no install-one-of rule is emitted, mirroring Composer's
     /// `RuleSetGenerator::createRequireRule` self-fulfillment branch.
-    pub root_provide: HashMap<String, String>,
+    pub root_provide: IndexMap<String, String>,
     /// Root composer.json's `replace` map. Same role as `root_provide` for the
     /// `replace` link: a replaced target counts as fulfilled by the root.
-    pub root_replace: HashMap<String, String>,
+    pub root_replace: IndexMap<String, String>,
 }
 
 /// A single package in the resolution output.
@@ -633,12 +633,12 @@ pub struct ResolvedPackage {
 /// or a human-readable error.
 pub async fn resolve(request: &ResolveRequest) -> Result<Vec<ResolvedPackage>, ResolveError> {
     // 1. Build root requirements
-    let mut root_requires: HashMap<String, Option<String>> = HashMap::new();
+    let mut root_requires: IndexMap<String, Option<String>> = IndexMap::new();
     // Per-package stability overrides extracted from `@dev`/`@beta`/etc.
     // suffixes on root constraints. Mirrors Composer's
     // `RootPackageLoader::extractStabilityFlags`. Merged on top of the
     // request's caller-supplied flags (which today are usually empty).
-    let mut stability_flags: HashMap<String, Stability> = request.stability_flags.clone();
+    let mut stability_flags: IndexMap<String, Stability> = request.stability_flags.clone();
 
     let minimum_stability = request.minimum_stability;
     let mut insert_root_require = |name: &str, constraint: &str| {
@@ -700,7 +700,7 @@ pub async fn resolve(request: &ResolveRequest) -> Result<Vec<ResolvedPackage>, R
     let mut builder = PoolBuilder::new();
 
     // Set up ignore list for platform requirements
-    let mut ignore_set: HashSet<String> = HashSet::new();
+    let mut ignore_set: IndexSet<String> = IndexSet::new();
     for name in &request.ignore_platform_req_list {
         ignore_set.insert(name.clone());
     }
@@ -709,7 +709,7 @@ pub async fn resolve(request: &ResolveRequest) -> Result<Vec<ResolvedPackage>, R
 
     // Add platform packages as fixed entries
     let platform_config = request.platform.to_versions();
-    let mut fixed_packages_by_name: HashMap<String, u32> = HashMap::new();
+    let mut fixed_packages_by_name: IndexMap<String, u32> = IndexMap::new();
     for (name, version) in &platform_config {
         if should_skip_platform_dep(
             name,
@@ -734,7 +734,7 @@ pub async fn resolve(request: &ResolveRequest) -> Result<Vec<ResolvedPackage>, R
 
     // Scan VCS repositories and collect packages from them
     let vcs_packages = vcs_bridge::scan_vcs_repositories(&request.raw_repositories).await;
-    let mut vcs_package_names: HashSet<String> = HashSet::new();
+    let mut vcs_package_names: IndexSet<String> = IndexSet::new();
     for vpkg in &vcs_packages {
         vcs_package_names.insert(vpkg.name.clone());
     }
@@ -752,7 +752,7 @@ pub async fn resolve(request: &ResolveRequest) -> Result<Vec<ResolvedPackage>, R
     // network fetch; they go straight into the pool and are also tracked by
     // name so the Packagist seed/transitive loops below skip them.
     let inline_packages = crate::inline_package::collect_inline_packages(&request.raw_repositories);
-    let mut inline_package_names: HashSet<String> = HashSet::new();
+    let mut inline_package_names: IndexSet<String> = IndexSet::new();
     for ipkg in &inline_packages {
         inline_package_names.insert(ipkg.name.clone());
         let inputs = packagist_to_pool_inputs(
@@ -773,7 +773,7 @@ pub async fn resolve(request: &ResolveRequest) -> Result<Vec<ResolvedPackage>, R
     // into the pool, with names recorded so Packagist loops skip them.
     let composer_repo_packages =
         crate::composer_repo::collect_composer_packages(&request.raw_repositories);
-    let mut composer_repo_names: HashSet<String> = HashSet::new();
+    let mut composer_repo_names: IndexSet<String> = IndexSet::new();
     for cpkg in &composer_repo_packages {
         composer_repo_names.insert(cpkg.name.clone());
         let inputs = packagist_to_pool_inputs(
@@ -917,7 +917,7 @@ pub async fn resolve(request: &ResolveRequest) -> Result<Vec<ResolvedPackage>, R
 
     // Create policy and solve
     let policy = DefaultPolicy::new(request.prefer_stable, request.prefer_lowest);
-    let fixed_set: HashSet<u32> = fixed_ids.into_iter().collect();
+    let fixed_set: IndexSet<u32> = fixed_ids.into_iter().collect();
     let solver = Solver::new(rules, &pool, policy, fixed_set);
 
     match solver.solve() {
@@ -1143,7 +1143,7 @@ mod tests {
         let rc_v = v_pre(1, 0, 0, 0, "RC1");
         let dev_v = v_pre(1, 0, 0, 0, "dev");
 
-        let flags = HashMap::new();
+        let flags = IndexMap::new();
 
         assert!(passes_stability_filter(
             "foo/foo",
@@ -1184,7 +1184,7 @@ mod tests {
         let alpha_v = v_pre(1, 0, 0, 0, "alpha1");
         let dev_v = v_pre(1, 0, 0, 0, "dev");
 
-        let flags = HashMap::new();
+        let flags = IndexMap::new();
 
         assert!(passes_stability_filter(
             "foo/foo",
@@ -1215,7 +1215,7 @@ mod tests {
     #[test]
     fn test_stability_filter_dev() {
         let dev_v = v_pre(1, 0, 0, 0, "dev");
-        let flags = HashMap::new();
+        let flags = IndexMap::new();
         assert!(passes_stability_filter(
             "foo/foo",
             &dev_v,
@@ -1308,14 +1308,14 @@ mod tests {
             vec![],
         );
 
-        let mut requires = HashMap::new();
+        let mut requires = IndexMap::new();
         requires.insert("foo/foo".to_string(), Some("^1.0".to_string()));
 
         let generator = RuleSetGenerator::new(&mut pool);
-        let (rules, _) = generator.generate(&requires, &[], &HashMap::new(), &HashMap::new());
+        let (rules, _) = generator.generate(&requires, &[], &IndexMap::new(), &IndexMap::new());
 
         let policy = DefaultPolicy::default();
-        let solver = Solver::new(rules, &pool, policy, HashSet::new());
+        let solver = Solver::new(rules, &pool, policy, IndexSet::new());
         let result = solver.solve().unwrap();
 
         // Should install foo/foo (id=1) and bar/bar (id=2)
@@ -1335,7 +1335,7 @@ mod tests {
             require_dev: vec![],
             include_dev: false,
             minimum_stability: Stability::Stable,
-            stability_flags: HashMap::new(),
+            stability_flags: IndexMap::new(),
             prefer_stable: true,
             prefer_lowest: false,
             platform: PlatformConfig::new(),
@@ -1345,10 +1345,10 @@ mod tests {
                 std::env::temp_dir().join("mozart-test-cache"),
                 false,
             ))),
-            temporary_constraints: HashMap::new(),
+            temporary_constraints: IndexMap::new(),
             raw_repositories: vec![],
-            root_provide: HashMap::new(),
-            root_replace: HashMap::new(),
+            root_provide: IndexMap::new(),
+            root_replace: IndexMap::new(),
         };
 
         let result = resolve(&request).await;

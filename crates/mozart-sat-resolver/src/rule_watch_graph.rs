@@ -2,7 +2,7 @@ use crate::decisions::Decisions;
 use crate::pool::Literal;
 use crate::rule::Rule;
 use crate::rule_set::RuleId;
-use std::collections::HashMap;
+use indexmap::IndexMap;
 
 /// A watch node: tracks which 2 literals a rule watches.
 ///
@@ -24,7 +24,7 @@ struct WatchNode {
 /// Port of Composer's RuleWatchGraph.php.
 pub struct RuleWatchGraph {
     /// Literal → list of watch node indices watching that literal.
-    watch_chains: HashMap<Literal, Vec<usize>>,
+    watch_chains: IndexMap<Literal, Vec<usize>>,
     /// All watch nodes.
     nodes: Vec<WatchNode>,
 }
@@ -32,7 +32,7 @@ pub struct RuleWatchGraph {
 impl RuleWatchGraph {
     pub fn new() -> Self {
         RuleWatchGraph {
-            watch_chains: HashMap::new(),
+            watch_chains: IndexMap::new(),
             nodes: Vec::new(),
         }
     }

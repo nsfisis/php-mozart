@@ -1,8 +1,8 @@
 use clap::Args;
+use indexmap::{IndexMap, IndexSet};
 use mozart_core::console::Verbosity;
 use mozart_core::console_format;
 use mozart_core::matches_wildcard;
-use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 #[derive(Args)]
@@ -292,7 +292,7 @@ fn filter_installed_packages<'a>(
 
     // --no-dev: exclude dev packages
     if args.no_dev {
-        let dev_names: HashSet<String> = installed
+        let dev_names: IndexSet<String> = installed
             .dev_package_names
             .iter()
             .map(|n| n.to_lowercase())
@@ -305,7 +305,7 @@ fn filter_installed_packages<'a>(
         let composer_json_path = working_dir.join("composer.json");
         if composer_json_path.exists() {
             let root = mozart_core::package::read_from_file(&composer_json_path)?;
-            let mut direct_names: HashSet<String> =
+            let mut direct_names: IndexSet<String> =
                 root.require.keys().map(|k| k.to_lowercase()).collect();
             if !args.no_dev {
                 direct_names.extend(root.require_dev.keys().map(|k| k.to_lowercase()));
@@ -812,7 +812,7 @@ async fn execute_locked(
         let composer_json_path = working_dir.join("composer.json");
         if composer_json_path.exists() {
             let root = mozart_core::package::read_from_file(&composer_json_path)?;
-            let mut direct_names: HashSet<String> =
+            let mut direct_names: IndexSet<String> =
                 root.require.keys().map(|k| k.to_lowercase()).collect();
             if !args.no_dev {
                 direct_names.extend(root.require_dev.keys().map(|k| k.to_lowercase()));
@@ -1346,7 +1346,7 @@ fn show_tree(
     let root = mozart_core::package::read_from_file(&composer_json_path)?;
 
     // Load all locked packages into a map for quick lookup
-    let pkg_map: HashMap<String, &mozart_registry::lockfile::LockedPackage>;
+    let pkg_map: IndexMap<String, &mozart_registry::lockfile::LockedPackage>;
     let lock_storage;
     if lock_path.exists() {
         lock_storage = mozart_registry::lockfile::LockFile::read_from_file(&lock_path)?;
@@ -1357,7 +1357,7 @@ fn show_tree(
             .map(|p| (p.name.to_lowercase(), p))
             .collect();
     } else {
-        pkg_map = HashMap::new();
+        pkg_map = IndexMap::new();
     }
 
     // Determine roots to display: package filter or full tree
@@ -1389,7 +1389,7 @@ fn show_tree(
     );
 
     // Render each root dependency as a tree
-    let mut visited_global: HashSet<String> = HashSet::new();
+    let mut visited_global: IndexSet<String> = IndexSet::new();
     let count = root_reqs.len();
     for (i, (dep_name, dep_constraint)) in root_reqs.iter().enumerate() {
         let is_last = i == count - 1;
@@ -1415,10 +1415,10 @@ fn show_tree(
 fn print_tree_node(
     pkg_name: &str,
     constraint: &str,
-    pkg_map: &HashMap<String, &mozart_registry::lockfile::LockedPackage>,
+    pkg_map: &IndexMap<String, &mozart_registry::lockfile::LockedPackage>,
     prefix: &str,
     child_prefix: &str,
-    visited: &mut HashSet<String>,
+    visited: &mut IndexSet<String>,
     depth: usize,
     console: &mozart_core::console::Console,
 ) {
@@ -1491,7 +1491,7 @@ fn print_tree_node(
             );
         }
 
-        visited.remove(&key);
+        visited.shift_remove(&key);
     } else {
         // Package not found in lock file (platform package or not installed)
         if !is_platform_package(&key) {

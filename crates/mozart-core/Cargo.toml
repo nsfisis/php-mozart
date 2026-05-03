@@ -4,6 +4,7 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
+mozart-console-macros.workspace = true
 mozart-spdx-licenses.workspace = true
 anyhow.workspace = true
 colored.workspace = true
@@ -11,7 +12,6 @@ dialoguer.workspace = true
 regex.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-mozart-console-macros = { version = "0.1.0", path = "../mozart-console-macros" }
 
 [dev-dependencies]
 tempfile.workspace = true

@@ -6,7 +6,7 @@ use crate::problem::Problem;
 use crate::rule::{ReasonData, Rule, RuleReason, RuleType};
 use crate::rule_set::{RuleId, RuleSet};
 use crate::rule_watch_graph::RuleWatchGraph;
-use std::collections::{HashMap, HashSet};
+use indexmap::{IndexMap, IndexSet};
 
 /// Result of solving: the list of package IDs to install.
 #[derive(Debug)]
@@ -25,7 +25,7 @@ pub struct Solver<'a> {
     watch_graph: RuleWatchGraph,
     decisions: Decisions,
     /// Fixed packages by ID.
-    fixed_map: HashSet<PackageId>,
+    fixed_map: IndexSet<PackageId>,
     /// Current propagation index in decision queue.
     propagate_index: usize,
     /// Branch points: (alternative literals, decision level).
@@ -35,7 +35,7 @@ pub struct Solver<'a> {
     /// Learned rule pool: for each learned rule, the chain of rules that led to it.
     learned_pool: Vec<Vec<RuleId>>,
     /// Map from rule ID → learned pool index.
-    learned_why: HashMap<RuleId, usize>,
+    learned_why: IndexMap<RuleId, usize>,
 }
 
 impl<'a> Solver<'a> {
@@ -44,7 +44,7 @@ impl<'a> Solver<'a> {
         rules: RuleSet,
         pool: &'a Pool,
         policy: DefaultPolicy,
-        fixed_packages: HashSet<PackageId>,
+        fixed_packages: IndexSet<PackageId>,
     ) -> Self {
         Solver {
             pool,
@@ -57,7 +57,7 @@ impl<'a> Solver<'a> {
             branches: Vec::new(),
             problems: Vec::new(),
             learned_pool: Vec::new(),
-            learned_why: HashMap::new(),
+            learned_why: IndexMap::new(),
         }
     }
 
@@ -333,7 +333,7 @@ impl<'a> Solver<'a> {
         let mut rule_level: i32 = 1;
         let mut num: i32 = 0;
         let mut l1num: i32 = 0;
-        let mut seen: HashSet<PackageId> = HashSet::new();
+        let mut seen: IndexSet<PackageId> = IndexSet::new();
         let mut learned_literal: Option<Literal> = None;
         let mut other_learned_literals: Vec<Literal> = Vec::new();
 
@@ -430,7 +430,7 @@ impl<'a> Solver<'a> {
                 let decision = self.decisions.at_offset(decision_id);
                 let literal = decision.literal;
 
-                seen.remove(&literal_to_package_id(literal));
+                seen.shift_remove(&literal_to_package_id(literal));
 
                 if num != 0 {
                     num -= 1;
@@ -456,7 +456,7 @@ impl<'a> Solver<'a> {
 
                         // Only level 1 marks left
                         for other in &other_learned_literals {
-                            seen.remove(&literal_to_package_id(*other));
+                            seen.shift_remove(&literal_to_package_id(*other));
                         }
                         l1num += 1;
                         l1retry = true;
@@ -504,7 +504,7 @@ impl<'a> Solver<'a> {
         &self,
         problem: &mut Problem,
         conflict_rule_id: RuleId,
-        rule_seen: &mut HashSet<RuleId>,
+        rule_seen: &mut IndexSet<RuleId>,
     ) {
         if rule_seen.contains(&conflict_rule_id) {
             return;
@@ -542,11 +542,11 @@ impl<'a> Solver<'a> {
         let mut problem = Problem::new();
         problem.add_rule(conflict_rule_id);
 
-        let mut rule_seen = HashSet::new();
+        let mut rule_seen = IndexSet::new();
         self.analyze_unsolvable_rule(&mut problem, conflict_rule_id, &mut rule_seen);
 
         // Collect related decisions
-        let mut seen: HashSet<PackageId> = HashSet::new();
+        let mut seen: IndexSet<PackageId> = IndexSet::new();
         let conflict_literals = self.rules.rule_by_id(conflict_rule_id).literals().to_vec();
         for &lit in &conflict_literals {
             if self.decisions.satisfy(lit) {
@@ -835,7 +835,7 @@ mod tests {
     /// Creates a pool with N dummy packages (1..=max_id).
     fn make_rules_and_solve(
         rules: Vec<(Rule, RuleType)>,
-        fixed: HashSet<PackageId>,
+        fixed: IndexSet<PackageId>,
         max_id: u32,
     ) -> Result<SolverResult, SolverError> {
         let mut rs = RuleSet::new();
@@ -859,7 +859,7 @@ mod tests {
                 Rule::new(vec![1], RuleReason::RootRequire, ReasonData::None),
                 RuleType::Request,
             )],
-            HashSet::new(),
+            IndexSet::new(),
             3,
         )
         .unwrap();
@@ -881,7 +881,7 @@ mod tests {
                     RuleType::Request,
                 ),
             ],
-            HashSet::new(),
+            IndexSet::new(),
             3,
         )
         .unwrap();
@@ -907,7 +907,7 @@ mod tests {
                     RuleType::Package,
                 ),
             ],
-            HashSet::new(),
+            IndexSet::new(),
             3,
         )
         .unwrap();
@@ -944,7 +944,7 @@ mod tests {
                     RuleType::Request,
                 ),
             ],
-            HashSet::new(),
+            IndexSet::new(),
             3,
         )
         .unwrap();
@@ -970,7 +970,7 @@ mod tests {
                     RuleType::Package,
                 ),
             ],
-            HashSet::new(),
+            IndexSet::new(),
             3,
         )
         .unwrap();
@@ -999,7 +999,7 @@ mod tests {
                     RuleType::Package,
                 ),
             ],
-            HashSet::new(),
+            IndexSet::new(),
             3,
         );
 

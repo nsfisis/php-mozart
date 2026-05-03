@@ -6,8 +6,8 @@
 //! pool and into the generated lockfile entry verbatim.
 
 use crate::packagist::PackagistVersion;
+use indexmap::IndexSet;
 use mozart_core::package::RawRepository;
-use std::collections::HashSet;
 
 /// One package extracted from a `type: package` repository.
 pub struct InlinePackage {
@@ -28,7 +28,7 @@ pub struct InlinePackage {
 /// first-repo-wins priority via `RepositorySet::findPackages`.
 pub fn collect_inline_packages(repositories: &[RawRepository]) -> Vec<InlinePackage> {
     let mut packages = Vec::new();
-    let mut claimed: HashSet<String> = HashSet::new();
+    let mut claimed: IndexSet<String> = IndexSet::new();
     for repo in repositories {
         if repo.repo_type != "package" {
             continue;
@@ -54,7 +54,7 @@ pub fn collect_inline_packages(repositories: &[RawRepository]) -> Vec<InlinePack
             _ => {}
         }
 
-        let mut names_this_repo: HashSet<String> = HashSet::new();
+        let mut names_this_repo: IndexSet<String> = IndexSet::new();
         for pkg in from_this_repo {
             if claimed.contains(&pkg.name) {
                 continue;

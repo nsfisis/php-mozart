@@ -4,7 +4,8 @@
 //! `prohibits` (aka `why-not`) answers: "Which packages prevent version X of package Y from being
 //! installed?"
 
-use std::collections::{BTreeMap, HashSet};
+use indexmap::IndexSet;
+use std::collections::BTreeMap;
 use std::path::Path;
 
 use anyhow::Result;
@@ -233,7 +234,7 @@ fn get_dependents_forward(
     needles: &[String],
     recursive: bool,
 ) -> Result<Vec<DependencyResult>> {
-    let needle_set: HashSet<String> = needles.iter().map(|n| n.to_lowercase()).collect();
+    let needle_set: IndexSet<String> = needles.iter().map(|n| n.to_lowercase()).collect();
 
     // Build name→PackageInfo lookup
     let pkg_map: BTreeMap<String, &PackageInfo> = packages
@@ -243,7 +244,7 @@ fn get_dependents_forward(
 
     if recursive {
         // Recursive: BFS from needles upward to root, building a tree
-        let mut visited: HashSet<String> = HashSet::new();
+        let mut visited: IndexSet<String> = IndexSet::new();
         let mut results: Vec<DependencyResult> = Vec::new();
 
         for needle in needles {
@@ -318,8 +319,8 @@ fn recurse_dependents(
     packages: &[PackageInfo],
     needle: &str,
     pkg_map: &BTreeMap<String, &PackageInfo>,
-    visited: &mut HashSet<String>,
-    _original_needles: &HashSet<String>,
+    visited: &mut IndexSet<String>,
+    _original_needles: &IndexSet<String>,
 ) -> Vec<DependencyResult> {
     let _ = pkg_map; // kept for potential future use
     let direct = collect_direct_requires(packages, needle);
@@ -545,7 +546,7 @@ pub fn print_table(results: &[DependencyResult], console: &mozart_core::console:
         .max()
         .unwrap_or(0);
 
-    let mut seen: HashSet<String> = HashSet::new();
+    let mut seen: IndexSet<String> = IndexSet::new();
     for r in results {
         let key = format!(
             "{}|{}|{}|{}",

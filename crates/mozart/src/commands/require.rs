@@ -1,4 +1,5 @@
 use clap::Args;
+use indexmap::IndexMap;
 use mozart_core::console::Verbosity;
 use mozart_core::console_format;
 use mozart_core::package::{self, Stability};
@@ -7,7 +8,6 @@ use mozart_registry::lockfile;
 use mozart_registry::packagist;
 use mozart_registry::resolver::{self, PlatformConfig, ResolveRequest};
 use mozart_registry::version;
-use std::collections::HashMap;
 use std::io::{BufRead, IsTerminal, Write};
 
 #[derive(Args)]
@@ -133,7 +133,7 @@ pub struct RequireArgs {
 /// Returns a list of `"vendor/package:constraint"` strings that the user confirmed,
 /// or an empty vec if the user typed nothing / pressed Ctrl-D immediately.
 async fn interactive_search_packages(
-    already_required: &std::collections::HashSet<String>,
+    already_required: &indexmap::IndexSet<String>,
     preferred_stability: Stability,
     fixed: bool,
     repo_cache: &mozart_registry::cache::Cache,
@@ -359,8 +359,7 @@ pub async fn execute(
         let raw_check = package::read_from_file(&composer_path)?;
 
         // Build set of already-required packages
-        let mut already_required: std::collections::HashSet<String> =
-            std::collections::HashSet::new();
+        let mut already_required: indexmap::IndexSet<String> = indexmap::IndexSet::new();
         for k in raw_check.require.keys() {
             already_required.insert(k.to_lowercase());
         }
@@ -636,7 +635,7 @@ pub async fn execute(
         require_dev,
         include_dev: dev_mode,
         minimum_stability,
-        stability_flags: HashMap::new(),
+        stability_flags: IndexMap::new(),
         prefer_stable,
         prefer_lowest: args.prefer_lowest,
         platform: PlatformConfig::new(),
@@ -645,7 +644,7 @@ pub async fn execute(
         repositories: std::sync::Arc::new(
             mozart_registry::repository::RepositorySet::with_packagist(repo_cache.clone()),
         ),
-        temporary_constraints: HashMap::new(),
+        temporary_constraints: IndexMap::new(),
         raw_repositories: raw.repositories.clone(),
         root_provide: raw
             .provide
@@ -1036,7 +1035,7 @@ mod tests {
             require_dev: vec![],
             include_dev: false,
             minimum_stability: Stability::Stable,
-            stability_flags: HashMap::new(),
+            stability_flags: IndexMap::new(),
             prefer_stable: true,
             prefer_lowest: false,
             platform: PlatformConfig::new(),
@@ -1050,10 +1049,10 @@ mod tests {
                     ),
                 ),
             ),
-            temporary_constraints: HashMap::new(),
+            temporary_constraints: IndexMap::new(),
             raw_repositories: vec![],
-            root_provide: HashMap::new(),
-            root_replace: HashMap::new(),
+            root_provide: IndexMap::new(),
+            root_replace: IndexMap::new(),
         };
 
         let resolved = resolver::resolve(&request)
@@ -1106,7 +1105,7 @@ mod tests {
             require_dev: vec![],
             include_dev: false,
             minimum_stability: Stability::Stable,
-            stability_flags: HashMap::new(),
+            stability_flags: IndexMap::new(),
             prefer_stable: true,
             prefer_lowest: false,
             platform: PlatformConfig::new(),
@@ -1120,10 +1119,10 @@ mod tests {
                     ),
                 ),
             ),
-            temporary_constraints: HashMap::new(),
+            temporary_constraints: IndexMap::new(),
             raw_repositories: vec![],
-            root_provide: HashMap::new(),
-            root_replace: HashMap::new(),
+            root_provide: IndexMap::new(),
+            root_replace: IndexMap::new(),
         };
 
         let resolved = resolver::resolve(&request)

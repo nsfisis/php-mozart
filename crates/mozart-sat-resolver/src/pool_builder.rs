@@ -1,5 +1,6 @@
 use crate::pool::{Pool, PoolLink, PoolPackageInput};
-use std::collections::{HashSet, VecDeque};
+use indexmap::IndexSet;
+use std::collections::VecDeque;
 
 /// Builder for constructing a Pool from package metadata.
 ///
@@ -10,13 +11,13 @@ pub struct PoolBuilder {
     /// Packages to add to the pool.
     inputs: Vec<PoolPackageInput>,
     /// Names already added (to avoid duplicates).
-    added: HashSet<String>,
+    added: IndexSet<String>,
     /// Queue of package names that need to be explored.
     pending_names: VecDeque<String>,
     /// Package names that have already been explored (returned by next_pending).
-    explored_names: HashSet<String>,
+    explored_names: IndexSet<String>,
     /// Specific platform packages to ignore (from `--ignore-platform-req=name`).
-    ignore_platform_reqs: HashSet<String>,
+    ignore_platform_reqs: IndexSet<String>,
     /// When true, ignore every platform package (php, ext-*, lib-*, composer-*).
     /// Mirrors `--ignore-platform-reqs` (no value).
     ignore_all_platform_reqs: bool,
@@ -26,16 +27,16 @@ impl PoolBuilder {
     pub fn new() -> Self {
         PoolBuilder {
             inputs: Vec::new(),
-            added: HashSet::new(),
+            added: IndexSet::new(),
             pending_names: VecDeque::new(),
-            explored_names: HashSet::new(),
-            ignore_platform_reqs: HashSet::new(),
+            explored_names: IndexSet::new(),
+            ignore_platform_reqs: IndexSet::new(),
             ignore_all_platform_reqs: false,
         }
     }
 
     /// Set platform requirements to ignore during exploration.
-    pub fn set_ignore_platform_reqs(&mut self, names: HashSet<String>) {
+    pub fn set_ignore_platform_reqs(&mut self, names: IndexSet<String>) {
         self.ignore_platform_reqs = names;
     }
 

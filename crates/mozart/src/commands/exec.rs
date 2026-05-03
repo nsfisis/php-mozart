@@ -171,8 +171,7 @@ fn get_binaries(working_dir: &Path, bin_dir: &Path) -> Vec<(String, bool)> {
     // Collect from root composer.json bin entries
     let composer_json_path = working_dir.join("composer.json");
     if let Ok(root) = mozart_core::package::read_from_file(&composer_json_path) {
-        let existing: std::collections::HashSet<&str> =
-            binaries.iter().map(|(n, _)| n.as_str()).collect();
+        let existing: indexmap::IndexSet<&str> = binaries.iter().map(|(n, _)| n.as_str()).collect();
         let mut local: Vec<String> = root
             .bin
             .iter()

@@ -1,7 +1,8 @@
+use indexmap::IndexSet;
 use mozart_class_map_generator::{scan_classmap_dirs, scan_psr_for_classmap};
 use mozart_registry::installed::InstalledPackages;
 use mozart_registry::lockfile::LockedPackage;
-use std::collections::{BTreeMap, HashSet};
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 // Embed Composer PHP files from the submodule at compile time.
@@ -470,7 +471,7 @@ fn generate_platform_check(
     packages: &[LockedPackage],
     root_require: Option<&serde_json::Value>,
     mode: &PlatformCheckMode,
-    dev_package_names: &HashSet<String>,
+    dev_package_names: &IndexSet<String>,
 ) -> Option<String> {
     if matches!(mode, PlatformCheckMode::Disabled) {
         return None;
@@ -934,7 +935,7 @@ pub fn generate(config: &AutoloadConfig) -> anyhow::Result<GenerateResult> {
     }
 
     // 4a. Generate platform_check.php if needed
-    let dev_package_names_set: HashSet<String> = installed
+    let dev_package_names_set: IndexSet<String> = installed
         .dev_package_names
         .iter()
         .map(|n| n.to_lowercase())

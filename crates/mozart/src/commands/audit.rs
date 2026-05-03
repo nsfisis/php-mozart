@@ -187,7 +187,7 @@ fn load_installed_packages(working_dir: &Path, no_dev: bool) -> anyhow::Result<V
     let vendor_dir = working_dir.join("vendor");
     let installed = mozart_registry::installed::InstalledPackages::read(&vendor_dir)?;
 
-    let dev_names: std::collections::HashSet<String> = installed
+    let dev_names: indexmap::IndexSet<String> = installed
         .dev_package_names
         .iter()
         .map(|n| n.to_lowercase())
@@ -257,7 +257,7 @@ fn filter_advisories(
     ignore_severity: &[String],
     console: &mozart_core::console::Console,
 ) -> BTreeMap<String, Vec<MatchedAdvisory>> {
-    let ignore_set: std::collections::HashSet<String> =
+    let ignore_set: indexmap::IndexSet<String> =
         ignore_severity.iter().map(|s| s.to_lowercase()).collect();
 
     let mut result: BTreeMap<String, Vec<MatchedAdvisory>> = BTreeMap::new();

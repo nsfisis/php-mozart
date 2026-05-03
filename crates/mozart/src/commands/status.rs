@@ -1,7 +1,7 @@
 use clap::Args;
+use indexmap::IndexMap;
 use mozart_core::console::Verbosity;
 use sha1::{Digest, Sha1};
-use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 #[derive(Args)]
@@ -293,8 +293,8 @@ fn make_temp_dir(package_name: &str) -> anyhow::Result<PathBuf> {
 /// Recursively hash all files in a directory.
 ///
 /// Returns a map from relative path string to SHA-1 hex digest.
-fn hash_directory(dir: &Path) -> anyhow::Result<HashMap<String, String>> {
-    let mut map = HashMap::new();
+fn hash_directory(dir: &Path) -> anyhow::Result<IndexMap<String, String>> {
+    let mut map = IndexMap::new();
     hash_dir_recursive(dir, dir, &mut map)?;
     Ok(map)
 }
@@ -302,7 +302,7 @@ fn hash_directory(dir: &Path) -> anyhow::Result<HashMap<String, String>> {
 fn hash_dir_recursive(
     root: &Path,
     current: &Path,
-    map: &mut HashMap<String, String>,
+    map: &mut IndexMap<String, String>,
 ) -> anyhow::Result<()> {
     let entries = match std::fs::read_dir(current) {
         Ok(e) => e,
@@ -337,8 +337,8 @@ fn hash_dir_recursive(
 
 /// Compare two hash maps (original vs installed) and return a list of changes.
 fn compute_diff(
-    original: &HashMap<String, String>,
-    installed: &HashMap<String, String>,
+    original: &IndexMap<String, String>,
+    installed: &IndexMap<String, String>,
 ) -> Vec<FileChange> {
     let mut changes: Vec<FileChange> = Vec::new();
 
@@ -418,7 +418,7 @@ mod tests {
 
     #[test]
     fn test_compute_diff_no_changes() {
-        let mut map: HashMap<String, String> = HashMap::new();
+        let mut map: IndexMap<String, String> = IndexMap::new();
         map.insert("src/Foo.php".to_string(), "abc123".to_string());
         map.insert("src/Bar.php".to_string(), "def456".to_string());
 
@@ -430,10 +430,10 @@ mod tests {
 
     #[test]
     fn test_compute_diff_modified() {
-        let mut original: HashMap<String, String> = HashMap::new();
+        let mut original: IndexMap<String, String> = IndexMap::new();
         original.insert("src/Foo.php".to_string(), "abc123".to_string());
 
-        let mut installed: HashMap<String, String> = HashMap::new();
+        let mut installed: IndexMap<String, String> = IndexMap::new();
         installed.insert("src/Foo.php".to_string(), "xyz999".to_string());
 
         let changes = compute_diff(&original, &installed);
@@ -446,9 +446,9 @@ mod tests {
 
     #[test]
     fn test_compute_diff_added() {
-        let original: HashMap<String, String> = HashMap::new();
+        let original: IndexMap<String, String> = IndexMap::new();
 
-        let mut installed: HashMap<String, String> = HashMap::new();
+        let mut installed: IndexMap<String, String> = IndexMap::new();
         installed.insert("src/NewFile.php".to_string(), "aabbcc".to_string());
 
         let changes = compute_diff(&original, &installed);
@@ -461,10 +461,10 @@ mod tests {
 
     #[test]
     fn test_compute_diff_removed() {
-        let mut original: HashMap<String, String> = HashMap::new();
+        let mut original: IndexMap<String, String> = IndexMap::new();
         original.insert("src/OldFile.php".to_string(), "112233".to_string());
 
-        let installed: HashMap<String, String> = HashMap::new();
+        let installed: IndexMap<String, String> = IndexMap::new();
 
         let changes = compute_diff(&original, &installed);
         assert_eq!(changes.len(), 1);
@@ -476,12 +476,12 @@ mod tests {
 
     #[test]
     fn test_compute_diff_mixed() {
-        let mut original: HashMap<String, String> = HashMap::new();
+        let mut original: IndexMap<String, String> = IndexMap::new();
         original.insert("src/Unchanged.php".to_string(), "same".to_string());
         original.insert("src/Modified.php".to_string(), "old".to_string());
         original.insert("src/Removed.php".to_string(), "gone".to_string());
 
-        let mut installed: HashMap<String, String> = HashMap::new();
+        let mut installed: IndexMap<String, String> = IndexMap::new();
         installed.insert("src/Unchanged.php".to_string(), "same".to_string());
         installed.insert("src/Modified.php".to_string(), "new".to_string());
         installed.insert("src/Added.php".to_string(), "extra".to_string());

@@ -1,7 +1,7 @@
 use crate::error::SolverBugError;
 use crate::pool::{Literal, PackageId, literal_to_package_id};
 use crate::rule_set::RuleId;
-use std::collections::HashMap;
+use indexmap::IndexMap;
 
 /// A decision entry: which literal was decided and which rule caused it.
 #[derive(Debug, Clone)]
@@ -16,7 +16,7 @@ pub struct Decision {
 pub struct Decisions {
     /// Package ID → signed level. Positive = install, negative = uninstall.
     /// The absolute value is the decision level.
-    decision_map: HashMap<PackageId, i32>,
+    decision_map: IndexMap<PackageId, i32>,
     /// Queue of decisions in order.
     decision_queue: Vec<Decision>,
 }
@@ -24,7 +24,7 @@ pub struct Decisions {
 impl Decisions {
     pub fn new() -> Self {
         Decisions {
-            decision_map: HashMap::new(),
+            decision_map: IndexMap::new(),
             decision_queue: Vec::new(),
         }
     }

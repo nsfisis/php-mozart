@@ -1,4 +1,5 @@
 use clap::Args;
+use indexmap::IndexMap;
 use mozart_core::console_format;
 use mozart_core::package::{self, Stability};
 use mozart_core::validation;
@@ -7,7 +8,6 @@ use mozart_registry::lockfile;
 use mozart_registry::packagist;
 use mozart_registry::resolver::{self, PlatformConfig, ResolveRequest};
 use mozart_registry::version;
-use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 #[derive(Args)]
@@ -413,7 +413,7 @@ pub async fn execute(
         require_dev,
         include_dev: dev_mode,
         minimum_stability: proj_minimum_stability,
-        stability_flags: HashMap::new(),
+        stability_flags: IndexMap::new(),
         prefer_stable: composer_prefer_stable,
         prefer_lowest: false,
         platform: PlatformConfig::new(),
@@ -422,7 +422,7 @@ pub async fn execute(
         repositories: std::sync::Arc::new(
             mozart_registry::repository::RepositorySet::with_packagist(repo_cache.clone()),
         ),
-        temporary_constraints: HashMap::new(),
+        temporary_constraints: IndexMap::new(),
         raw_repositories: raw.repositories.clone(),
         root_provide: raw
             .provide
