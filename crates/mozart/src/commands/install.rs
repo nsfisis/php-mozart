@@ -196,8 +196,11 @@ pub fn compute_operations<'a>(
             Some(entry) if entry.version != pkg.version => Action::Update,
             // Same version present — Composer's Transaction also fires an
             // UpdateOperation when the source/dist reference moved (e.g. a
-            // root require pinned a new commit via `dev-main#abcd`).
+            // root require pinned a new commit via `dev-main#abcd`), or
+            // when the `abandoned` flag / replacement target drifted (so
+            // installed.json picks up the fresh metadata).
             Some(entry) if !installed_refs_match_locked(entry, pkg) => Action::Update,
+            Some(entry) if !installed_abandoned_matches_locked(entry, pkg) => Action::Update,
             Some(_) => Action::Skip,
         };
         ops.push((pkg, action));
@@ -410,6 +413,32 @@ fn installed_refs_match_locked(
     let locked_source_ref = locked.source.as_ref().and_then(|s| s.reference.as_deref());
     let locked_dist_ref = locked.dist.as_ref().and_then(|d| d.reference.as_deref());
     installed_source_ref == locked_source_ref && installed_dist_ref == locked_dist_ref
+}
+
+/// Reduce a serialized `abandoned` value to the (isAbandoned, replacement)
+/// pair Composer compares in `Transaction::calculateOperations`:
+/// `isAbandoned()` is the truthy cast of the field, and
+/// `getReplacementPackage()` is the field itself when it's a string, else
+/// null. Missing / `false` / `null` collapse to "not abandoned"; `true` is
+/// abandoned with no replacement; a string is both.
+fn abandoned_state(v: Option<&serde_json::Value>) -> (bool, Option<&str>) {
+    match v {
+        Some(serde_json::Value::Bool(b)) => (*b, None),
+        Some(serde_json::Value::String(s)) => (true, Some(s.as_str())),
+        _ => (false, None),
+    }
+}
+
+/// Mirror the `isAbandoned()` / `getReplacementPackage()` leg of Composer's
+/// same-version update check: when an installed package's `abandoned` flag
+/// (or its replacement target) drifts from the lock, fire an UpdateOperation
+/// so vendor/composer/installed.json is rewritten with the fresh value.
+fn installed_abandoned_matches_locked(
+    entry: &installed::InstalledPackageEntry,
+    locked: &lockfile::LockedPackage,
+) -> bool {
+    abandoned_state(entry.extra_fields.get("abandoned"))
+        == abandoned_state(locked.extra_fields.get("abandoned"))
 }
 
 /// Convert a LockedPackage to an InstalledPackageEntry.

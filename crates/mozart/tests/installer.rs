@@ -259,7 +259,7 @@ installer_fixture!(install_aliased_alias);
 installer_fixture!(install_branch_alias_composer_repo);
 installer_fixture!(install_dev);
 installer_fixture!(install_dev_using_dist);
-installer_fixture!(install_forces_reinstall_if_abandon_changes, ignore);
+installer_fixture!(install_forces_reinstall_if_abandon_changes);
 installer_fixture!(install_from_incomplete_lock);
 installer_fixture!(install_from_incomplete_lock_with_ignore, ignore);
 installer_fixture!(install_from_lock_removes_package);
