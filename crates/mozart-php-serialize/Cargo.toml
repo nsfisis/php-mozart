@@ -1,0 +1,4 @@
+[package]
+name = "mozart-php-serialize"
+version.workspace = true
+edition.workspace = true

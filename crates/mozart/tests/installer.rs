@@ -25,6 +25,17 @@ fn fixtures_dir() -> PathBuf {
         .join("../../composer/tests/Composer/Test/Fixtures/installer")
 }
 
+/// Composer's PHPUnit `InstallerTest::setUp()` runs `chdir(__DIR__)` so that
+/// relative `type: path` repo URLs (`Fixtures/functional/.../pkg`) resolve
+/// against `composer/tests/Composer/Test/`. The Rust harness can't chdir
+/// safely (cargo test runs cases in parallel), so it threads the same
+/// directory through `install/update::run` as the path-repo resolution base
+/// instead. Production callers of `run()` pass `None` and resolve against
+/// `working_dir`, matching Composer's "use cwd" behaviour.
+fn path_repo_base_for_fixtures() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../composer/tests/Composer/Test")
+}
+
 /// Rewrite `file://foobar` URLs in COMPOSER content to absolute fixture
 /// paths. Mirrors `composer/tests/Composer/Test/InstallerTest.php:540-542`:
 /// when a fixture's repository entry uses a relative `file://` URL, anchor
@@ -101,12 +112,29 @@ async fn run_fixture_in_process(test: &ParsedTest) -> anyhow::Result<InProcessRu
     let repositories = Arc::new(RepositorySet::empty());
     let mut executor = TraceRecorderExecutor::new();
 
+    let path_repo_base = path_repo_base_for_fixtures();
     let outcome: anyhow::Result<()> = match &cli.command {
         Some(Commands::Install(args)) => {
-            install::run(root, args, &console, repositories, &mut executor).await
+            install::run(
+                root,
+                Some(&path_repo_base),
+                args,
+                &console,
+                repositories,
+                &mut executor,
+            )
+            .await
         }
         Some(Commands::Update(args)) => {
-            update::run(root, args, &console, repositories, &mut executor).await
+            update::run(
+                root,
+                Some(&path_repo_base),
+                args,
+                &console,
+                repositories,
+                &mut executor,
+            )
+            .await
         }
         other => anyhow::bail!("unsupported run command in fixture: {:?}", other.is_some()),
     };
@@ -217,8 +245,8 @@ macro_rules! installer_fixture {
 
 installer_fixture!(abandoned_listed);
 installer_fixture!(alias_in_complex_constraints, ignore);
-installer_fixture!(alias_in_lock, ignore);
-installer_fixture!(alias_in_lock2, ignore);
+installer_fixture!(alias_in_lock);
+installer_fixture!(alias_in_lock2);
 installer_fixture!(alias_on_unloadable_package);
 installer_fixture!(alias_solver_problems);
 installer_fixture!(alias_solver_problems2);
@@ -292,7 +320,7 @@ installer_fixture!(partial_update_from_lock_with_root_alias, ignore);
 installer_fixture!(partial_update_installs_from_lock_even_missing, ignore);
 installer_fixture!(partial_update_keeps_older_dep_if_still_required);
 installer_fixture!(partial_update_keeps_older_dep_if_still_required_with_provide);
-installer_fixture!(partial_update_loads_root_aliases_for_path_repos, ignore);
+installer_fixture!(partial_update_loads_root_aliases_for_path_repos);
 installer_fixture!(partial_update_security_advisory_matching_locked_dep);
 installer_fixture!(partial_update_security_advisory_matching_locked_dep_with_dependencies);
 installer_fixture!(partial_update_with_dependencies_provide);

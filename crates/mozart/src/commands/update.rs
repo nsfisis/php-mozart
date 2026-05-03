@@ -395,8 +395,15 @@ pub fn apply_partial_update(
             let name_lower = pkg.name.to_lowercase();
             // If this package is NOT in the update set and we have an old locked version,
             // swap it back to the old version to prevent unintended changes.
+            //
+            // Exception: path-repo packages always reload from disk (Composer's
+            // PoolBuilder treats them as canonical sources, not lock-bound), so
+            // the resolver-picked version must survive the partial-update
+            // swap-back. The earlier locked-set construction already excludes
+            // them from `locked_packages` for the same reason; mirror it here.
             if !update_set.contains(&name_lower)
                 && let Some(old_pkg) = old_pkg_map.get(&name_lower)
+                && old_pkg.dist.as_ref().map(|d| d.dist_type.as_str()) != Some("path")
             {
                 pkg.version = old_pkg.version.clone();
                 pkg.version_normalized = locked_version_normalized(old_pkg);
@@ -964,7 +971,15 @@ pub async fn execute(
         mozart_registry::cache::Cache::files(&cache_config),
     );
     let working_dir = super::install::resolve_working_dir(cli);
-    run(&working_dir, args, console, repositories, &mut executor).await
+    run(
+        &working_dir,
+        None,
+        args,
+        console,
+        repositories,
+        &mut executor,
+    )
+    .await
 }
 
 /// Library entry point — pure logic, no CLI / Cli access.
@@ -973,8 +988,17 @@ pub async fn execute(
 /// (Composer's `'packagist' => false` test config) and a tracing
 /// `InstallerExecutor`, then call this function directly to exercise the
 /// update flow without spawning the binary.
+///
+/// `path_repo_base_override` is for the in-process test harness only:
+/// Composer's PHP test suite `chdir(__DIR__)` so that `type: path` repo URLs
+/// like `Fixtures/.../pkg` resolve against the test directory, but the
+/// Rust harness writes `composer.json` into a per-test tempdir, so we need a
+/// way to anchor relative path-repo URLs somewhere other than `working_dir`.
+/// Production callers pass `None` to use `working_dir`, matching Composer's
+/// "resolve relative to cwd" behaviour.
 pub async fn run(
     working_dir: &std::path::Path,
+    path_repo_base_override: Option<&std::path::Path>,
     args: &UpdateArgs,
     console: &mozart_core::console::Console,
     repositories: std::sync::Arc<mozart_registry::repository::RepositorySet>,
@@ -1011,6 +1035,21 @@ pub async fn run(
     let composer_json = package::read_from_file(&composer_json_path)?;
     composer_json.validate_root_does_not_self_require()?;
     let composer_json_content = std::fs::read_to_string(&composer_json_path)?;
+
+    // Expand `type: path` repos into synthetic `type: package` entries so the
+    // resolver and lockfile see them as ordinary inline packages. The
+    // original `composer_json.repositories` is preserved for writeback paths
+    // (e.g. `--bump-after-update` rewrites composer.json) — only the cloned
+    // `composer_json_expanded` carries the synthetic entries.
+    let path_repo_base = path_repo_base_override.unwrap_or(working_dir);
+    let composer_json_expanded = {
+        let mut clone = composer_json.clone();
+        clone.repositories = mozart_registry::path_repository::expand_path_repositories(
+            &clone.repositories,
+            path_repo_base,
+        );
+        clone
+    };
 
     let lock_path = working_dir.join("composer.lock");
     let vendor_dir = working_dir.join("vendor");
@@ -1135,7 +1174,7 @@ pub async fn run(
                     // (line 524: when a propagated package's `require`
                     // points at a `skippedLoad` entry, the dep is unlocked
                     // and re-loaded).
-                    let repo_requires = collect_repo_requires(&composer_json.repositories);
+                    let repo_requires = collect_repo_requires(&composer_json_expanded.repositories);
                     let updated: IndexSet<String> = expand_packages(
                         &raw_packages,
                         Some(&l),
@@ -1334,7 +1373,7 @@ pub async fn run(
         ignore_platform_req_list: args.ignore_platform_req.clone(),
         repositories: repositories.clone(),
         temporary_constraints,
-        raw_repositories: composer_json.repositories.clone(),
+        raw_repositories: composer_json_expanded.repositories.clone(),
         root_provide: composer_json
             .provide
             .iter()
@@ -1428,7 +1467,7 @@ pub async fn run(
             }
             Some(lock) => {
                 // 1. Expand wildcards
-                let repo_requires = collect_repo_requires(&composer_json.repositories);
+                let repo_requires = collect_repo_requires(&composer_json_expanded.repositories);
                 let mut expanded = expand_packages(
                     &effective_packages,
                     Some(lock),
@@ -1509,7 +1548,7 @@ pub async fn run(
     let mut new_lock = lockfile::generate_lock_file(&lockfile::LockFileGenerationRequest {
         resolved_packages: resolved,
         composer_json_content: composer_json_content.clone(),
-        composer_json: composer_json.clone(),
+        composer_json: composer_json_expanded.clone(),
         include_dev: true,
         repositories: repositories.clone(),
         previous_lock: old_lock.clone(),

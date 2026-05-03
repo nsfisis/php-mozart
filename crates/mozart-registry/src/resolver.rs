@@ -265,7 +265,12 @@ fn normalize_root_alias_atom(atom: &str) -> Option<String> {
     if let Some(rest) = lower.strip_prefix("dev-") {
         return Some(format!("dev-{rest}"));
     }
-    parse_normalized(trimmed).map(|_| trimmed.to_string())
+    // Stable numeric atoms (e.g. `1.1.1`) need to come back in the
+    // four-segment form `Version::Display` produces, so the alias
+    // matcher's `input.version != alias.version_normalized` check lines
+    // up with pool inputs (which carry the 4-segment normalized form).
+    // Returning the raw input here would silently never match.
+    parse_normalized(trimmed).map(|v| v.to_string())
 }
 
 /// A root-level alias declared via the `require: "X as Y"` shorthand on the

@@ -6,6 +6,7 @@ pub mod installed;
 pub mod installer_executor;
 pub mod lockfile;
 pub mod packagist;
+pub mod path_repository;
 pub mod repository;
 pub mod repository_filter;
 pub mod resolver;

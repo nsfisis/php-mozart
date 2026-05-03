@@ -13,6 +13,7 @@ mozart-class-map-generator = { path = "crates/mozart-class-map-generator" }
 mozart-core = { path = "crates/mozart-core" }
 mozart-console-macros = { path = "crates/mozart-console-macros" }
 mozart-metadata-minifier = { path = "crates/mozart-metadata-minifier" }
+mozart-php-serialize = { path = "crates/mozart-php-serialize" }
 mozart-registry = { path = "crates/mozart-registry" }
 mozart-sat-resolver = { path = "crates/mozart-sat-resolver" }
 mozart-semver = { path = "crates/mozart-semver" }

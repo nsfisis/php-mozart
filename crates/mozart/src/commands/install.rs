@@ -1325,7 +1325,15 @@ pub async fn execute(
         ));
     let mut executor = FilesystemExecutor::new(mozart_registry::cache::Cache::files(&cache_config));
     let working_dir = resolve_working_dir(cli);
-    run(&working_dir, args, console, repositories, &mut executor).await
+    run(
+        &working_dir,
+        None,
+        args,
+        console,
+        repositories,
+        &mut executor,
+    )
+    .await
 }
 
 /// Library entry point — pure logic, no `Cli` access.
@@ -1334,8 +1342,13 @@ pub async fn execute(
 /// `'packagist' => false` test config) and a tracing `InstallerExecutor`,
 /// then call this function directly to exercise the install flow without
 /// spawning the binary.
+///
+/// `path_repo_base_override` is the in-process test escape hatch for relative
+/// `type: path` repo URLs — see [`super::update::run`] for the full rationale.
+/// Production callers pass `None` to anchor against `working_dir`.
 pub async fn run(
     working_dir: &Path,
+    path_repo_base_override: Option<&Path>,
     args: &InstallArgs,
     console: &mozart_core::console::Console,
     repositories: std::sync::Arc<mozart_registry::repository::RepositorySet>,
@@ -1420,8 +1433,15 @@ pub async fn run(
         };
         // Forward the caller's repositories + executor so in-process tests
         // see their mocks honored across the install→update fallback edge.
-        return super::update::run(working_dir, &update_args, console, repositories, executor)
-            .await;
+        return super::update::run(
+            working_dir,
+            path_repo_base_override,
+            &update_args,
+            console,
+            repositories,
+            executor,
+        )
+        .await;
     }
     let lock = lockfile::LockFile::read_from_file(&lock_path)?;
 

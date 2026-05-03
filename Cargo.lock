@@ -1179,6 +1179,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "mozart-php-serialize"
+version = "0.1.0"
+
+[[package]]
 name = "mozart-registry"
 version = "0.1.0"
 dependencies = [
@@ -1190,6 +1194,7 @@ dependencies = [
  "md5",
  "mozart-core",
  "mozart-metadata-minifier",
+ "mozart-php-serialize",
  "mozart-sat-resolver",
  "mozart-semver",
  "mozart-vcs",
