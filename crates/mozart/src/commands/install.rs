@@ -1150,15 +1150,22 @@ pub async fn install_from_lock(
             // Declared at loop scope so the borrows outlive the await call.
             let from_full_pretty_buf;
             let to_full_pretty_buf;
-            let op = match action {
-                Action::Skip => continue,
+            let op: Option<PackageOperation<'_>> = match action {
+                // Skip still falls through to the alias-mark block below:
+                // Composer's `Transaction::calculateOperations` emits a
+                // MarkAliasInstalled even when the target package itself is
+                // already present, as long as the alias hasn't been recorded
+                // in `installed.json` yet (`presentAliasMap` miss). This
+                // matters for `update --lock` from a lock that introduced a
+                // new root alias on a previously-installed package.
+                Action::Skip => None,
                 Action::Install => {
                     console.info(&console_format!(
                         "  - Installing <info>{}</info> (<comment>{}</comment>)",
                         pkg.name,
                         pkg.version
                     ));
-                    PackageOperation::Install { package: pkg }
+                    Some(PackageOperation::Install { package: pkg })
                 }
                 Action::Update => {
                     console.info(&console_format!(
@@ -1188,15 +1195,17 @@ pub async fn install_from_lock(
                         from_full_pretty_buf = String::new();
                         to_full_pretty_buf = format_full_pretty_version(pkg);
                     }
-                    PackageOperation::Update {
+                    Some(PackageOperation::Update {
                         from_version,
                         from_full_pretty: &from_full_pretty_buf,
                         to_full_pretty: &to_full_pretty_buf,
                         package: pkg,
-                    }
+                    })
                 }
             };
-            executor.install_package(op, &exec_ctx).await?;
+            if let Some(op) = op {
+                executor.install_package(op, &exec_ctx).await?;
+            }
 
             // After the target install/update, emit MarkAliasInstalled for any
             // aliases whose `package`+`version` (the target's pretty version)

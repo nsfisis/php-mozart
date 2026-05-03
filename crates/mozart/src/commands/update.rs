@@ -1071,8 +1071,10 @@ pub async fn run(
     let lock_path = working_dir.join("composer.lock");
     let vendor_dir = working_dir.join("vendor");
 
-    // Step 4: Handle --lock mode (early return)
-    // Fix 4: Reject combining --lock with specific package names
+    // Step 4: Reject combining --lock with specific package names. Mirrors
+    // Composer's `UpdateCommand::execute` line 222: the lock flag and a
+    // package selection are mutually exclusive because `--lock` rebuilds
+    // the entire lock from its current pins, not a subset of it.
     if args.lock {
         let non_magic: Vec<_> = args
             .packages
@@ -1084,21 +1086,21 @@ pub async fn run(
                 "You cannot simultaneously update only a selection of packages and regenerate the lock file metadata."
             );
         }
-        return handle_lock_mode(&lock_path, &composer_json_content, args.dry_run, console);
     }
 
-    // The bare-keyword forms `update lock`, `update nothing`, and
-    // `update mirrors` (when used alone) trigger Composer's
+    // Both `--lock` and the bare-keyword forms (`update lock`, `update
+    // nothing`, `update mirrors`) trigger Composer's
     // `setUpdateMirrors(true)` flow: every locked package is re-required
     // pinned at its exact version, so the resolver picks the same
-    // versions but freshly loads source/dist metadata from the repository.
-    // Tracked separately from the require/require-dev pipeline below so
-    // root composer.json requires are intentionally skipped.
-    let update_mirrors = !args.packages.is_empty()
-        && args
-            .packages
-            .iter()
-            .all(|p| matches!(p.to_lowercase().as_str(), "lock" | "nothing" | "mirrors"));
+    // versions but freshly loads source/dist metadata from the
+    // repository. Mirrors `UpdateCommand::execute` line 219:
+    // `$updateMirrors = $input->getOption('lock') || ...`.
+    let update_mirrors = args.lock
+        || (!args.packages.is_empty()
+            && args
+                .packages
+                .iter()
+                .all(|p| matches!(p.to_lowercase().as_str(), "lock" | "nothing" | "mirrors")));
 
     let dev_mode = !args.no_dev;
 
@@ -1274,11 +1276,37 @@ pub async fn run(
         let mut req: Vec<(String, String)> = Vec::new();
         let mut req_dev: Vec<(String, String)> = Vec::new();
         if let Ok(lock) = lockfile::LockFile::read_from_file(&lock_path) {
+            // Re-attach any `as <alias>` clause the lock recorded for this
+            // package so the resolver materializes the same alias entry it
+            // would on a fresh install. Without this, mirrors mode would
+            // pin `c/aliased ==1.0.0` while a transitive dep requires
+            // `c/aliased 2.0.0`, with no alias bridging the two — and the
+            // solver fails despite the lock being internally consistent.
+            // Mirrors Composer's `Locker::getLockedRepository` pulling lock
+            // aliases into the solver's pool.
+            let alias_for = |name: &str| -> Option<String> {
+                lock.aliases
+                    .iter()
+                    .find(|a| a.package.eq_ignore_ascii_case(name))
+                    .map(|a| a.alias.clone())
+            };
+            // The alias-bearing form uses the bare `<version>` instead of
+            // `==<version>` because the resolver's alias extractor only
+            // accepts a parsable LEFT atom; `==1.0.0` would fail
+            // `VersionParser::normalize` and the alias pair would be
+            // dropped silently. A bare `1.0.0` constraint matches the same
+            // exact version as `==1.0.0`, so the lock pin is preserved.
+            let pin_with_alias = |name: &str, version: &str| -> String {
+                match alias_for(name) {
+                    Some(alias) => format!("{version} as {alias}"),
+                    None => format!("=={version}"),
+                }
+            };
             for pkg in &lock.packages {
-                req.push((pkg.name.clone(), format!("=={}", pkg.version)));
+                req.push((pkg.name.clone(), pin_with_alias(&pkg.name, &pkg.version)));
             }
             for pkg in lock.packages_dev.iter().flatten() {
-                req_dev.push((pkg.name.clone(), format!("=={}", pkg.version)));
+                req_dev.push((pkg.name.clone(), pin_with_alias(&pkg.name, &pkg.version)));
             }
         }
         (req, req_dev)
@@ -1815,48 +1843,6 @@ pub async fn run(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// --lock mode handler
-// ─────────────────────────────────────────────────────────────────────────────
-
-/// Handle the `--lock` mode: refresh the content-hash of the existing lock file.
-///
-/// Reads the existing composer.lock, computes the new content-hash from the current
-/// composer.json, and writes the updated lock file back to disk if the hash differs.
-fn handle_lock_mode(
-    lock_path: &std::path::Path,
-    composer_json_content: &str,
-    dry_run: bool,
-    console: &mozart_core::console::Console,
-) -> anyhow::Result<()> {
-    if !lock_path.exists() {
-        return Err(mozart_core::exit_code::bail(
-            mozart_core::exit_code::LOCK_FILE_INVALID,
-            "No lock file found. Run `mozart update` to generate one.",
-        ));
-    }
-
-    let mut lock = lockfile::LockFile::read_from_file(lock_path)?;
-
-    let new_hash = lockfile::LockFile::compute_content_hash(composer_json_content)?;
-
-    if new_hash == lock.content_hash {
-        console.info("Lock file is already up to date");
-        return Ok(());
-    }
-
-    lock.content_hash = new_hash;
-
-    if !dry_run {
-        lock.write_to_file(lock_path)?;
-        console.info("Lock file hash updated successfully.");
-    } else {
-        console.info("Would update lock file hash.");
-    }
-
-    Ok(())
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
 // Tests
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -2196,86 +2182,6 @@ mod tests {
         assert_eq!(psr.version, "3.0.0");
     }
 
-    // ──────────── lock mode helpers ────────────
-
-    #[test]
-    fn test_handle_lock_mode_updates_hash() {
-        let dir = tempfile::tempdir().unwrap();
-        let lock_path = dir.path().join("composer.lock");
-
-        // Write an existing lock with a known hash
-        let mut lock = minimal_lock(vec![]);
-        lock.content_hash = "old_hash_value".to_string();
-        lock.write_to_file(&lock_path).unwrap();
-
-        // Composer.json content that will produce a different hash
-        let composer_json_content = r#"{"name": "test/project", "require": {"psr/log": "^3.0"}}"#;
-
-        let console = mozart_core::console::Console {
-            interactive: false,
-            verbosity: mozart_core::console::Verbosity::Normal,
-            decorated: false,
-        };
-        let result = handle_lock_mode(&lock_path, composer_json_content, false, &console);
-        assert!(result.is_ok());
-
-        // Read back and verify hash changed
-        let updated_lock = lockfile::LockFile::read_from_file(&lock_path).unwrap();
-        assert_ne!(updated_lock.content_hash, "old_hash_value");
-        let expected_hash =
-            lockfile::LockFile::compute_content_hash(composer_json_content).unwrap();
-        assert_eq!(updated_lock.content_hash, expected_hash);
-    }
-
-    #[test]
-    fn test_handle_lock_mode_no_change_when_hash_matches() {
-        let dir = tempfile::tempdir().unwrap();
-        let lock_path = dir.path().join("composer.lock");
-
-        let composer_json_content = r#"{"name": "test/project", "require": {}}"#;
-        let correct_hash = lockfile::LockFile::compute_content_hash(composer_json_content).unwrap();
-
-        let mut lock = minimal_lock(vec![]);
-        lock.content_hash = correct_hash.clone();
-        lock.write_to_file(&lock_path).unwrap();
-
-        let console = mozart_core::console::Console {
-            interactive: false,
-            verbosity: mozart_core::console::Verbosity::Normal,
-            decorated: false,
-        };
-        let result = handle_lock_mode(&lock_path, composer_json_content, false, &console);
-        assert!(result.is_ok());
-
-        // Hash should not have changed
-        let reloaded = lockfile::LockFile::read_from_file(&lock_path).unwrap();
-        assert_eq!(reloaded.content_hash, correct_hash);
-    }
-
-    #[test]
-    fn test_handle_lock_mode_dry_run_does_not_write() {
-        let dir = tempfile::tempdir().unwrap();
-        let lock_path = dir.path().join("composer.lock");
-
-        let mut lock = minimal_lock(vec![]);
-        lock.content_hash = "original_hash".to_string();
-        lock.write_to_file(&lock_path).unwrap();
-
-        let composer_json_content = r#"{"name": "test/project", "require": {"psr/log": "^3.0"}}"#;
-
-        let console = mozart_core::console::Console {
-            interactive: false,
-            verbosity: mozart_core::console::Verbosity::Normal,
-            decorated: false,
-        };
-        let result = handle_lock_mode(&lock_path, composer_json_content, true, &console);
-        assert!(result.is_ok());
-
-        // Hash should NOT have changed (dry_run=true)
-        let reloaded = lockfile::LockFile::read_from_file(&lock_path).unwrap();
-        assert_eq!(reloaded.content_hash, "original_hash");
-    }
-
     // ──────────── glob_matches ────────────
 
     #[test]
@@ -2605,34 +2511,5 @@ mod tests {
         assert!(!lock.content_hash.is_empty());
         assert!(!lock.packages.is_empty());
         assert!(lock.packages.iter().any(|p| p.name == "monolog/monolog"));
-    }
-
-    #[test]
-    fn test_update_lock_only_e2e() {
-        use tempfile::tempdir;
-
-        let dir = tempdir().unwrap();
-        let lock_path = dir.path().join("composer.lock");
-
-        // Write a lock with an outdated hash
-        let mut lock = minimal_lock(vec![]);
-        lock.content_hash = "outdated_hash".to_string();
-        lock.write_to_file(&lock_path).unwrap();
-
-        let composer_json_content = r#"{"name": "test/project", "require": {"psr/log": "^3.0"}}"#;
-        let expected_hash =
-            lockfile::LockFile::compute_content_hash(composer_json_content).unwrap();
-
-        let console = mozart_core::console::Console {
-            interactive: false,
-            verbosity: mozart_core::console::Verbosity::Normal,
-            decorated: false,
-        };
-        handle_lock_mode(&lock_path, composer_json_content, false, &console).unwrap();
-
-        let updated = lockfile::LockFile::read_from_file(&lock_path).unwrap();
-        assert_eq!(updated.content_hash, expected_hash);
-        // The packages should be unchanged (lock mode doesn't resolve)
-        assert!(updated.packages.is_empty());
     }
 }

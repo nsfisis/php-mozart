@@ -316,7 +316,7 @@ installer_fixture!(
     ignore
 );
 installer_fixture!(partial_update_from_lock);
-installer_fixture!(partial_update_from_lock_with_root_alias, ignore);
+installer_fixture!(partial_update_from_lock_with_root_alias);
 installer_fixture!(partial_update_installs_from_lock_even_missing, ignore);
 installer_fixture!(partial_update_keeps_older_dep_if_still_required);
 installer_fixture!(partial_update_keeps_older_dep_if_still_required_with_provide);
