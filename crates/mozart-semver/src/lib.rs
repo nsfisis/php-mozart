@@ -846,7 +846,12 @@ fn parse_wildcard(s: &str) -> Result<VersionConstraint, String> {
 
     // Strip trailing .*
     let base = s.trim_end_matches(".*");
-    if base.is_empty() {
+    // `*.*` (and `*.*.*` etc.) collapse to plain `*` after stripping every
+    // trailing `.*` segment — the major slot is itself a wildcard, so the
+    // whole constraint is unconstrained. Composer's `parseConstraint`
+    // reaches the same conclusion via its `xRange` step (any `x` anchor in
+    // a position after a `*` is dropped).
+    if base.is_empty() || base == "*" {
         return Ok(VersionConstraint::Single(Constraint::Any));
     }
 

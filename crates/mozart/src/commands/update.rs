@@ -471,10 +471,18 @@ fn glob_segment_matches_inner(pattern: &[u8], text: &[u8]) -> bool {
 pub fn expand_wildcards(
     specifiers: &[String],
     lock: &lockfile::LockFile,
+    root_requires: &IndexSet<String>,
     console: &mozart_core::console::Console,
 ) -> Vec<String> {
-    // Collect all locked package names (prod + dev)
-    let all_names: Vec<String> = lock
+    // Collect all locked package names (prod + dev) plus the current root
+    // require names. Mirrors Composer's
+    // `PoolBuilder::warnAboutNonMatchingUpdateAllowList`, which accepts a
+    // pattern as soon as it matches *either* a locked package or a root
+    // require (so `update new/pkg` works even when `new/pkg` was just
+    // added to composer.json and isn't in the lock yet). Names appear in
+    // declaration order; deduplication happens implicitly via `seen`
+    // below.
+    let mut all_names: Vec<String> = lock
         .packages
         .iter()
         .map(|p| p.name.to_lowercase())
@@ -485,31 +493,40 @@ pub fn expand_wildcards(
                 .map(|p| p.name.to_lowercase()),
         )
         .collect();
+    for name in root_requires {
+        let lower = name.to_lowercase();
+        if !all_names.contains(&lower) {
+            all_names.push(lower);
+        }
+    }
 
     let mut result: Vec<String> = Vec::new();
     let mut seen: IndexSet<String> = IndexSet::new();
 
     for spec in specifiers {
-        if spec.contains('*') {
-            // Expand the wildcard against the lock
-            let mut matched = false;
-            for name in &all_names {
-                if glob_matches(spec, name) && seen.insert(name.clone()) {
-                    result.push(name.clone());
-                    matched = true;
-                }
+        // Mirror Composer's `BasePackage::packageNameToRegexp` + the
+        // `isUpdateAllowed` walk over locked packages: the pattern is
+        // matched case-insensitively against each locked name, with `*`
+        // expanded to `.*` and every other character treated literally.
+        // Specs that match no locked package are warned about and dropped
+        // — for a non-wildcard spec like `notexact/Test` that's typo'd
+        // against `notexact/testpackage`, this prevents Mozart from
+        // forwarding the bogus name into the resolver (which would then
+        // fail looking it up). Genuinely new packages are still picked up
+        // by the resolver via `composer.json` root requires regardless of
+        // whether they appear in `update_packages`.
+        let mut matched = false;
+        for name in &all_names {
+            if glob_matches(spec, name) && seen.insert(name.clone()) {
+                result.push(name.clone());
+                matched = true;
             }
-            if !matched {
-                console.info(&console::warning(&format!(
-                    "No locked packages matched the pattern '{}'. Pattern will be ignored.",
-                    spec
-                )));
-            }
-        } else {
-            let lower = spec.to_lowercase();
-            if seen.insert(lower.clone()) {
-                result.push(lower);
-            }
+        }
+        if !matched {
+            console.info(&console::warning(&format!(
+                "Package '{}' listed for update is not in the lock file. Specifier will be ignored.",
+                spec
+            )));
         }
     }
 
@@ -754,7 +771,7 @@ pub fn expand_packages(
     console: &mozart_core::console::Console,
 ) -> Vec<String> {
     let mut packages: Vec<String> = if let Some(lock) = lock {
-        expand_wildcards(specifiers, lock, console)
+        expand_wildcards(specifiers, lock, root_requires, console)
     } else {
         // No lock file: pass through as-is (no wildcards can be resolved)
         specifiers.iter().map(|s| s.to_lowercase()).collect()
@@ -2240,8 +2257,12 @@ mod tests {
     #[test]
     fn test_expand_wildcards_no_wildcard_passthrough() {
         let lock = minimal_lock(vec![make_locked_package("psr/log", "3.0.0")]);
+        let root_requires: IndexSet<String> = ["psr/log", "nonexistent/pkg"]
+            .into_iter()
+            .map(String::from)
+            .collect();
         let specs = vec!["psr/log".to_string(), "nonexistent/pkg".to_string()];
-        let result = expand_wildcards(&specs, &lock, &test_console());
+        let result = expand_wildcards(&specs, &lock, &root_requires, &test_console());
         assert_eq!(result, vec!["psr/log", "nonexistent/pkg"]);
     }
 
@@ -2253,7 +2274,8 @@ mod tests {
             make_locked_package("monolog/monolog", "3.8.0"),
         ]);
         let specs = vec!["symfony/*".to_string()];
-        let mut result = expand_wildcards(&specs, &lock, &test_console());
+        let root_requires: IndexSet<String> = IndexSet::new();
+        let mut result = expand_wildcards(&specs, &lock, &root_requires, &test_console());
         result.sort();
         assert_eq!(result, vec!["symfony/console", "symfony/http-kernel"]);
     }
@@ -2262,8 +2284,9 @@ mod tests {
     fn test_expand_wildcards_no_match_emits_warning() {
         let lock = minimal_lock(vec![make_locked_package("psr/log", "3.0.0")]);
         let specs = vec!["unknown/*".to_string()];
+        let root_requires: IndexSet<String> = IndexSet::new();
         // Should return empty (no match), no panic
-        let result = expand_wildcards(&specs, &lock, &test_console());
+        let result = expand_wildcards(&specs, &lock, &root_requires, &test_console());
         assert!(result.is_empty());
     }
 
@@ -2271,7 +2294,8 @@ mod tests {
     fn test_expand_wildcards_deduplication() {
         let lock = minimal_lock(vec![make_locked_package("psr/log", "3.0.0")]);
         let specs = vec!["psr/log".to_string(), "psr/log".to_string()];
-        let result = expand_wildcards(&specs, &lock, &test_console());
+        let root_requires: IndexSet<String> = IndexSet::new();
+        let result = expand_wildcards(&specs, &lock, &root_requires, &test_console());
         assert_eq!(result.len(), 1);
         assert_eq!(result[0], "psr/log");
     }
@@ -2281,7 +2305,8 @@ mod tests {
         let mut lock = minimal_lock(vec![make_locked_package("psr/log", "3.0.0")]);
         lock.packages_dev = Some(vec![make_locked_package("phpunit/phpunit", "11.0.0")]);
         let specs = vec!["phpunit/*".to_string()];
-        let result = expand_wildcards(&specs, &lock, &test_console());
+        let root_requires: IndexSet<String> = IndexSet::new();
+        let result = expand_wildcards(&specs, &lock, &root_requires, &test_console());
         assert_eq!(result, vec!["phpunit/phpunit"]);
     }
 

@@ -494,6 +494,85 @@ impl LockFileGenerationRequest {
             .find(|cpkg| cpkg.name == name && cpkg.version.version_normalized == version_normalized)
             .map(|cpkg| cpkg.version)
     }
+
+    /// Reuse `previous_lock` as a metadata source when no repository can
+    /// answer for `(name, version_normalized)`. Mirrors the slice of
+    /// Composer's `PoolBuilder` flow that re-loads locked-only packages
+    /// straight off the lock: a partial update keeping a package at its
+    /// locked version doesn't need to re-fetch its metadata, and the
+    /// repositories may no longer carry that version (e.g. an inline
+    /// `type: package` repo only listing the new release).
+    fn previous_lock_lookup(
+        &self,
+        name: &str,
+        version_normalized: &str,
+    ) -> Option<PackagistVersion> {
+        let prev = self.previous_lock.as_ref()?;
+        prev.packages
+            .iter()
+            .chain(prev.packages_dev.iter().flatten())
+            .find(|p| {
+                p.name.eq_ignore_ascii_case(name)
+                    && p.version_normalized
+                        .as_deref()
+                        .map(|v| v == version_normalized)
+                        .unwrap_or_else(|| {
+                            mozart_semver::Version::parse(&p.version)
+                                .map(|v| v.to_string() == version_normalized)
+                                .unwrap_or(false)
+                        })
+            })
+            .map(locked_package_to_packagist_version)
+    }
+}
+
+/// Synthesize a `PackagistVersion` from a `LockedPackage`. Used by
+/// `previous_lock_lookup` so the metadata loop has a complete view even
+/// when the surrounding repositories have moved on from a locked version.
+fn locked_package_to_packagist_version(pkg: &LockedPackage) -> PackagistVersion {
+    PackagistVersion {
+        version: pkg.version.clone(),
+        version_normalized: pkg
+            .version_normalized
+            .clone()
+            .unwrap_or_else(|| pkg.version.clone()),
+        require: pkg.require.clone(),
+        replace: pkg.replace.clone(),
+        provide: pkg.provide.clone(),
+        conflict: pkg.conflict.clone(),
+        dist: pkg.dist.as_ref().map(|d| PackagistDist {
+            dist_type: d.dist_type.clone(),
+            url: d.url.clone(),
+            reference: d.reference.clone(),
+            shasum: d.shasum.clone(),
+        }),
+        source: pkg.source.as_ref().map(|s| PackagistSource {
+            source_type: s.source_type.clone(),
+            url: s.url.clone(),
+            reference: s.reference.clone(),
+        }),
+        require_dev: pkg.require_dev.clone(),
+        suggest: pkg.suggest.clone(),
+        package_type: pkg.package_type.clone(),
+        autoload: pkg.autoload.clone(),
+        autoload_dev: pkg.autoload_dev.clone(),
+        license: pkg.license.clone(),
+        description: pkg.description.clone(),
+        homepage: pkg.homepage.clone(),
+        keywords: pkg.keywords.clone(),
+        authors: pkg.authors.clone(),
+        support: None,
+        funding: None,
+        time: pkg.time.clone(),
+        extra: pkg.extra_fields.get("extra").cloned(),
+        notification_url: pkg
+            .extra_fields
+            .get("notification-url")
+            .and_then(|v| v.as_str())
+            .map(String::from),
+        default_branch: false,
+        abandoned: pkg.extra_fields.get("abandoned").cloned(),
+    }
 }
 
 /// Convert a `PackagistSource` to a `LockedSource`.
@@ -854,6 +933,11 @@ pub async fn generate_lock_file(request: &LockFileGenerationRequest) -> anyhow::
 
         if let Some(cv) = request.composer_repo_lookup(&pkg.name, &pkg.version_normalized) {
             package_metadata.insert(pkg.name.clone(), cv);
+            continue;
+        }
+
+        if let Some(prev) = request.previous_lock_lookup(&pkg.name, &pkg.version_normalized) {
+            package_metadata.insert(pkg.name.clone(), prev);
             continue;
         }
 
