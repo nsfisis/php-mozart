@@ -67,13 +67,21 @@ impl<'a> RuleSetGenerator<'a> {
     /// so the requirement is trivially satisfied without forcing a real
     /// provider. Without this, Mozart picks up an inline `provided/pkg` from
     /// the repository even though the root claims to fulfill it itself.
+    ///
+    /// Returns the generated rule set together with the list of root requires
+    /// that have no matching providers in the pool. Mirrors Composer's
+    /// `Solver::checkForRootRequireProblems`: a root require with zero
+    /// providers does not produce a SAT rule (so the solver would otherwise
+    /// succeed with an empty plan), but it must still be reported as an
+    /// unresolvable problem.
     pub fn generate(
         mut self,
         requires: &HashMap<String, Option<String>>,
         fixed_packages: &[PackageId],
         root_provides: &HashMap<String, String>,
         root_replaces: &HashMap<String, String>,
-    ) -> RuleSet {
+    ) -> (RuleSet, Vec<(String, Option<String>)>) {
+        let mut missing_root_requires: Vec<(String, Option<String>)> = Vec::new();
         // Process fixed packages
         for &pkg_id in fixed_packages {
             if self.pool.is_unacceptable_fixed_package(pkg_id) {
@@ -130,6 +138,8 @@ impl<'a> RuleSetGenerator<'a> {
                     },
                 );
                 self.rules.add(rule, RuleType::Request);
+            } else {
+                missing_root_requires.push((name.clone(), constraint.clone()));
             }
         }
 
@@ -154,7 +164,7 @@ impl<'a> RuleSetGenerator<'a> {
         // Add conflict rules
         self.add_conflict_rules();
 
-        self.rules
+        (self.rules, missing_root_requires)
     }
 
     /// Add rules for a package and its transitive dependencies.
@@ -388,7 +398,7 @@ mod tests {
         requires.insert("a/a".to_string(), None);
 
         let generator = RuleSetGenerator::new(&mut pool);
-        let rules = generator.generate(&requires, &[], &HashMap::new(), &HashMap::new());
+        let (rules, _) = generator.generate(&requires, &[], &HashMap::new(), &HashMap::new());
 
         // Should have a request rule: (1 | 2)
         let request_count = rules.iter_type(RuleType::Request).count();
@@ -428,7 +438,7 @@ mod tests {
         requires.insert("a/a".to_string(), None);
 
         let generator = RuleSetGenerator::new(&mut pool);
-        let rules = generator.generate(&requires, &[], &HashMap::new(), &HashMap::new());
+        let (rules, _) = generator.generate(&requires, &[], &HashMap::new(), &HashMap::new());
 
         // Should have:
         // 1. Request rule: (1) — root requires a/a
@@ -441,7 +451,8 @@ mod tests {
         let mut pool = Pool::new(vec![make_input("php", "8.2.0.0")], vec![]);
 
         let generator = RuleSetGenerator::new(&mut pool);
-        let rules = generator.generate(&HashMap::new(), &[1], &HashMap::new(), &HashMap::new());
+        let (rules, _) =
+            generator.generate(&HashMap::new(), &[1], &HashMap::new(), &HashMap::new());
 
         // Should have an assertion rule: (1)
         let request_rules: Vec<_> = rules.iter_type(RuleType::Request).collect();

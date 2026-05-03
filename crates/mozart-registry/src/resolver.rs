@@ -861,12 +861,37 @@ pub async fn resolve(request: &ResolveRequest) -> Result<Vec<ResolvedPackage>, R
     let mut generator = RuleSetGenerator::new(&mut pool);
     generator.set_ignore_platform_reqs(ignore_set);
     generator.set_ignore_all_platform_reqs(request.ignore_platform_reqs);
-    let rules = generator.generate(
+    let (rules, missing_root_requires) = generator.generate(
         &root_requires,
         &fixed_ids,
         &request.root_provide,
         &request.root_replace,
     );
+
+    // Mirror Composer's `Solver::checkForRootRequireProblems`: a root require
+    // with no providers in the pool yields no SAT rule, so the solver would
+    // succeed with an empty plan. Surface it as an unresolvable problem
+    // instead, matching Composer's exit code 2 behaviour.
+    if !missing_root_requires.is_empty() {
+        let problems: Vec<String> = missing_root_requires
+            .iter()
+            .map(|(name, constraint)| match constraint.as_deref() {
+                Some(c) if !c.is_empty() => format!(
+                    "    - Root composer.json requires {name} {c}, no matching package found."
+                ),
+                _ => {
+                    format!("    - Root composer.json requires {name}, no matching package found.")
+                }
+            })
+            .collect();
+        let report = problems
+            .into_iter()
+            .enumerate()
+            .map(|(i, msg)| format!("  Problem {}\n{}", i + 1, msg))
+            .collect::<Vec<_>>()
+            .join("\n");
+        return Err(ResolveError::NoSolution(report));
+    }
 
     // Create policy and solve
     let policy = DefaultPolicy::new(request.prefer_stable, request.prefer_lowest);
@@ -1265,7 +1290,7 @@ mod tests {
         requires.insert("foo/foo".to_string(), Some("^1.0".to_string()));
 
         let generator = RuleSetGenerator::new(&mut pool);
-        let rules = generator.generate(&requires, &[], &HashMap::new(), &HashMap::new());
+        let (rules, _) = generator.generate(&requires, &[], &HashMap::new(), &HashMap::new());
 
         let policy = DefaultPolicy::default();
         let solver = Solver::new(rules, &pool, policy, HashSet::new());
