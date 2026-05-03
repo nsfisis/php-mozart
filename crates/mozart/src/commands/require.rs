@@ -667,6 +667,7 @@ pub async fn execute(
         block_abandoned: false,
         root_branch_alias: None,
         preferred_versions: indexmap::IndexMap::new(),
+        block_insecure: false,
     };
 
     // Print header messages
@@ -1079,6 +1080,7 @@ mod tests {
             block_abandoned: false,
             root_branch_alias: None,
             preferred_versions: indexmap::IndexMap::new(),
+            block_insecure: false,
         };
 
         let resolved = resolver::resolve(&request)
@@ -1158,6 +1160,7 @@ mod tests {
             block_abandoned: false,
             root_branch_alias: None,
             preferred_versions: indexmap::IndexMap::new(),
+            block_insecure: false,
         };
 
         let resolved = resolver::resolve(&request)

@@ -294,10 +294,7 @@ installer_fixture!(partial_update_keeps_older_dep_if_still_required);
 installer_fixture!(partial_update_keeps_older_dep_if_still_required_with_provide);
 installer_fixture!(partial_update_loads_root_aliases_for_path_repos, ignore);
 installer_fixture!(partial_update_security_advisory_matching_locked_dep);
-installer_fixture!(
-    partial_update_security_advisory_matching_locked_dep_with_dependencies,
-    ignore
-);
+installer_fixture!(partial_update_security_advisory_matching_locked_dep_with_dependencies);
 installer_fixture!(partial_update_with_dependencies_provide);
 installer_fixture!(partial_update_with_dependencies_replace);
 installer_fixture!(partial_update_with_deps_warns_root);
@@ -402,11 +399,8 @@ installer_fixture!(update_reference);
 installer_fixture!(update_reference_picks_latest);
 installer_fixture!(update_removes_unused_locked_dep);
 installer_fixture!(update_requiring_decision_reverts_and_learning_positive_literals);
-installer_fixture!(update_security_advisory_matching_direct_dependency, ignore);
-installer_fixture!(
-    update_security_advisory_matching_indirect_dependency,
-    ignore
-);
+installer_fixture!(update_security_advisory_matching_direct_dependency);
+installer_fixture!(update_security_advisory_matching_indirect_dependency);
 installer_fixture!(update_syncs_outdated);
 installer_fixture!(update_to_empty_from_blank);
 installer_fixture!(update_to_empty_from_locked);

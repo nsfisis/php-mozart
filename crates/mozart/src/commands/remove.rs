@@ -279,6 +279,7 @@ pub async fn execute(
         block_abandoned: false,
         root_branch_alias: None,
         preferred_versions: indexmap::IndexMap::new(),
+        block_insecure: false,
     };
 
     // Print header messages
@@ -567,6 +568,7 @@ async fn remove_unused(
         block_abandoned: false,
         root_branch_alias: None,
         preferred_versions: indexmap::IndexMap::new(),
+        block_insecure: false,
     };
 
     console.info("Resolving dependencies to detect unused packages...");
@@ -925,6 +927,7 @@ mod tests {
             block_abandoned: false,
             root_branch_alias: None,
             preferred_versions: indexmap::IndexMap::new(),
+            block_insecure: false,
         };
         let resolved = resolve(&request)
             .await
@@ -986,6 +989,7 @@ mod tests {
             block_abandoned: false,
             root_branch_alias: None,
             preferred_versions: indexmap::IndexMap::new(),
+            block_insecure: false,
         };
         let resolved2 = resolve(&request2)
             .await

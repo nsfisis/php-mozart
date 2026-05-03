@@ -707,6 +707,7 @@ fn parse_repositories(repos: &[String]) -> anyhow::Result<Vec<RawRepository>> {
                 only: None,
                 exclude: None,
                 canonical: None,
+                security_advisories: None,
             });
         } else {
             // Plain URL
@@ -717,6 +718,7 @@ fn parse_repositories(repos: &[String]) -> anyhow::Result<Vec<RawRepository>> {
                 only: None,
                 exclude: None,
                 canonical: None,
+                security_advisories: None,
             });
         }
     }

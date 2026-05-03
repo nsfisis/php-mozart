@@ -81,6 +81,7 @@ mod tests {
             only,
             exclude,
             canonical,
+            security_advisories: None,
         }
     }
 

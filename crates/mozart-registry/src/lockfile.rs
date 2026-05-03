@@ -1681,6 +1681,7 @@ mod tests {
             block_abandoned: false,
             root_branch_alias: None,
             preferred_versions: IndexMap::new(),
+            block_insecure: false,
         };
 
         let resolved = resolve(&resolve_request)

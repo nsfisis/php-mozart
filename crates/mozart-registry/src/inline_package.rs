@@ -77,6 +77,64 @@ pub fn collect_inline_packages(repositories: &[RawRepository]) -> Vec<InlinePack
     packages
 }
 
+/// One advisory extracted from a repository's `security-advisories` block.
+/// Carries enough to filter affected versions out of the pool when
+/// `config.audit.block-insecure` is set, matching the slice of Composer's
+/// `SecurityAdvisoryPoolFilter` Mozart needs for resolution-time blocking.
+#[derive(Debug, Clone)]
+pub struct SecurityAdvisory {
+    pub advisory_id: String,
+    pub affected_versions: String,
+}
+
+/// Collect every `security-advisories` entry across all repositories.
+/// Returned map is keyed by lowercase package name so the resolver can
+/// look up affected versions in lockstep with the rest of its
+/// case-insensitive name handling. Repository order is preserved within
+/// each list.
+pub fn collect_security_advisories(
+    repositories: &[RawRepository],
+) -> indexmap::IndexMap<String, Vec<SecurityAdvisory>> {
+    let mut out: indexmap::IndexMap<String, Vec<SecurityAdvisory>> = indexmap::IndexMap::new();
+    for repo in repositories {
+        let Some(advisories) = &repo.security_advisories else {
+            continue;
+        };
+        let Some(map) = advisories.as_object() else {
+            continue;
+        };
+        for (pkg_name, list) in map {
+            let Some(arr) = list.as_array() else {
+                continue;
+            };
+            for entry in arr {
+                let Some(obj) = entry.as_object() else {
+                    continue;
+                };
+                let Some(affected) = obj
+                    .get("affectedVersions")
+                    .and_then(|v| v.as_str())
+                    .map(String::from)
+                else {
+                    continue;
+                };
+                let advisory_id = obj
+                    .get("advisoryId")
+                    .and_then(|v| v.as_str())
+                    .map(String::from)
+                    .unwrap_or_default();
+                out.entry(pkg_name.to_lowercase())
+                    .or_default()
+                    .push(SecurityAdvisory {
+                        advisory_id,
+                        affected_versions: affected,
+                    });
+            }
+        }
+    }
+    out
+}
+
 fn parse_inline_package(value: &serde_json::Value) -> Option<InlinePackage> {
     let obj = value.as_object()?;
     let name = obj.get("name")?.as_str()?.to_string();
@@ -114,6 +172,7 @@ mod tests {
             only: None,
             exclude: None,
             canonical: None,
+            security_advisories: None,
         }
     }
 
@@ -151,6 +210,7 @@ mod tests {
             only: None,
             exclude: None,
             canonical: None,
+            security_advisories: None,
         }];
         assert!(collect_inline_packages(&repos).is_empty());
     }

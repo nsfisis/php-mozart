@@ -120,6 +120,7 @@ mod tests {
             only: None,
             exclude: None,
             canonical: None,
+            security_advisories: None,
         }
     }
 
@@ -157,6 +158,7 @@ mod tests {
             only: None,
             exclude: None,
             canonical: None,
+            security_advisories: None,
         }];
         assert!(collect_composer_packages(&repos).is_empty());
     }

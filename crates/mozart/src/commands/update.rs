@@ -1249,6 +1249,17 @@ pub async fn run(
         .and_then(|a| a.get("block-abandoned"))
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
+    // Mirrors `Composer\Advisory\AuditConfig::fromConfig`: `block-insecure`
+    // turns the security-advisory data into a hard filter — affected
+    // versions are dropped from the pool, so a root require with no
+    // unaffected candidates fails resolution before any side effects.
+    let block_insecure = composer_json
+        .extra_fields
+        .get("config")
+        .and_then(|c| c.get("audit"))
+        .and_then(|a| a.get("block-insecure"))
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
 
     // For `--minimal-changes`, feed the lock's pinned versions into the
     // resolver as preferred-version overrides. The packages the user
@@ -1327,6 +1338,7 @@ pub async fn run(
         block_abandoned,
         root_branch_alias: extract_root_branch_alias(&composer_json),
         preferred_versions,
+        block_insecure,
     };
 
     // Step 6: Print header and run resolver
@@ -1496,10 +1508,9 @@ pub async fn run(
     // doesn't masquerade as a content update. When the source or dist type
     // changed (`hg` → `git`, etc.), the new entry is left as-is so the
     // change still emits the install-step Update operation.
-    if update_mirrors
-        && let Some(old) = &old_lock {
-            apply_mirror_ref_overrides(&mut new_lock, old);
-        }
+    if update_mirrors && let Some(old) = &old_lock {
+        apply_mirror_ref_overrides(&mut new_lock, old);
+    }
 
     // Step 10: Compute and print change report
     let changes = compute_update_changes(old_lock.as_ref(), &new_lock, dev_mode);
@@ -2476,6 +2487,7 @@ mod tests {
             block_abandoned: false,
             root_branch_alias: None,
             preferred_versions: IndexMap::new(),
+            block_insecure: false,
         };
 
         let resolved = resolve(&request).await.expect("Resolution should succeed");

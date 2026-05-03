@@ -566,6 +566,19 @@ pub struct RawRepository {
     /// `FilterRepository::loadPackages`'s `namesFound = []` reset.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub canonical: Option<bool>,
+
+    /// Inline `security-advisories` block on a repository entry. Maps package
+    /// name → list of advisory objects whose `affectedVersions` constraint
+    /// (and `advisoryId`) is read by the resolver when
+    /// `config.audit.block-insecure` is set: matching versions are filtered
+    /// out of the pool before solving, mirroring Composer's
+    /// `SecurityAdvisoryPoolFilter`.
+    #[serde(
+        rename = "security-advisories",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub security_advisories: Option<serde_json::Value>,
 }
 
 /// Default root-package name when `composer.json` omits the `name` field.
@@ -677,6 +690,7 @@ mod tests {
             only: None,
             exclude: None,
             canonical: None,
+            security_advisories: None,
         }];
 
         let mut psr4 = BTreeMap::new();

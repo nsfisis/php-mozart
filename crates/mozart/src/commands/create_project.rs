@@ -445,6 +445,7 @@ pub async fn execute(
         block_abandoned: false,
         root_branch_alias: None,
         preferred_versions: indexmap::IndexMap::new(),
+        block_insecure: false,
     };
 
     console.info("Resolving dependencies...");

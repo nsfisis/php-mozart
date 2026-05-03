@@ -16,7 +16,7 @@ use mozart_sat_resolver::{
     DefaultPolicy, PoolBuilder, PoolLink, PoolPackageInput, RuleSetGenerator, Solver,
     make_pool_links,
 };
-use mozart_semver::Version;
+use mozart_semver::{Version, VersionConstraint};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Version helpers
@@ -757,6 +757,10 @@ pub struct ResolveRequest {
     /// a package when a constraint actually forces a different version.
     /// Empty for a normal full update.
     pub preferred_versions: IndexMap<String, String>,
+    /// When true, drop versions the repositories advertise as covered by an
+    /// active security advisory before solving. Mirrors Composer's
+    /// `SecurityAdvisoryPoolFilter` under `config.audit.block-insecure: true`.
+    pub block_insecure: bool,
 }
 
 /// Full data for a lock-pinned package, used in partial updates. Carried on
@@ -1150,12 +1154,37 @@ pub async fn resolve(request: &ResolveRequest) -> Result<Vec<ResolvedPackage>, R
             .or_default()
             .push(ipkg);
     }
+    // Build the security-advisory filter once. Mirrors Composer's
+    // `SecurityAdvisoryPoolFilter`: when `block-insecure` is on, every
+    // version listed by a repository's `security-advisories` is removed
+    // from the pool before solving.
+    let security_advisories =
+        crate::inline_package::collect_security_advisories(&request.raw_repositories);
+    let security_blocks_version = |name: &str, version_normalized: &str| -> bool {
+        if !request.block_insecure {
+            return false;
+        }
+        let Some(advisories) = security_advisories.get(&name.to_lowercase()) else {
+            return false;
+        };
+        let Ok(parsed) = Version::parse(version_normalized) else {
+            return false;
+        };
+        advisories.iter().any(|adv| {
+            VersionConstraint::parse(&adv.affected_versions)
+                .map(|c| c.matches(&parsed))
+                .unwrap_or(false)
+        })
+    };
     let add_inline_for = |name: &str, builder: &mut PoolBuilder| -> bool {
         let Some(packages) = inline_packages_by_name.get(name) else {
             return false;
         };
         for ipkg in packages {
             if request.block_abandoned && is_abandoned(&ipkg.version) {
+                continue;
+            }
+            if security_blocks_version(&ipkg.name, &ipkg.version.version_normalized) {
                 continue;
             }
             let inputs = packagist_to_pool_inputs(
@@ -1861,6 +1890,7 @@ mod tests {
             block_abandoned: false,
             root_branch_alias: None,
             preferred_versions: IndexMap::new(),
+            block_insecure: false,
         };
 
         let result = resolve(&request).await;
