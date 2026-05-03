@@ -636,6 +636,23 @@ fn packagist_version_to_locked_package(name: &str, pv: &PackagistVersion) -> Loc
             serde_json::Value::String(notification_url.clone()),
         );
     }
+    // Propagate `abandoned` so the lock (and downstream installed.json
+    // round-trip) preserves the package's deprecation state. Mirrors
+    // Composer's `ArrayDumper::dump`, which emits the field when truthy
+    // (`true` for "abandoned, no replacement", a string for "abandoned,
+    // use this instead"). `false`/null collapse to "not abandoned" and
+    // are dropped.
+    if let Some(abandoned) = &pv.abandoned {
+        let keep = match abandoned {
+            serde_json::Value::Bool(b) => *b,
+            serde_json::Value::String(s) => !s.is_empty(),
+            serde_json::Value::Null => false,
+            _ => true,
+        };
+        if keep {
+            extra_fields.insert("abandoned".to_string(), abandoned.clone());
+        }
+    }
 
     LockedPackage {
         name: name.to_string(),

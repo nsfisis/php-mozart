@@ -407,7 +407,7 @@ installer_fixture!(
     update_security_advisory_matching_indirect_dependency,
     ignore
 );
-installer_fixture!(update_syncs_outdated, ignore);
+installer_fixture!(update_syncs_outdated);
 installer_fixture!(update_to_empty_from_blank);
 installer_fixture!(update_to_empty_from_locked);
 installer_fixture!(update_with_all_dependencies);
