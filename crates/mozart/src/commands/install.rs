@@ -343,50 +343,144 @@ struct StaleInstalledAlias {
     target_full: String,
 }
 
-/// Walk every `installed.json` entry, expand its `extra.branch-alias` map
-/// into `(target_branch_pretty → alias_pretty)` pairs, and emit a
-/// [`StaleInstalledAlias`] for each pair whose alias version doesn't appear
-/// in the new lock's `aliases[]` block under the same package. Mirrors
-/// Composer's `Transaction::calculateOperations`, which seeds `removeAliasMap`
-/// from the present alias packages and trims it as the result is walked —
-/// whatever's left becomes a `MarkAliasUninstalledOperation`.
-fn collect_stale_installed_aliases(
-    installed: &installed::InstalledPackages,
-    lock_aliases: &[lockfile::LockAlias],
-) -> Vec<StaleInstalledAlias> {
-    let mut stale = Vec::new();
-    for entry in &installed.packages {
-        let Some(branch_alias) = entry
+/// `(package_name_lowercase, alias_pretty)` pairs the *new* lock's packages
+/// will surface — the union of explicit `aliases[]`, `extra.branch-alias`
+/// expansion, and the synthetic `9999999-dev` default-branch alias. Used by
+/// `collect_stale_installed_aliases` to determine which currently-installed
+/// alias packages no longer have a counterpart in the new lock. Mirrors
+/// `Locker::getLockedRepository` running every locked package through
+/// `ArrayLoader`, which surfaces an `AliasPackage` for each branch-alias
+/// entry plus the default-branch fallback.
+fn lock_alias_pretty_pairs(
+    lock: &lockfile::LockFile,
+) -> std::collections::HashSet<(String, String)> {
+    use std::collections::HashSet;
+    let mut set: HashSet<(String, String)> = HashSet::new();
+    for a in &lock.aliases {
+        set.insert((a.package.to_lowercase(), a.alias.clone()));
+    }
+    for pkg in lock
+        .packages
+        .iter()
+        .chain(lock.packages_dev.iter().flatten())
+    {
+        let mut emitted_explicit = false;
+        if let Some(map) = pkg
             .extra_fields
             .get("extra")
             .and_then(|e| e.get("branch-alias"))
             .and_then(|b| b.as_object())
-        else {
-            continue;
-        };
-        for (target_branch, alias_value) in branch_alias {
-            // The map key is the branch name (e.g. `dev-master`); only the
-            // alias for the *currently installed* version applies.
-            if entry.version != *target_branch {
-                continue;
+        {
+            for (source, target) in map {
+                if !source.eq_ignore_ascii_case(&pkg.version) {
+                    continue;
+                }
+                let Some(target_str) = target.as_str() else {
+                    continue;
+                };
+                if !target_str.to_lowercase().ends_with("-dev") {
+                    continue;
+                }
+                set.insert((pkg.name.to_lowercase(), target_str.to_string()));
+                emitted_explicit = true;
             }
-            let Some(alias_pretty) = alias_value.as_str() else {
-                continue;
-            };
-            // Already covered by the new lock under the same package +
-            // alias version → not stale.
-            let still_present = lock_aliases
-                .iter()
-                .any(|a| a.package.eq_ignore_ascii_case(&entry.name) && a.alias == alias_pretty);
-            if still_present {
-                continue;
-            }
-            stale.push(StaleInstalledAlias {
-                name: entry.name.clone(),
-                alias_full: format_full_pretty_with_pretty_for_installed(alias_pretty, entry),
-                target_full: format_full_pretty_version_for_installed(entry),
-            });
         }
+        if emitted_explicit {
+            continue;
+        }
+        let is_default_branch = pkg
+            .extra_fields
+            .get("default-branch")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        if !is_default_branch {
+            continue;
+        }
+        let version_lower = pkg.version.to_lowercase();
+        let is_dev_branch = version_lower.starts_with("dev-") || version_lower.ends_with("-dev");
+        if !is_dev_branch {
+            continue;
+        }
+        set.insert((pkg.name.to_lowercase(), "9999999-dev".to_string()));
+    }
+    set
+}
+
+/// Walk every `installed.json` entry, expand its `extra.branch-alias` map
+/// into `(target_branch_pretty → alias_pretty)` pairs, and emit a
+/// [`StaleInstalledAlias`] for each pair whose alias version doesn't appear
+/// among the new lock's surfaced aliases. Mirrors Composer's
+/// `Transaction::calculateOperations`, which seeds `removeAliasMap` from
+/// the present alias packages and trims it as the result is walked —
+/// whatever's left becomes a `MarkAliasUninstalledOperation`.
+fn collect_stale_installed_aliases(
+    installed: &installed::InstalledPackages,
+    lock: &lockfile::LockFile,
+) -> Vec<StaleInstalledAlias> {
+    let preserved = lock_alias_pretty_pairs(lock);
+    let still_present = |name: &str, alias_pretty: &str| -> bool {
+        preserved.contains(&(name.to_lowercase(), alias_pretty.to_string()))
+    };
+    let mut stale = Vec::new();
+    for entry in &installed.packages {
+        let mut emitted_explicit = false;
+        if let Some(branch_alias) = entry
+            .extra_fields
+            .get("extra")
+            .and_then(|e| e.get("branch-alias"))
+            .and_then(|b| b.as_object())
+        {
+            for (target_branch, alias_value) in branch_alias {
+                // The map key is the branch name (e.g. `dev-master`); only
+                // the alias for the *currently installed* version applies.
+                if entry.version != *target_branch {
+                    continue;
+                }
+                let Some(alias_pretty) = alias_value.as_str() else {
+                    continue;
+                };
+                emitted_explicit = true;
+                if still_present(&entry.name, alias_pretty) {
+                    continue;
+                }
+                stale.push(StaleInstalledAlias {
+                    name: entry.name.clone(),
+                    alias_full: format_full_pretty_with_pretty_for_installed(alias_pretty, entry),
+                    target_full: format_full_pretty_version_for_installed(entry),
+                });
+            }
+        }
+
+        // Synthetic `9999999-dev` default-branch alias. Mirrors
+        // `ArrayLoader::getBranchAlias`'s default-branch fallback: a
+        // `default-branch: true` dev package without an explicit
+        // branch-alias surfaces an AliasPackage at `9999999-dev`. When that
+        // package leaves the lock the alias is also retired.
+        if emitted_explicit {
+            continue;
+        }
+        let is_default_branch = entry
+            .extra_fields
+            .get("default-branch")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        if !is_default_branch {
+            continue;
+        }
+        let version_lower = entry.version.to_lowercase();
+        let is_dev_branch = version_lower.starts_with("dev-") || version_lower.ends_with("-dev");
+        if !is_dev_branch {
+            continue;
+        }
+        const DEFAULT_BRANCH_ALIAS: &str = "9999999-dev";
+        if still_present(&entry.name, DEFAULT_BRANCH_ALIAS) {
+            continue;
+        }
+        stale.push(StaleInstalledAlias {
+            name: entry.name.clone(),
+            alias_full: format_full_pretty_with_pretty_for_installed(DEFAULT_BRANCH_ALIAS, entry),
+            target_full: format_full_pretty_version_for_installed(entry),
+        });
     }
     stale
 }
@@ -864,13 +958,17 @@ pub async fn install_from_lock(
 
         for name in &removals {
             console.info(&console_format!("  - Removing <info>{}</info>", name));
-            let from_version = installed
+            // Mirrors Composer's `UninstallOperation::show`, which renders
+            // the package's `getFullPrettyVersion()` — for dev packages
+            // backed by git/hg that includes the (truncated) source ref.
+            let from_entry = installed
                 .packages
                 .iter()
-                .find(|p| p.name.eq_ignore_ascii_case(name))
-                .map(|p| p.version.as_str())
-                .unwrap_or("");
-            executor.uninstall_package(name, from_version, &exec_ctx)?;
+                .find(|p| p.name.eq_ignore_ascii_case(name));
+            let from_full = from_entry
+                .map(format_full_pretty_version_for_installed)
+                .unwrap_or_default();
+            executor.uninstall_package(name, &from_full, &exec_ctx)?;
         }
 
         // Mirror Composer's `Transaction::moveUninstallsToFront` +
@@ -880,7 +978,7 @@ pub async fn install_from_lock(
         // line so consumers see the alias was retired alongside its target.
         // Detection runs before installs/updates since Composer hoists alias
         // uninstalls to the front of the operations list.
-        let stale_aliases = collect_stale_installed_aliases(&installed, &lock.aliases);
+        let stale_aliases = collect_stale_installed_aliases(&installed, lock);
         for stale in &stale_aliases {
             executor
                 .install_package(
