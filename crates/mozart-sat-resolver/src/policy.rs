@@ -10,6 +10,14 @@ pub struct DefaultPolicy {
     pub prefer_stable: bool,
     /// Whether to prefer lowest versions.
     pub prefer_lowest: bool,
+    /// `name → normalized version` overrides used when more than one
+    /// candidate could satisfy a requirement: a literal pinned at the
+    /// preferred version wins outright over the usual highest/lowest pick.
+    /// Mirrors Composer's `DefaultPolicy::pruneToBestVersion` behavior under
+    /// `--minimal-changes`, where the lock's previously-installed versions
+    /// are passed in so the solver only moves a package when a constraint
+    /// actually forces a different version.
+    pub preferred_versions: Option<IndexMap<String, String>>,
 }
 
 impl DefaultPolicy {
@@ -17,6 +25,19 @@ impl DefaultPolicy {
         DefaultPolicy {
             prefer_stable,
             prefer_lowest,
+            preferred_versions: None,
+        }
+    }
+
+    pub fn with_preferred(
+        prefer_stable: bool,
+        prefer_lowest: bool,
+        preferred_versions: IndexMap<String, String>,
+    ) -> Self {
+        DefaultPolicy {
+            prefer_stable,
+            prefer_lowest,
+            preferred_versions: Some(preferred_versions),
         }
     }
 
@@ -121,6 +142,26 @@ impl DefaultPolicy {
     fn prune_to_best_version(&self, pool: &Pool, literals: &[Literal]) -> Vec<Literal> {
         if literals.is_empty() {
             return vec![];
+        }
+
+        // Mirror Composer's `DefaultPolicy::pruneToBestVersion` short-circuit:
+        // when a preferred version is set for this package and one of the
+        // candidates matches it exactly, that wins over the regular
+        // highest/lowest pick. Falls through otherwise (e.g. the locked
+        // version no longer satisfies the constraint and was filtered out
+        // before reaching this method).
+        if let Some(ref preferred) = self.preferred_versions {
+            let name = pool.literal_to_package(literals[0]).name.clone();
+            if let Some(preferred_ver) = preferred.get(&name) {
+                let preferred_lits: Vec<Literal> = literals
+                    .iter()
+                    .filter(|&&lit| pool.literal_to_package(lit).version == *preferred_ver)
+                    .copied()
+                    .collect();
+                if !preferred_lits.is_empty() {
+                    return preferred_lits;
+                }
+            }
         }
 
         // The first literal is the best after sorting

@@ -1680,6 +1680,7 @@ mod tests {
             locked_packages: Vec::new(),
             block_abandoned: false,
             root_branch_alias: None,
+            preferred_versions: IndexMap::new(),
         };
 
         let resolved = resolve(&resolve_request)

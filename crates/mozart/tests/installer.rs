@@ -245,7 +245,7 @@ installer_fixture!(conflict_with_alias_prevents_update_if_not_required);
 installer_fixture!(conflict_with_all_dependencies_option_dont_recommend_to_use_it);
 installer_fixture!(deduplicate_solver_problems);
 installer_fixture!(disjunctive_multi_constraints);
-installer_fixture!(full_update_minimal_changes, ignore);
+installer_fixture!(full_update_minimal_changes);
 installer_fixture!(github_issues_4319);
 installer_fixture!(github_issues_4795);
 installer_fixture!(github_issues_4795_2);

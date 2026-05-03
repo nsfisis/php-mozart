@@ -1119,6 +1119,30 @@ pub async fn run(
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
 
+    // For `--minimal-changes` without a per-package update list, feed the
+    // lock's pinned versions into the resolver as preferred-version
+    // overrides. Mirrors Composer's
+    // `Installer::createPolicy(forUpdate=true, minimalUpdate=true)` branch.
+    let preferred_versions: IndexMap<String, String> =
+        if args.minimal_changes && raw_packages.is_empty() && lock_path.exists() {
+            match lockfile::LockFile::read_from_file(&lock_path) {
+                Ok(lock) => {
+                    let mut map = IndexMap::new();
+                    for pkg in lock
+                        .packages
+                        .iter()
+                        .chain(lock.packages_dev.iter().flatten())
+                    {
+                        map.insert(pkg.name.to_lowercase(), locked_version_normalized(pkg));
+                    }
+                    map
+                }
+                Err(_) => IndexMap::new(),
+            }
+        } else {
+            IndexMap::new()
+        };
+
     let request = ResolveRequest {
         root_name: composer_json.name.clone(),
         root_version: composer_json.version.clone(),
@@ -1159,6 +1183,7 @@ pub async fn run(
         locked_packages,
         block_abandoned,
         root_branch_alias: extract_root_branch_alias(&composer_json),
+        preferred_versions,
     };
 
     // Step 6: Print header and run resolver
@@ -1294,13 +1319,8 @@ pub async fn run(
                 resolved = apply_partial_update(resolved, lock, &update_packages);
             }
         }
-    } else if args.minimal_changes && update_packages.is_empty() {
-        // Full update with --minimal-changes: pin everything to locked versions
-        // (only updates packages whose constraints have changed in composer.json)
-        if let Some(ref lock) = old_lock {
-            console.info("Minimal changes mode: preserving locked versions where possible.");
-            resolved = apply_minimal_changes(resolved, lock);
-        }
+    } else if args.minimal_changes && update_packages.is_empty() && old_lock.is_some() {
+        console.info("Minimal changes mode: preserving locked versions where possible.");
     }
 
     // Apply --patch-only filter: restrict updates to patch-level changes only
@@ -2298,6 +2318,7 @@ mod tests {
             locked_packages: Vec::new(),
             block_abandoned: false,
             root_branch_alias: None,
+            preferred_versions: IndexMap::new(),
         };
 
         let resolved = resolve(&request).await.expect("Resolution should succeed");

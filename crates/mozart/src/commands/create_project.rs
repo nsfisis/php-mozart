@@ -444,6 +444,7 @@ pub async fn execute(
         locked_packages: Vec::new(),
         block_abandoned: false,
         root_branch_alias: None,
+        preferred_versions: indexmap::IndexMap::new(),
     };
 
     console.info("Resolving dependencies...");

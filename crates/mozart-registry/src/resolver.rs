@@ -733,6 +733,11 @@ pub struct ResolveRequest {
     /// alias's version for any link originally written as `self.version`.
     /// `None` when the root carries no matching `branch-alias` entry.
     pub root_branch_alias: Option<String>,
+    /// `name → normalized version` map fed to the policy's preferred-version
+    /// override. Used by `update --minimal-changes` so the solver only moves
+    /// a package when a constraint actually forces a different version.
+    /// Empty for a normal full update.
+    pub preferred_versions: IndexMap<String, String>,
 }
 
 /// Full data for a lock-pinned package, used in partial updates. Carried on
@@ -1337,8 +1342,20 @@ pub async fn resolve(request: &ResolveRequest) -> Result<Vec<ResolvedPackage>, R
         return Err(ResolveError::NoSolution(report));
     }
 
-    // Create policy and solve
-    let policy = DefaultPolicy::new(request.prefer_stable, request.prefer_lowest);
+    // Create policy and solve. When `preferred_versions` is non-empty (the
+    // `--minimal-changes` flow) feed it through the policy so the locked
+    // version wins over the regular highest/lowest pick whenever a candidate
+    // matches it. Mirrors Composer's
+    // `Installer::createPolicy` minimal-update branch.
+    let policy = if request.preferred_versions.is_empty() {
+        DefaultPolicy::new(request.prefer_stable, request.prefer_lowest)
+    } else {
+        DefaultPolicy::with_preferred(
+            request.prefer_stable,
+            request.prefer_lowest,
+            request.preferred_versions.clone(),
+        )
+    };
     let fixed_set: IndexSet<u32> = fixed_ids.into_iter().collect();
     let solver = Solver::new(rules, &pool, policy, fixed_set);
 
@@ -1786,6 +1803,7 @@ mod tests {
             locked_packages: Vec::new(),
             block_abandoned: false,
             root_branch_alias: None,
+            preferred_versions: IndexMap::new(),
         };
 
         let result = resolve(&request).await;
