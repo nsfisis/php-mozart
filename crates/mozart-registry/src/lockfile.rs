@@ -252,10 +252,17 @@ impl LockFile {
         let mut messages = Vec::new();
         let mut any_missing = false;
 
-        let base_pool: Vec<&LockedPackage> = self.packages.iter().collect();
-        let mut dev_pool: Vec<&LockedPackage> = base_pool.clone();
+        let base_pool: Vec<LockedSearchEntry> = self
+            .packages
+            .iter()
+            .map(|p| LockedSearchEntry::build(p, &self.aliases))
+            .collect();
+        let mut dev_pool: Vec<LockedSearchEntry> = base_pool.clone();
         if let Some(dev) = &self.packages_dev {
-            dev_pool.extend(dev.iter());
+            dev_pool.extend(
+                dev.iter()
+                    .map(|p| LockedSearchEntry::build(p, &self.aliases)),
+            );
         }
 
         check_requirement_set(
@@ -291,10 +298,92 @@ impl LockFile {
     }
 }
 
+/// A locked package paired with the additional version strings the locked
+/// repository would surface for it (branch-alias targets + matching root
+/// aliases from `lock.aliases`).
+///
+/// Mirrors the AliasPackage entries that `Composer\Package\Locker::getLockedRepository`
+/// adds alongside each locked package, so requirement checks see the same
+/// version surface Composer does.
+#[derive(Clone)]
+struct LockedSearchEntry<'a> {
+    package: &'a LockedPackage,
+    alias_versions: Vec<String>,
+}
+
+impl<'a> LockedSearchEntry<'a> {
+    fn build(package: &'a LockedPackage, root_aliases: &[LockAlias]) -> Self {
+        let mut alias_versions: Vec<String> = locked_package_branch_aliases(package)
+            .into_iter()
+            .map(|a| a.alias_normalized)
+            .collect();
+        for alias in root_aliases {
+            if alias.package.eq_ignore_ascii_case(&package.name)
+                && alias.version.eq_ignore_ascii_case(&package.version)
+            {
+                alias_versions.push(alias.alias_normalized.clone());
+            }
+        }
+        Self {
+            package,
+            alias_versions,
+        }
+    }
+}
+
+/// Build the synthetic `LockAlias` entries a `dev-*` locked package contributes
+/// via `extra.branch-alias`. Mirrors `Composer\Package\Loader\ArrayLoader::getBranchAlias`
+/// followed by `VersionParser::normalizeBranch` — the same expansion
+/// `Locker::getLockedRepository` performs when constructing AliasPackages
+/// alongside each locked package.
+pub fn locked_package_branch_aliases(pkg: &LockedPackage) -> Vec<LockAlias> {
+    let pkg_version_lower = pkg.version.to_lowercase();
+    let is_dev_branch =
+        pkg_version_lower.starts_with("dev-") || pkg_version_lower.ends_with("-dev");
+    if !is_dev_branch {
+        return Vec::new();
+    }
+    let Some(extra) = pkg.extra_fields.get("extra") else {
+        return Vec::new();
+    };
+    let Some(branch_alias) = extra.get("branch-alias") else {
+        return Vec::new();
+    };
+    let Some(map) = branch_alias.as_object() else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for (source, target) in map.iter() {
+        if !source.eq_ignore_ascii_case(&pkg.version) {
+            continue;
+        }
+        let Some(target_str) = target.as_str() else {
+            continue;
+        };
+        if !target_str.to_lowercase().ends_with("-dev") {
+            continue;
+        }
+        let Some(normalized) = crate::resolver::normalize_branch_alias_target(target_str) else {
+            continue;
+        };
+        // Pretty-form trim: Composer's `Preg::replace('{(\.9{7})+}', '.x', ...)`
+        // turns the normalized form back into the wildcard form (e.g.
+        // `2.1.9999999.9999999-dev` → `2.1.x-dev`). For trace output we want
+        // the raw alias target string the package author wrote.
+        out.push(LockAlias {
+            package: pkg.name.clone(),
+            version: pkg.version.clone(),
+            alias: target_str.to_string(),
+            alias_normalized: normalized,
+        });
+    }
+    out
+}
+
 fn check_requirement_set(
     requires: &BTreeMap<String, String>,
     description: &str,
-    pool: &[&LockedPackage],
+    pool: &[LockedSearchEntry],
     messages: &mut Vec<String>,
     any_missing: &mut bool,
 ) {
@@ -310,17 +399,26 @@ fn check_requirement_set(
 
         let mut name_only_match: Option<&LockedPackage> = None;
         let mut satisfied = false;
-        for pkg in pool {
+        for entry in pool {
+            let pkg = entry.package;
             if pkg.name != *name {
                 continue;
             }
             if name_only_match.is_none() {
                 name_only_match = Some(pkg);
             }
-            if let Some(ref c) = constraint
-                && let Ok(version) = mozart_semver::Version::parse(&pkg.version)
+            let Some(ref c) = constraint else { continue };
+            if let Ok(version) = mozart_semver::Version::parse(&pkg.version)
                 && c.matches(&version)
             {
+                satisfied = true;
+                break;
+            }
+            if entry.alias_versions.iter().any(|alias| {
+                mozart_semver::Version::parse(alias)
+                    .ok()
+                    .is_some_and(|v| c.matches(&v))
+            }) {
                 satisfied = true;
                 break;
             }

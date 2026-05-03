@@ -891,6 +891,16 @@ pub async fn install_from_lock(
             // match. Mirrors Composer's `Transaction::calculateOperations` DFS
             // which pushes alias targets first and emits MarkAliasInstalled
             // when the alias itself is processed.
+            //
+            // Two sources of alias entries: the `aliases[]` block in
+            // `composer.lock` (which the resolver populates with both root
+            // aliases and branch-aliases) and the package's own
+            // `extra.branch-alias` (recovered through
+            // `Locker::getLockedRepository`'s ArrayLoader expansion when the
+            // lock was hand-written without a matching `aliases[]` entry).
+            // The two sources can name the same alias version, so dedupe by
+            // `alias_normalized` to avoid emitting the trace line twice.
+            let mut emitted_alias_versions: Vec<String> = Vec::new();
             for alias in &lock.aliases {
                 if alias.package.eq_ignore_ascii_case(&pkg.name) && alias.version == pkg.version {
                     executor
@@ -899,7 +909,21 @@ pub async fn install_from_lock(
                             &exec_ctx,
                         )
                         .await?;
+                    emitted_alias_versions.push(alias.alias_normalized.clone());
                 }
+            }
+            let branch_aliases = lockfile::locked_package_branch_aliases(pkg);
+            for alias in &branch_aliases {
+                if emitted_alias_versions.contains(&alias.alias_normalized) {
+                    continue;
+                }
+                executor
+                    .install_package(
+                        PackageOperation::MarkAliasInstalled { alias, target: pkg },
+                        &exec_ctx,
+                    )
+                    .await?;
+                emitted_alias_versions.push(alias.alias_normalized.clone());
             }
         }
 
