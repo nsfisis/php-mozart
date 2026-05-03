@@ -872,6 +872,15 @@ pub async fn run(
         .unwrap_or(false);
     let prefer_stable = args.prefer_stable || composer_prefer_stable;
 
+    let mut platform = PlatformConfig::new();
+    if let Some(overrides) = composer_json
+        .extra_fields
+        .get("config")
+        .and_then(|c| c.get("platform"))
+    {
+        platform.apply_overrides(overrides);
+    }
+
     let request = ResolveRequest {
         root_name: composer_json.name.clone(),
         require,
@@ -881,7 +890,7 @@ pub async fn run(
         stability_flags: HashMap::new(),
         prefer_stable,
         prefer_lowest: args.prefer_lowest,
-        platform: PlatformConfig::new(),
+        platform,
         ignore_platform_reqs: args.ignore_platform_reqs,
         ignore_platform_req_list: args.ignore_platform_req.clone(),
         repositories: repositories.clone(),

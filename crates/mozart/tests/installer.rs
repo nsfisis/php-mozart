@@ -273,7 +273,7 @@ installer_fixture!(install_ignore_platform_package_requirement_list);
 installer_fixture!(install_ignore_platform_package_requirement_wildcard);
 installer_fixture!(install_ignore_platform_package_requirements);
 installer_fixture!(install_missing_alias_from_lock, ignore);
-installer_fixture!(install_overridden_platform_packages, ignore);
+installer_fixture!(install_overridden_platform_packages);
 installer_fixture!(install_package_and_its_provider_skips_original);
 installer_fixture!(install_prefers_repos_over_package_versions);
 installer_fixture!(install_reference);

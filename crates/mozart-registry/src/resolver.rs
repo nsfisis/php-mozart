@@ -295,6 +295,28 @@ impl PlatformConfig {
         Self { packages }
     }
 
+    /// Apply `config.platform` overrides on top of the detected packages.
+    ///
+    /// Mirrors `Composer\Repository\PlatformRepository::__construct`'s
+    /// `$overrides` handling: each override either replaces a detected
+    /// package version or adds a virtual one (e.g. `ext-dummy`). A `false`
+    /// value disables the package, removing it from the platform.
+    pub fn apply_overrides(&mut self, overrides: &serde_json::Value) {
+        let Some(obj) = overrides.as_object() else {
+            return;
+        };
+        for (name, value) in obj {
+            let key = name.to_lowercase();
+            if value.as_bool() == Some(false) {
+                self.packages.remove(&key);
+                continue;
+            }
+            if let Some(s) = value.as_str() {
+                self.packages.insert(key, s.to_string());
+            }
+        }
+    }
+
     /// Parse platform packages into `Version` values.
     pub fn to_versions(&self) -> HashMap<String, Version> {
         self.packages
