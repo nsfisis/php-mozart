@@ -20,6 +20,8 @@
 //! exercise the legacy embedded-packages form.
 
 use crate::packagist::PackagistVersion;
+use crate::repository_filter::RepositoryFilter;
+use indexmap::IndexSet;
 use mozart_core::package::RawRepository;
 use std::path::PathBuf;
 
@@ -35,6 +37,7 @@ pub struct ComposerRepoPackage {
 /// `file://foobar` → `file:///abs/path/to/fixtures/foobar`.
 pub fn collect_composer_packages(repositories: &[RawRepository]) -> Vec<ComposerRepoPackage> {
     let mut out = Vec::new();
+    let mut claimed: IndexSet<String> = IndexSet::new();
     for repo in repositories {
         if repo.repo_type != "composer" {
             continue;
@@ -55,18 +58,34 @@ pub fn collect_composer_packages(repositories: &[RawRepository]) -> Vec<Composer
         let Some(packages) = parsed.get("packages").and_then(|v| v.as_object()) else {
             continue;
         };
+        let filter = RepositoryFilter::from_repo(repo);
+        let mut names_this_repo: IndexSet<String> = IndexSet::new();
         for (name, versions) in packages {
+            if !filter.is_allowed(name) {
+                continue;
+            }
+            if claimed.contains(name) {
+                continue;
+            }
             let Some(versions_obj) = versions.as_object() else {
                 continue;
             };
+            let mut emitted = false;
             for (_, version_value) in versions_obj {
                 if let Ok(pv) = serde_json::from_value::<PackagistVersion>(version_value.clone()) {
                     out.push(ComposerRepoPackage {
                         name: name.clone(),
                         version: pv,
                     });
+                    emitted = true;
                 }
             }
+            if emitted {
+                names_this_repo.insert(name.clone());
+            }
+        }
+        if filter.canonical {
+            claimed.extend(names_this_repo);
         }
     }
     out
@@ -98,6 +117,9 @@ mod tests {
             repo_type: "composer".to_string(),
             url: Some(url),
             package: None,
+            only: None,
+            exclude: None,
+            canonical: None,
         }
     }
 
@@ -132,6 +154,9 @@ mod tests {
             repo_type: "vcs".to_string(),
             url: Some("https://example.com/foo.git".to_string()),
             package: None,
+            only: None,
+            exclude: None,
+            canonical: None,
         }];
         assert!(collect_composer_packages(&repos).is_empty());
     }

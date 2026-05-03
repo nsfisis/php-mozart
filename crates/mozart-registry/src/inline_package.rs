@@ -6,6 +6,7 @@
 //! pool and into the generated lockfile entry verbatim.
 
 use crate::packagist::PackagistVersion;
+use crate::repository_filter::RepositoryFilter;
 use indexmap::IndexSet;
 use mozart_core::package::RawRepository;
 
@@ -36,6 +37,7 @@ pub fn collect_inline_packages(repositories: &[RawRepository]) -> Vec<InlinePack
         let Some(value) = &repo.package else {
             continue;
         };
+        let filter = RepositoryFilter::from_repo(repo);
 
         let mut from_this_repo: Vec<InlinePackage> = Vec::new();
         match value {
@@ -56,13 +58,21 @@ pub fn collect_inline_packages(repositories: &[RawRepository]) -> Vec<InlinePack
 
         let mut names_this_repo: IndexSet<String> = IndexSet::new();
         for pkg in from_this_repo {
+            if !filter.is_allowed(&pkg.name) {
+                continue;
+            }
             if claimed.contains(&pkg.name) {
                 continue;
             }
             names_this_repo.insert(pkg.name.clone());
             packages.push(pkg);
         }
-        claimed.extend(names_this_repo);
+        // canonical: false → packages enter the pool but the name is not
+        // claimed, so lower-priority repositories may still answer for it.
+        // Mirrors `FilterRepository::loadPackages`'s `namesFound = []` reset.
+        if filter.canonical {
+            claimed.extend(names_this_repo);
+        }
     }
     packages
 }
@@ -101,6 +111,9 @@ mod tests {
             repo_type: "package".to_string(),
             url: None,
             package: Some(value),
+            only: None,
+            exclude: None,
+            canonical: None,
         }
     }
 
@@ -135,6 +148,9 @@ mod tests {
             repo_type: "vcs".to_string(),
             url: Some("https://example.com/foo.git".to_string()),
             package: None,
+            only: None,
+            exclude: None,
+            canonical: None,
         }];
         assert!(collect_inline_packages(&repos).is_empty());
     }

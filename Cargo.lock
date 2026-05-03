@@ -1193,6 +1193,7 @@ dependencies = [
  "mozart-sat-resolver",
  "mozart-semver",
  "mozart-vcs",
+ "regex",
  "reqwest",
  "serde",
  "serde_json",

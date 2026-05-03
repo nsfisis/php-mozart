@@ -7,6 +7,7 @@ pub mod installer_executor;
 pub mod lockfile;
 pub mod packagist;
 pub mod repository;
+pub mod repository_filter;
 pub mod resolver;
 pub mod vcs_bridge;
 pub mod version;

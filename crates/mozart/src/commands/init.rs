@@ -704,6 +704,9 @@ fn parse_repositories(repos: &[String]) -> anyhow::Result<Vec<RawRepository>> {
                 repo_type,
                 url: Some(url),
                 package: None,
+                only: None,
+                exclude: None,
+                canonical: None,
             });
         } else {
             // Plain URL
@@ -711,6 +714,9 @@ fn parse_repositories(repos: &[String]) -> anyhow::Result<Vec<RawRepository>> {
                 repo_type: "vcs".to_string(),
                 url: Some(repo.clone()),
                 package: None,
+                only: None,
+                exclude: None,
+                canonical: None,
             });
         }
     }

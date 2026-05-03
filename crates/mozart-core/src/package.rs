@@ -549,6 +549,23 @@ pub struct RawRepository {
     /// `Composer\Repository\PackageRepository`'s schema.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub package: Option<serde_json::Value>,
+
+    /// `only: ["name", ...]` — restrict this repository to the listed package
+    /// names (glob `*` allowed). Mirrors `Composer\Repository\FilterRepository`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub only: Option<Vec<String>>,
+
+    /// `exclude: ["name", ...]` — drop the listed package names from this
+    /// repository. Mutually exclusive with `only` per `FilterRepository`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub exclude: Option<Vec<String>>,
+
+    /// `canonical: false` — packages from this repo enter the pool but do
+    /// not claim authoritative ownership of their names, so lower-priority
+    /// repositories can still answer for the same name. Mirrors
+    /// `FilterRepository::loadPackages`'s `namesFound = []` reset.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub canonical: Option<bool>,
 }
 
 /// Default root-package name when `composer.json` omits the `name` field.
@@ -657,6 +674,9 @@ mod tests {
             repo_type: "vcs".to_string(),
             url: Some("https://github.com/acme/repo".to_string()),
             package: None,
+            only: None,
+            exclude: None,
+            canonical: None,
         }];
 
         let mut psr4 = BTreeMap::new();

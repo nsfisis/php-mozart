@@ -333,7 +333,7 @@ installer_fixture!(replaced_packages_should_not_be_installed_when_installing_fro
 installer_fixture!(replacer_satisfies_its_own_requirement);
 installer_fixture!(repositories_priorities);
 installer_fixture!(repositories_priorities2);
-installer_fixture!(repositories_priorities3, ignore);
+installer_fixture!(repositories_priorities3);
 installer_fixture!(repositories_priorities4);
 installer_fixture!(repositories_priorities5);
 installer_fixture!(root_alias_change_with_circular_dep, ignore);
