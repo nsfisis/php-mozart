@@ -5,7 +5,8 @@ use mozart_core::console_format;
 use mozart_registry::installed;
 use mozart_registry::installer_executor::{
     ExecuteContext, FilesystemExecutor, InstallerExecutor, PackageOperation,
-    format_full_pretty_version, format_update_pretty_versions,
+    format_full_pretty_version, format_full_pretty_version_for_installed,
+    format_full_pretty_with_pretty_for_installed, format_update_pretty_versions,
 };
 use mozart_registry::lockfile;
 use std::collections::BTreeMap;
@@ -327,6 +328,64 @@ fn topological_sort<'a>(
     }
 
     ordered
+}
+
+/// Pre-rendered MarkAliasUninstalled operation. Composer derives the alias
+/// from the installed package's `extra.branch-alias` map and the comparison
+/// runs against the new lock's `aliases[]` block; we precompute the trace
+/// strings here so the executor call site can stay simple.
+struct StaleInstalledAlias {
+    name: String,
+    alias_full: String,
+    target_full: String,
+}
+
+/// Walk every `installed.json` entry, expand its `extra.branch-alias` map
+/// into `(target_branch_pretty → alias_pretty)` pairs, and emit a
+/// [`StaleInstalledAlias`] for each pair whose alias version doesn't appear
+/// in the new lock's `aliases[]` block under the same package. Mirrors
+/// Composer's `Transaction::calculateOperations`, which seeds `removeAliasMap`
+/// from the present alias packages and trims it as the result is walked —
+/// whatever's left becomes a `MarkAliasUninstalledOperation`.
+fn collect_stale_installed_aliases(
+    installed: &installed::InstalledPackages,
+    lock_aliases: &[lockfile::LockAlias],
+) -> Vec<StaleInstalledAlias> {
+    let mut stale = Vec::new();
+    for entry in &installed.packages {
+        let Some(branch_alias) = entry
+            .extra_fields
+            .get("extra")
+            .and_then(|e| e.get("branch-alias"))
+            .and_then(|b| b.as_object())
+        else {
+            continue;
+        };
+        for (target_branch, alias_value) in branch_alias {
+            // The map key is the branch name (e.g. `dev-master`); only the
+            // alias for the *currently installed* version applies.
+            if entry.version != *target_branch {
+                continue;
+            }
+            let Some(alias_pretty) = alias_value.as_str() else {
+                continue;
+            };
+            // Already covered by the new lock under the same package +
+            // alias version → not stale.
+            let still_present = lock_aliases
+                .iter()
+                .any(|a| a.package.eq_ignore_ascii_case(&entry.name) && a.alias == alias_pretty);
+            if still_present {
+                continue;
+            }
+            stale.push(StaleInstalledAlias {
+                name: entry.name.clone(),
+                alias_full: format_full_pretty_with_pretty_for_installed(alias_pretty, entry),
+                target_full: format_full_pretty_version_for_installed(entry),
+            });
+        }
+    }
+    stale
 }
 
 /// Compare an installed-package entry's source/dist references with a
@@ -668,6 +727,27 @@ pub async fn install_from_lock(
                 .map(|p| p.version.as_str())
                 .unwrap_or("");
             executor.uninstall_package(name, from_version, &exec_ctx)?;
+        }
+
+        // Mirror Composer's `Transaction::moveUninstallsToFront` +
+        // `MarkAliasUninstalledOperation` emission: any alias declared on a
+        // currently-installed package (via `extra.branch-alias`) that is no
+        // longer present in the new lock's `aliases[]` block needs a trace
+        // line so consumers see the alias was retired alongside its target.
+        // Detection runs before installs/updates since Composer hoists alias
+        // uninstalls to the front of the operations list.
+        let stale_aliases = collect_stale_installed_aliases(&installed, &lock.aliases);
+        for stale in &stale_aliases {
+            executor
+                .install_package(
+                    PackageOperation::MarkAliasUninstalled {
+                        name: &stale.name,
+                        alias_full: &stale.alias_full,
+                        target_full: &stale.target_full,
+                    },
+                    &exec_ctx,
+                )
+                .await?;
         }
 
         if !removals.is_empty() {

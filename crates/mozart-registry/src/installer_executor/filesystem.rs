@@ -29,10 +29,11 @@ impl InstallerExecutor for FilesystemExecutor {
         op: PackageOperation<'_>,
         ctx: &ExecuteContext,
     ) -> anyhow::Result<()> {
-        // Marking an alias as installed has no filesystem side effects —
-        // the target package's files are already in vendor/. Mirrors
-        // Composer's `MarkAliasInstalledOperation` which the installation
-        // manager only uses to update the in-memory installed repository.
+        // Marking an alias as installed/uninstalled has no filesystem side
+        // effects — the target package's files are already in vendor/.
+        // Mirrors Composer's `MarkAlias{,Un}installedOperation` which the
+        // installation manager only uses to update the in-memory installed
+        // repository.
         let Some(pkg) = op.package() else {
             return Ok(());
         };

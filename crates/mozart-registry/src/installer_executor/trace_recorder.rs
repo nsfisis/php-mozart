@@ -91,6 +91,16 @@ impl InstallerExecutor for TraceRecorderExecutor {
                     alias.package, alias_full, alias.package, target_full
                 ));
             }
+            PackageOperation::MarkAliasUninstalled {
+                name,
+                alias_full,
+                target_full,
+            } => {
+                self.trace.push(format!(
+                    "Marking {} ({}) as uninstalled, alias of {} ({})",
+                    name, alias_full, name, target_full
+                ));
+            }
         }
         Ok(())
     }
@@ -106,12 +116,44 @@ impl InstallerExecutor for TraceRecorderExecutor {
     }
 }
 
-/// Mirrors `Composer\Package\Version\VersionParser::isUpgrade` — returns
-/// true when `to` is a strictly higher version than `from`. Both unparseable
-/// or both equal means treat as upgrade (Composer's behavior on edge cases).
+/// Mirrors `Composer\Package\Version\VersionParser::isUpgrade`. Returns true
+/// when `to` should be treated as an upgrade from `from` for the purpose of
+/// the trace verb (`Upgrading` vs `Downgrading`).
+///
+/// The rules:
+///   1. Same string → upgrade.
+///   2. `dev-master` / `dev-trunk` / `dev-default` substitute to the
+///      `9999999-dev` default-branch alias before further checks (they are
+///      not literal dev-* names; they are the conventional "latest" branch).
+///   3. After that substitution, if either side starts with `dev-` (i.e. is
+///      a dev branch other than the defaults) → upgrade. Composer treats
+///      hopping between dev branches as a forward move regardless of order.
+///   4. Otherwise sort numerically and check the original `from` ended up
+///      first (= the smaller value).
 fn is_upgrade(from: &str, to: &str) -> bool {
-    match (Version::parse(from), Version::parse(to)) {
+    if from == to {
+        return true;
+    }
+    let original_from = from;
+    let normalize_default = |s: &str| -> String {
+        if matches!(s, "dev-master" | "dev-trunk" | "dev-default") {
+            "9999999-dev".to_string()
+        } else {
+            s.to_string()
+        }
+    };
+    let from_norm = normalize_default(from);
+    let to_norm = normalize_default(to);
+    if from_norm.starts_with("dev-") || to_norm.starts_with("dev-") {
+        return true;
+    }
+    match (Version::parse(&from_norm), Version::parse(&to_norm)) {
         (Ok(a), Ok(b)) => b >= a,
-        _ => true,
+        _ => {
+            // Mirror Composer's fall-through: with two unparseable strings
+            // there is nothing to compare, treat the move as an upgrade.
+            let _ = original_from;
+            true
+        }
     }
 }

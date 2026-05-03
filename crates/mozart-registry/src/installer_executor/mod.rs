@@ -54,6 +54,23 @@ pub enum PackageOperation<'a> {
         /// reference suffix for the trace line.
         target: &'a LockedPackage,
     },
+    /// Mark a previously-installed alias as uninstalled. No filesystem
+    /// effects — only the trace recorder cares. Mirrors Composer's
+    /// `MarkAliasUninstalledOperation`. Composer derives the AliasPackage
+    /// from the previous installed.json entries (via `extra.branch-alias`),
+    /// then emits this when the alias is no longer in the result. Caller
+    /// pre-renders the display strings so this variant doesn't need to know
+    /// how to spelunk the entry.
+    MarkAliasUninstalled {
+        /// Package name (e.g. `a/a`) used as both the alias's name and the
+        /// target's name on the trace line.
+        name: &'a str,
+        /// Alias's full-pretty form (alias pretty version plus reference
+        /// suffix), e.g. `1.0.x-dev master`.
+        alias_full: &'a str,
+        /// Target's full-pretty form, e.g. `dev-master master`.
+        target_full: &'a str,
+    },
 }
 
 impl<'a> PackageOperation<'a> {
@@ -62,7 +79,8 @@ impl<'a> PackageOperation<'a> {
             PackageOperation::Install { package } | PackageOperation::Update { package, .. } => {
                 Some(package)
             }
-            PackageOperation::MarkAliasInstalled { .. } => None,
+            PackageOperation::MarkAliasInstalled { .. }
+            | PackageOperation::MarkAliasUninstalled { .. } => None,
         }
     }
 }
@@ -92,11 +110,14 @@ pub fn format_full_pretty_with_pretty(pretty_version: &str, pkg: &LockedPackage)
     )
 }
 
-/// Mirror Composer's `BasePackage::getFullPrettyVersion()` for an
-/// `InstalledPackageEntry`. Same display rules as
-/// [`format_full_pretty_version`] but pulls source/dist info out of the
-/// installed.json `source`/`dist` JSON values.
-pub fn format_full_pretty_version_for_installed(entry: &InstalledPackageEntry) -> String {
+/// Same as [`format_full_pretty_version_for_installed`] but lets the caller
+/// supply an alternate pretty version. Used when emitting
+/// `MarkAliasUninstalled`: the alias's `1.0.x-dev` text needs to be rendered
+/// with the *target installed entry's* reference suffix.
+pub fn format_full_pretty_with_pretty_for_installed(
+    pretty_version: &str,
+    entry: &InstalledPackageEntry,
+) -> String {
     let source_ref = entry
         .source
         .as_ref()
@@ -113,12 +134,20 @@ pub fn format_full_pretty_version_for_installed(entry: &InstalledPackageEntry) -
         .and_then(|v| v.get("type"))
         .and_then(|v| v.as_str());
     format_full_pretty_with_refs(
-        &entry.version,
+        pretty_version,
         &entry.version,
         source_ref,
         dist_ref,
         source_type,
     )
+}
+
+/// Mirror Composer's `BasePackage::getFullPrettyVersion()` for an
+/// `InstalledPackageEntry`. Same display rules as
+/// [`format_full_pretty_version`] but pulls source/dist info out of the
+/// installed.json `source`/`dist` JSON values.
+pub fn format_full_pretty_version_for_installed(entry: &InstalledPackageEntry) -> String {
+    format_full_pretty_with_pretty_for_installed(&entry.version, entry)
 }
 
 /// Render the from/to display strings for an update trace line, mirroring

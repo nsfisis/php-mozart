@@ -366,9 +366,9 @@ installer_fixture!(
     update_abandoned_package_required_but_blocked_via_audit_config,
     ignore
 );
-installer_fixture!(update_alias, ignore);
+installer_fixture!(update_alias);
 installer_fixture!(update_alias_lock, ignore);
-installer_fixture!(update_alias_lock2, ignore);
+installer_fixture!(update_alias_lock2);
 installer_fixture!(update_all);
 installer_fixture!(update_all_dry_run);
 installer_fixture!(update_allow_list);
@@ -408,7 +408,7 @@ installer_fixture!(update_installed_reference);
 installer_fixture!(update_installed_reference_dry_run);
 installer_fixture!(update_mirrors_changes_url, ignore);
 installer_fixture!(update_mirrors_fails_with_new_req, ignore);
-installer_fixture!(update_no_dev_still_resolves_dev, ignore);
+installer_fixture!(update_no_dev_still_resolves_dev);
 installer_fixture!(update_no_install);
 installer_fixture!(update_package_present_in_lock_but_not_at_all_in_remote);
 installer_fixture!(update_package_present_in_lock_but_not_in_remote);
