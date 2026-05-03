@@ -1010,6 +1010,44 @@ pub async fn resolve(request: &ResolveRequest) -> Result<Vec<ResolvedPackage>, R
     // different version (whether directly, or via `replace`, which would
     // otherwise let an upgraded replacer silently drop the dependency).
     //
+    // Pre-check: a locked package whose version is rejected by the
+    // current minimum-stability (composer.json may have tightened
+    // stability or dropped a `stability-flags` entry the lock relied on)
+    // cannot be reused as a fixed pool entry. Mirrors what Composer
+    // surfaces via `Pool::isUnacceptableFixedOrLockedPackage` +
+    // `Problem::getPrettyString`: bail with the "fixed to <v> (lock file
+    // version) but that version is rejected by your minimum-stability"
+    // pointer so the user knows to add the package to the update
+    // arguments (or use `--with-all-dependencies`).
+    {
+        let mut rejected: Vec<String> = Vec::new();
+        for locked in &request.locked_packages {
+            let Ok(v) = Version::parse(&locked.version_normalized) else {
+                continue;
+            };
+            if !passes_stability_filter(
+                &locked.name,
+                &v,
+                request.minimum_stability,
+                &stability_flags,
+            ) {
+                rejected.push(format!(
+                    "    - {} is fixed to {} (lock file version) by a partial update but that version is rejected by your minimum-stability. Make sure you list it as an argument for the update command.",
+                    locked.name, locked.pretty_version
+                ));
+            }
+        }
+        if !rejected.is_empty() {
+            let report = rejected
+                .into_iter()
+                .enumerate()
+                .map(|(i, msg)| format!("  Problem {}\n{}", i + 1, msg))
+                .collect::<Vec<_>>()
+                .join("\n");
+            return Err(ResolveError::NoSolution(report));
+        }
+    }
+
     // Build a map first so the filter below knows which (name, version)
     // pairs are the only allowed entries for locked names.
     let locked_name_to_version: IndexMap<String, String> = request

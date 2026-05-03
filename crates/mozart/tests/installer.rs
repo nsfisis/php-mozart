@@ -282,7 +282,7 @@ installer_fixture!(load_replaced_package_if_replacer_dropped);
 installer_fixture!(outdated_lock_file_fails_install);
 installer_fixture!(outdated_lock_file_with_new_platform_reqs_fails);
 installer_fixture!(partial_update_always_updates_symlinked_path_repos, ignore);
-installer_fixture!(partial_update_downgrades_non_allow_listed_unstable, ignore);
+installer_fixture!(partial_update_downgrades_non_allow_listed_unstable);
 installer_fixture!(
     partial_update_forces_dev_reference_from_lock_for_non_updated_packages,
     ignore
