@@ -1429,14 +1429,43 @@ pub async fn resolve(request: &ResolveRequest) -> Result<Vec<ResolvedPackage>, R
                     .is_alias_of
                     .clone()
                     .unwrap_or_else(|| input.version.clone());
+                // Extend `self.version`-derived `replace` / `provide` /
+                // `conflict` links with an extra entry pinned at the
+                // alias's own version. Mirrors Composer's
+                // `AliasPackage::replaceSelfVersionDependencies`: a base
+                // link whose constraint matches the base's own version
+                // (the resolved form of `self.version`) is duplicated
+                // under the alias at the alias's version, so a transitive
+                // require like `a/aliased-replaced ^4.0` can match the
+                // alias even when the base is at a non-matching dev
+                // version. Without this, the alias's replace map keeps
+                // the base's `dev-next` constraint and the requirement
+                // never sees a numeric provider.
+                let alias_extra_self_links = |links: &[PoolLink]| -> Vec<PoolLink> {
+                    links
+                        .iter()
+                        .filter(|l| l.constraint == input.version)
+                        .map(|l| PoolLink {
+                            target: l.target.clone(),
+                            constraint: alias.alias_normalized.clone(),
+                            source: l.source.clone(),
+                        })
+                        .collect()
+                };
+                let mut alias_replaces = input.replaces.clone();
+                alias_replaces.extend(alias_extra_self_links(&input.replaces));
+                let mut alias_provides = input.provides.clone();
+                alias_provides.extend(alias_extra_self_links(&input.provides));
+                let mut alias_conflicts = input.conflicts.clone();
+                alias_conflicts.extend(alias_extra_self_links(&input.conflicts));
                 new_aliases.push(PoolPackageInput {
                     name: input.name.clone(),
                     version: alias.alias_normalized.clone(),
                     pretty_version: alias.alias.clone(),
                     requires: input.requires.clone(),
-                    replaces: input.replaces.clone(),
-                    provides: input.provides.clone(),
-                    conflicts: input.conflicts.clone(),
+                    replaces: alias_replaces,
+                    provides: alias_provides,
+                    conflicts: alias_conflicts,
                     is_fixed: false,
                     is_alias_of: Some(target_normalized),
                 });

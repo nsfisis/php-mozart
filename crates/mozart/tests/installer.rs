@@ -253,7 +253,7 @@ installer_fixture!(alias_solver_problems2);
 installer_fixture!(alias_with_reference);
 installer_fixture!(aliased_priority);
 installer_fixture!(aliased_priority_conflicting);
-installer_fixture!(aliases_with_require_dev, ignore);
+installer_fixture!(aliases_with_require_dev);
 installer_fixture!(broken_deps_do_not_replace);
 installer_fixture!(circular_dependency);
 installer_fixture!(circular_dependency2);
