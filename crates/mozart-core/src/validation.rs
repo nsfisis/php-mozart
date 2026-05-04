@@ -55,10 +55,6 @@ pub fn validate_license(s: &str) -> bool {
     mozart_spdx_licenses::spdx().validate(s)
 }
 
-pub fn is_license_deprecated(s: &str) -> bool {
-    mozart_spdx_licenses::spdx().is_deprecated(s)
-}
-
 pub fn validate_autoload_path(s: &str) -> bool {
     AUTOLOAD_PATH_RE.is_match(s)
 }

@@ -325,11 +325,15 @@ fn check_license(obj: &serde_json::Map<String, serde_json::Value>, result: &mut 
     }
 
     // ConfigValidator: deprecated identifier warnings.
+    let spdx = mozart_spdx_licenses::spdx();
     for license in &licenses {
         if *license == "proprietary" {
             continue;
         }
-        if !mozart_core::validation::is_license_deprecated(license) {
+        let Some(info) = spdx.get_license_by_identifier(license) else {
+            continue;
+        };
+        if !info.deprecated {
             continue;
         }
         let warning = if DEPRECATED_GPL_OR_LATER_RE.is_match(license) {

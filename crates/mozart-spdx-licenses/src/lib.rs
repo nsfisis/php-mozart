@@ -35,14 +35,12 @@ pub struct ExceptionInfo {
 pub struct SpdxLicenses {
     licenses: HashMap<&'static str, LicenseInfo>,
     exceptions: HashMap<&'static str, ExceptionInfo>,
-    name_to_id: HashMap<&'static str, &'static str>,
 }
 
 impl SpdxLicenses {
     /// Build the license database from generated data.
     pub fn new() -> Self {
         let mut licenses = HashMap::with_capacity(LICENSES.len());
-        let mut name_to_id = HashMap::with_capacity(LICENSES.len());
         for &(lower, id, full_name, osi, deprecated) in LICENSES {
             licenses.insert(
                 lower,
@@ -53,7 +51,6 @@ impl SpdxLicenses {
                     deprecated,
                 },
             );
-            name_to_id.insert(full_name, id);
         }
 
         let mut exceptions = HashMap::with_capacity(EXCEPTIONS.len());
@@ -70,35 +67,12 @@ impl SpdxLicenses {
         Self {
             licenses,
             exceptions,
-            name_to_id,
         }
     }
 
     /// Look up a license by its SPDX identifier (case-insensitive).
     pub fn get_license_by_identifier(&self, id: &str) -> Option<&LicenseInfo> {
         self.licenses.get(id.to_lowercase().as_str())
-    }
-
-    /// Look up an exception by its SPDX identifier (case-insensitive).
-    pub fn get_exception_by_identifier(&self, id: &str) -> Option<&ExceptionInfo> {
-        self.exceptions.get(id.to_lowercase().as_str())
-    }
-
-    /// Look up a license identifier by its full name.
-    pub fn get_identifier_by_name(&self, name: &str) -> Option<&str> {
-        self.name_to_id.get(name).copied()
-    }
-
-    /// Check if a license is OSI-approved.
-    pub fn is_osi_approved(&self, id: &str) -> bool {
-        self.get_license_by_identifier(id)
-            .is_some_and(|l| l.osi_approved)
-    }
-
-    /// Check if a license is deprecated.
-    pub fn is_deprecated(&self, id: &str) -> bool {
-        self.get_license_by_identifier(id)
-            .is_some_and(|l| l.deprecated)
     }
 
     /// Validate an SPDX license expression.
@@ -118,15 +92,6 @@ impl SpdxLicenses {
 
         let mut parser = Parser::new(license, self);
         parser.parse_expression() && parser.is_at_end()
-    }
-
-    /// Validate a list of SPDX license identifiers (joined with OR).
-    pub fn validate_list(&self, licenses: &[&str]) -> bool {
-        if licenses.is_empty() {
-            return false;
-        }
-        let expr = licenses.join(" OR ");
-        self.validate(&expr)
     }
 
     fn is_valid_license_id(&self, id: &str) -> bool {
@@ -443,14 +408,6 @@ mod tests {
     }
 
     #[test]
-    fn validate_list() {
-        let db = spdx();
-        assert!(db.validate_list(&["MIT", "Apache-2.0"]));
-        assert!(!db.validate_list(&[]));
-        assert!(!db.validate_list(&["not-valid"]));
-    }
-
-    #[test]
     fn license_lookup() {
         let db = spdx();
         let mit = db.get_license_by_identifier("MIT").unwrap();
@@ -475,28 +432,5 @@ mod tests {
             mit_lower.url(),
             "https://spdx.org/licenses/MIT.html#licenseText"
         );
-    }
-
-    #[test]
-    fn exception_lookup() {
-        let db = spdx();
-        let exc = db
-            .get_exception_by_identifier("Classpath-exception-2.0")
-            .unwrap();
-        assert_eq!(exc.identifier, "Classpath-exception-2.0");
-    }
-
-    #[test]
-    fn name_lookup() {
-        let db = spdx();
-        assert_eq!(db.get_identifier_by_name("MIT License"), Some("MIT"));
-    }
-
-    #[test]
-    fn osi_and_deprecated() {
-        let db = spdx();
-        assert!(db.is_osi_approved("MIT"));
-        assert!(!db.is_osi_approved("nonexistent"));
-        assert!(!db.is_deprecated("MIT"));
     }
 }
