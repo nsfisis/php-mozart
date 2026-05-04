@@ -314,7 +314,7 @@ installer_fixture!(partial_update_downgrades_non_allow_listed_unstable);
 installer_fixture!(partial_update_forces_dev_reference_from_lock_for_non_updated_packages);
 installer_fixture!(partial_update_from_lock);
 installer_fixture!(partial_update_from_lock_with_root_alias);
-installer_fixture!(partial_update_installs_from_lock_even_missing, ignore);
+installer_fixture!(partial_update_installs_from_lock_even_missing);
 installer_fixture!(partial_update_keeps_older_dep_if_still_required);
 installer_fixture!(partial_update_keeps_older_dep_if_still_required_with_provide);
 installer_fixture!(partial_update_loads_root_aliases_for_path_repos);

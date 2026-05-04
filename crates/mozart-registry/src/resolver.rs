@@ -1165,6 +1165,26 @@ pub async fn resolve(request: &ResolveRequest) -> Result<Vec<ResolvedPackage>, R
             is_alias_of: None,
         };
         builder.add_package(input);
+        // Also expose each `extra.branch-alias` entry as a separate pool
+        // package, mirroring `Composer\Package\Locker::getLockedRepository`
+        // (which calls `ArrayLoader::load`, which materializes the
+        // branch-alias via `getBranchAlias`). Without this, a `dev-master`
+        // locked package with branch alias `2.2.x-dev` is only visible
+        // under `dev-master` in the pool, so root requires like `~2.1`
+        // see no candidate and the resolver fails on a partial update.
+        for (alias_pretty, alias_normalized) in &locked.branch_aliases {
+            builder.add_package(PoolPackageInput {
+                name: locked_name_lower.clone(),
+                version: alias_normalized.clone(),
+                pretty_version: alias_pretty.clone(),
+                requires: make_pool_links(&locked_name_lower, alias_normalized, &locked.requires),
+                replaces: make_pool_links(&locked_name_lower, alias_normalized, &locked.replaces),
+                provides: make_pool_links(&locked_name_lower, alias_normalized, &locked.provides),
+                conflicts: make_pool_links(&locked_name_lower, alias_normalized, &locked.conflicts),
+                is_fixed: false,
+                is_alias_of: Some(locked.version_normalized.clone()),
+            });
+        }
     }
 
     // Scan VCS repositories and collect packages from them
