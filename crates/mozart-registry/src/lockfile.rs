@@ -580,7 +580,11 @@ fn locked_package_to_packagist_version(pkg: &LockedPackage) -> PackagistVersion 
             .get("notification-url")
             .and_then(|v| v.as_str())
             .map(String::from),
-        default_branch: false,
+        default_branch: pkg
+            .extra_fields
+            .get("default-branch")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false),
         abandoned: pkg.extra_fields.get("abandoned").cloned(),
     }
 }
@@ -741,6 +745,16 @@ fn packagist_version_to_locked_package(name: &str, pv: &PackagistVersion) -> Loc
         if keep {
             extra_fields.insert("abandoned".to_string(), abandoned.clone());
         }
+    }
+    // Propagate `default-branch: true` so the lock surface — and the
+    // installed.json round-trip — keeps the marker that drives Composer's
+    // synthetic `9999999-dev` alias for default-branch dev packages.
+    // Without this, `Locker::getLockedRepository` (which Mozart mirrors via
+    // `collect_stale_installed_aliases` / `lock_alias_pretty_pairs`) can't
+    // tell that the package's default branch is still aliased and emits a
+    // spurious `MarkAliasUninstalled` for the missing `9999999-dev` alias.
+    if pv.default_branch {
+        extra_fields.insert("default-branch".to_string(), serde_json::Value::Bool(true));
     }
 
     LockedPackage {

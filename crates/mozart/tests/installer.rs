@@ -234,13 +234,6 @@ macro_rules! installer_fixture {
             run_installer_fixture(stringify!($name));
         }
     };
-    ($name:ident, ignore) => {
-        #[test]
-        #[ignore = "not implemented yet"]
-        fn $name() {
-            run_installer_fixture(stringify!($name));
-        }
-    };
 }
 
 installer_fixture!(abandoned_listed);
@@ -394,7 +387,7 @@ installer_fixture!(update_allow_list_with_dependencies_require_new);
 installer_fixture!(update_allow_list_with_dependencies_require_new_replace);
 installer_fixture!(update_allow_list_with_dependencies_require_new_replace_mutual);
 installer_fixture!(update_allow_list_with_dependency_conflict);
-installer_fixture!(update_changes_url, ignore);
+installer_fixture!(update_changes_url);
 installer_fixture!(update_dev_ignores_providers);
 installer_fixture!(update_dev_packages_updates_repo_url);
 installer_fixture!(update_dev_to_new_ref_picks_up_changes);
