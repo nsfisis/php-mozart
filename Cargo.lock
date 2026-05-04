@@ -1197,6 +1197,7 @@ dependencies = [
  "mozart-php-serialize",
  "mozart-sat-resolver",
  "mozart-semver",
+ "mozart-test-harness",
  "mozart-vcs",
  "regex",
  "reqwest",

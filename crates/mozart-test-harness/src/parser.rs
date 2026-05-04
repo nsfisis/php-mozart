@@ -45,7 +45,7 @@ pub fn parse_test_file(path: &Path) -> Result<ParsedTest> {
 }
 
 pub fn parse_test_str(content: &str) -> Result<ParsedTest> {
-    let mut sections = split_sections(content)?;
+    let mut sections = split_sections(content, VALID_SECTIONS)?;
 
     for required in REQUIRED_SECTIONS {
         if !sections.contains_key(*required) {
@@ -86,7 +86,15 @@ pub fn parse_test_str(content: &str) -> Result<ParsedTest> {
     })
 }
 
-fn split_sections(content: &str) -> Result<IndexMap<String, String>> {
+/// Split a `.test` fixture into its `--SECTION--` blocks.
+///
+/// Shared helper for both [`parse_test_str`] and the sibling pool-builder
+/// parser; each caller passes its own allowed-section list so unknown
+/// headers still surface as parse errors rather than silently ignored.
+pub(crate) fn split_sections(
+    content: &str,
+    valid_sections: &[&str],
+) -> Result<IndexMap<String, String>> {
     let header_re = regex::Regex::new(r"^--([A-Z][A-Z-]*)--$").unwrap();
 
     let mut sections: IndexMap<String, String> = IndexMap::new();
@@ -97,7 +105,7 @@ fn split_sections(content: &str) -> Result<IndexMap<String, String>> {
         let trimmed = line.trim_end_matches('\n').trim_end_matches('\r');
         if let Some(caps) = header_re.captures(trimmed) {
             let name = caps[1].to_string();
-            if !VALID_SECTIONS.contains(&name.as_str()) {
+            if !valid_sections.contains(&name.as_str()) {
                 bail!("unknown section: --{name}--");
             }
             if let Some(prev) = current_section.take() {

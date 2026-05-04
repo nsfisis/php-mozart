@@ -6,7 +6,11 @@
 //! runner; actual `.test` fixtures and tests live elsewhere.
 
 mod parser;
+mod pool_builder_parser;
 mod runner;
 
 pub use parser::{ParsedTest, parse_test_file, parse_test_str};
+pub use pool_builder_parser::{
+    ParsedPoolBuilderTest, parse_pool_builder_test_file, parse_pool_builder_test_str,
+};
 pub use runner::{RunResult, run_test};

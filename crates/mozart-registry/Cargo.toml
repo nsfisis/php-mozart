@@ -26,3 +26,6 @@ tempfile.workspace = true
 tokio.workspace = true
 tracing.workspace = true
 zip.workspace = true
+
+[dev-dependencies]
+mozart-test-harness.workspace = true
