@@ -1093,6 +1093,7 @@ dependencies = [
  "mozart-core",
  "mozart-registry",
  "mozart-semver",
+ "mozart-spdx-licenses",
  "mozart-test-harness",
  "mozart-vcs",
  "predicates",

@@ -440,8 +440,8 @@ fn parse_iso_time_to_unix(s: &str) -> Option<i64> {
             tz_offset_seconds = 0;
         } else {
             let body = suffix
-            .strip_prefix('+')
-            .or_else(|| suffix.strip_prefix('-'))?;
+                .strip_prefix('+')
+                .or_else(|| suffix.strip_prefix('-'))?;
             let sign = if suffix.starts_with('+') { 1 } else { -1 };
             let body: String = body.chars().filter(|c| *c != ':').collect();
             if body.len() < 4 {

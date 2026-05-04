@@ -671,10 +671,14 @@ fn show_installed_package_detail(
         Verbosity::Normal,
     );
 
-    // License
-    if let Some(licenses) = get_installed_license(pkg) {
+    // License — one line per identifier, matching Composer's printLicenses.
+    for license_id in get_installed_licenses(pkg) {
         console.write_stdout(
-            &format!("{} : {}", console_format!("<info>license</info>"), licenses),
+            &format!(
+                "{} : {}",
+                console_format!("<info>license</info>"),
+                format_license_for_show(&license_id),
+            ),
             Verbosity::Normal,
         );
     }
@@ -1128,16 +1132,18 @@ fn show_locked_package_detail(
         Verbosity::Normal,
     );
 
-    // License
+    // License — one line per identifier, matching Composer's printLicenses.
     if let Some(ref licenses) = pkg.license {
-        console.write_stdout(
-            &format!(
-                "{} : {}",
-                console_format!("<info>license</info>"),
-                licenses.join(", ")
-            ),
-            Verbosity::Normal,
-        );
+        for license_id in licenses {
+            console.write_stdout(
+                &format!(
+                    "{} : {}",
+                    console_format!("<info>license</info>"),
+                    format_license_for_show(license_id),
+                ),
+                Verbosity::Normal,
+            );
+        }
     }
 
     // Homepage
@@ -1276,7 +1282,11 @@ fn show_self(
     );
     if let Some(ref license) = root.license {
         console.write_stdout(
-            &format!("{} : {}", console_format!("<info>license</info>"), license),
+            &format!(
+                "{} : {}",
+                console_format!("<info>license</info>"),
+                format_license_for_show(license),
+            ),
             Verbosity::Normal,
         );
     }
@@ -1875,18 +1885,35 @@ fn get_installed_keywords(pkg: &mozart_registry::installed::InstalledPackageEntr
         .unwrap_or_default()
 }
 
-/// Extract license from an InstalledPackageEntry's extra_fields.
-fn get_installed_license(
-    pkg: &mozart_registry::installed::InstalledPackageEntry,
-) -> Option<String> {
-    pkg.extra_fields.get("license").and_then(|v| {
-        v.as_array().map(|arr| {
+/// Extract license identifiers from an InstalledPackageEntry's extra_fields.
+fn get_installed_licenses(pkg: &mozart_registry::installed::InstalledPackageEntry) -> Vec<String> {
+    pkg.extra_fields
+        .get("license")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
             arr.iter()
-                .filter_map(|v| v.as_str())
-                .collect::<Vec<_>>()
-                .join(", ")
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect()
         })
-    })
+        .unwrap_or_default()
+}
+
+/// Format a single license identifier for the `show` text output. Mirrors
+/// Composer's `Command\ShowCommand::printLicenses()`:
+///   * unknown id → just the id
+///   * OSI-approved → `<full name> (<id>) (OSI approved) <url>`
+///   * otherwise   → `<full name> (<id>) <url>`
+fn format_license_for_show(license_id: &str) -> String {
+    match mozart_spdx_licenses::spdx().get_license_by_identifier(license_id) {
+        None => license_id.to_string(),
+        Some(info) if info.osi_approved => format!(
+            "{} ({}) (OSI approved) {}",
+            info.full_name,
+            license_id,
+            info.url(),
+        ),
+        Some(info) => format!("{} ({}) {}", info.full_name, license_id, info.url()),
+    }
 }
 
 /// Extract homepage from an InstalledPackageEntry's extra_fields.
@@ -1936,6 +1963,51 @@ fn normalize_version_simple(version: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ── format_license_for_show ─────────────────────────────────────────────
+
+    #[test]
+    fn test_format_license_for_show_osi_approved() {
+        let out = format_license_for_show("MIT");
+        assert!(
+            out.contains("MIT License") && out.contains("(MIT)") && out.contains("(OSI approved)"),
+            "got: {out}",
+        );
+        assert!(
+            out.contains("https://spdx.org/licenses/MIT.html#licenseText"),
+            "got: {out}",
+        );
+    }
+
+    #[test]
+    fn test_format_license_for_show_non_osi() {
+        // CC-BY-4.0 is in the SPDX list but is not OSI-approved.
+        let out = format_license_for_show("CC-BY-4.0");
+        assert!(
+            out.contains("(CC-BY-4.0)") && !out.contains("(OSI approved)"),
+            "got: {out}",
+        );
+        assert!(
+            out.contains("https://spdx.org/licenses/CC-BY-4.0.html#licenseText"),
+            "got: {out}",
+        );
+    }
+
+    #[test]
+    fn test_format_license_for_show_unknown_falls_back_to_id() {
+        assert_eq!(format_license_for_show("not-a-license"), "not-a-license");
+    }
+
+    #[test]
+    fn test_format_license_for_show_url_uses_canonical_id_casing() {
+        // Lookup is case-insensitive, but the URL uses the canonical id casing
+        // from the SPDX database — matching SpdxLicenses::getLicenseByIdentifier.
+        let out = format_license_for_show("mit");
+        assert!(
+            out.contains("https://spdx.org/licenses/MIT.html#licenseText"),
+            "got: {out}",
+        );
+    }
 
     // ── format_version ──────────────────────────────────────────────────────
 

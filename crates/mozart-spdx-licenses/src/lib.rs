@@ -12,6 +12,18 @@ pub struct LicenseInfo {
     pub deprecated: bool,
 }
 
+impl LicenseInfo {
+    /// Canonical SPDX URL for this license. Mirrors Composer's
+    /// `SpdxLicenses::getLicenseByIdentifier()` which constructs the URL from
+    /// the identifier rather than storing it in the data file.
+    pub fn url(&self) -> String {
+        format!(
+            "https://spdx.org/licenses/{}.html#licenseText",
+            self.identifier
+        )
+    }
+}
+
 /// Information about an SPDX license exception.
 #[derive(Debug, Clone)]
 pub struct ExceptionInfo {
@@ -448,6 +460,21 @@ mod tests {
 
         assert!(db.get_license_by_identifier("mit").is_some());
         assert!(db.get_license_by_identifier("nonexistent").is_none());
+    }
+
+    #[test]
+    fn license_url_uses_canonical_id() {
+        let db = spdx();
+        let mit = db.get_license_by_identifier("MIT").unwrap();
+        assert_eq!(mit.url(), "https://spdx.org/licenses/MIT.html#licenseText");
+
+        // Lookup is case-insensitive, but the URL uses the canonical casing
+        // from the database, mirroring Composer's `getLicenseByIdentifier`.
+        let mit_lower = db.get_license_by_identifier("mit").unwrap();
+        assert_eq!(
+            mit_lower.url(),
+            "https://spdx.org/licenses/MIT.html#licenseText"
+        );
     }
 
     #[test]
