@@ -1,7 +1,15 @@
 use clap::Args;
 use mozart_core::console::Verbosity;
 use mozart_core::console_format;
+use regex::Regex;
 use std::path::{Path, PathBuf};
+use std::sync::LazyLock;
+
+static DEPRECATED_GPL_OR_LATER_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?i)^[AL]?GPL-[123](\.[01])?\+$").unwrap());
+
+static DEPRECATED_GPL_BARE_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?i)^[AL]?GPL-[123](\.[01])?$").unwrap());
 
 #[derive(Args)]
 pub struct ValidateArgs {
@@ -261,14 +269,55 @@ fn check_name(obj: &serde_json::Map<String, serde_json::Value>, result: &mut Val
     }
 }
 
-/// Check the "license" field: warn if absent.
+/// Check the "license" field: warn if absent or empty, and warn on deprecated SPDX
+/// identifiers. Mirrors Composer's `Util\ConfigValidator::validate()`.
 fn check_license(obj: &serde_json::Map<String, serde_json::Value>, result: &mut ValidationResult) {
-    if obj.get("license").is_none() {
-        result.warnings.push(
-            "No license specified, it is recommended to do so. \
-             For closed-source software you may use \"proprietary\" as license."
-                .to_string(),
-        );
+    let no_license_msg = "No license specified, it is recommended to do so. \
+         For closed-source software you may use \"proprietary\" as license."
+        .to_string();
+
+    // Composer's `empty($manifest['license'])` is true for missing, null, "", and [].
+    let licenses: Vec<&str> = match obj.get("license") {
+        None | Some(serde_json::Value::Null) => {
+            result.warnings.push(no_license_msg);
+            return;
+        }
+        Some(serde_json::Value::String(s)) if s.is_empty() => {
+            result.warnings.push(no_license_msg);
+            return;
+        }
+        Some(serde_json::Value::Array(arr)) if arr.is_empty() => {
+            result.warnings.push(no_license_msg);
+            return;
+        }
+        Some(serde_json::Value::String(s)) => vec![s.as_str()],
+        Some(serde_json::Value::Array(arr)) => arr.iter().filter_map(|v| v.as_str()).collect(),
+        // Non-string, non-array — schema validation handles the type error elsewhere.
+        Some(_) => return,
+    };
+
+    for license in licenses {
+        if license == "proprietary" {
+            continue;
+        }
+        if !mozart_core::validation::is_license_deprecated(license) {
+            continue;
+        }
+        let warning = if DEPRECATED_GPL_OR_LATER_RE.is_match(license) {
+            let suggested = format!("{}-or-later", license.replace('+', ""));
+            format!(
+                "License \"{license}\" is a deprecated SPDX license identifier, use \"{suggested}\" instead"
+            )
+        } else if DEPRECATED_GPL_BARE_RE.is_match(license) {
+            format!(
+                "License \"{license}\" is a deprecated SPDX license identifier, use \"{license}-only\" or \"{license}-or-later\" instead"
+            )
+        } else {
+            format!(
+                "License \"{license}\" is a deprecated SPDX license identifier, see https://spdx.org/licenses/"
+            )
+        };
+        result.warnings.push(warning);
     }
 }
 
@@ -789,6 +838,126 @@ mod tests {
         let json = r#"{"name": "vendor/pkg", "license": "MIT"}"#;
         let result = parse_and_validate(json, &make_args());
         assert!(!result.warnings.iter().any(|w| w.contains("No license")));
+    }
+
+    #[test]
+    fn test_validate_empty_license_string_warns() {
+        let json = r#"{"name": "vendor/pkg", "license": ""}"#;
+        let result = parse_and_validate(json, &make_args());
+        assert!(result.warnings.iter().any(|w| w.contains("No license")));
+    }
+
+    #[test]
+    fn test_validate_empty_license_array_warns() {
+        let json = r#"{"name": "vendor/pkg", "license": []}"#;
+        let result = parse_and_validate(json, &make_args());
+        assert!(result.warnings.iter().any(|w| w.contains("No license")));
+    }
+
+    #[test]
+    fn test_validate_proprietary_license_no_warning() {
+        let json = r#"{"name": "vendor/pkg", "license": "proprietary"}"#;
+        let result = parse_and_validate(json, &make_args());
+        assert!(!result.warnings.iter().any(|w| w.contains("license")));
+    }
+
+    #[test]
+    fn test_validate_unknown_license_no_deprecation_warning() {
+        // Unknown identifiers don't get a deprecation warning here (Composer's
+        // ConfigValidator only checks deprecation, not validity).
+        let json = r#"{"name": "vendor/pkg", "license": "totally-not-a-license"}"#;
+        let result = parse_and_validate(json, &make_args());
+        assert!(
+            !result
+                .warnings
+                .iter()
+                .any(|w| w.contains("deprecated SPDX"))
+        );
+    }
+
+    #[test]
+    fn test_validate_deprecated_gpl_bare_warns() {
+        let json = r#"{"name": "vendor/pkg", "license": "GPL-2.0"}"#;
+        let result = parse_and_validate(json, &make_args());
+        let warning = result
+            .warnings
+            .iter()
+            .find(|w| w.contains("deprecated SPDX"))
+            .expect("expected deprecation warning");
+        assert!(warning.contains(r#""GPL-2.0""#), "got: {warning}");
+        assert!(warning.contains("\"GPL-2.0-only\""), "got: {warning}");
+        assert!(warning.contains("\"GPL-2.0-or-later\""), "got: {warning}");
+    }
+
+    #[test]
+    fn test_validate_deprecated_gpl_or_later_warns() {
+        let json = r#"{"name": "vendor/pkg", "license": "GPL-3.0+"}"#;
+        let result = parse_and_validate(json, &make_args());
+        let warning = result
+            .warnings
+            .iter()
+            .find(|w| w.contains("deprecated SPDX"))
+            .expect("expected deprecation warning");
+        assert!(warning.contains(r#""GPL-3.0+""#), "got: {warning}");
+        assert!(warning.contains("\"GPL-3.0-or-later\""), "got: {warning}");
+    }
+
+    #[test]
+    fn test_validate_deprecated_agpl_bare_warns() {
+        let json = r#"{"name": "vendor/pkg", "license": "AGPL-1.0"}"#;
+        let result = parse_and_validate(json, &make_args());
+        let warning = result
+            .warnings
+            .iter()
+            .find(|w| w.contains("deprecated SPDX"))
+            .expect("expected deprecation warning");
+        assert!(warning.contains("\"AGPL-1.0-only\""), "got: {warning}");
+        assert!(warning.contains("\"AGPL-1.0-or-later\""), "got: {warning}");
+    }
+
+    #[test]
+    fn test_validate_deprecated_non_gpl_uses_generic_message() {
+        // Pick any non-GPL deprecated identifier; eCos-2.0 was deprecated in SPDX.
+        // If this changes upstream, replace with another deprecated id.
+        let json = r#"{"name": "vendor/pkg", "license": "eCos-2.0"}"#;
+        let result = parse_and_validate(json, &make_args());
+        if let Some(warning) = result
+            .warnings
+            .iter()
+            .find(|w| w.contains("deprecated SPDX"))
+        {
+            assert!(
+                warning.contains("https://spdx.org/licenses/"),
+                "expected generic message, got: {warning}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_validate_array_license_checks_each() {
+        let json = r#"{"name": "vendor/pkg", "license": ["MIT", "GPL-2.0"]}"#;
+        let result = parse_and_validate(json, &make_args());
+        assert!(
+            result
+                .warnings
+                .iter()
+                .any(|w| w.contains("deprecated SPDX") && w.contains("GPL-2.0")),
+            "expected deprecation warning for GPL-2.0 in array form, got: {:?}",
+            result.warnings,
+        );
+    }
+
+    #[test]
+    fn test_validate_non_deprecated_license_no_warning() {
+        let json = r#"{"name": "vendor/pkg", "license": "MIT"}"#;
+        let result = parse_and_validate(json, &make_args());
+        assert!(
+            !result
+                .warnings
+                .iter()
+                .any(|w| w.contains("deprecated SPDX")),
+            "MIT is not deprecated, should not warn",
+        );
     }
 
     // ── check_version_field ────────────────────────────────────────────────
