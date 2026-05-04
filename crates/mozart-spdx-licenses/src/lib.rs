@@ -85,6 +85,19 @@ impl SpdxLicenses {
             return false;
         }
 
+        // Fast path: check simple license identifier first.
+        if self.is_valid_license_id(license) {
+            return true;
+        }
+
+        // Composer anchors its regex with `^...$` and never permits leading or
+        // trailing whitespace. Reject it here so the tokenizer (which skips
+        // whitespace as a token separator) doesn't accept it.
+        let bytes = license.as_bytes();
+        if bytes[0].is_ascii_whitespace() || bytes[bytes.len() - 1].is_ascii_whitespace() {
+            return false;
+        }
+
         // Special values
         if license.eq_ignore_ascii_case("NONE") || license.eq_ignore_ascii_case("NOASSERTION") {
             return true;
