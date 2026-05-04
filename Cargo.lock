@@ -1166,9 +1166,11 @@ dependencies = [
  "mozart-console-macros",
  "mozart-spdx-licenses",
  "regex",
+ "reqwest",
  "serde",
  "serde_json",
  "tempfile",
+ "tracing",
 ]
 
 [[package]]
@@ -1200,7 +1202,6 @@ dependencies = [
  "mozart-test-harness",
  "mozart-vcs",
  "regex",
- "reqwest",
  "serde",
  "serde_json",
  "sha1",

@@ -109,9 +109,7 @@ pub async fn download_dist(
         }
     }
 
-    let client = reqwest::Client::builder()
-        .user_agent(mozart_core::http::user_agent())
-        .build()?;
+    let client = mozart_core::http::client_builder().build()?;
     let response = client.get(url).send().await?;
     tracing::debug!(status = %response.status(), "received response");
 

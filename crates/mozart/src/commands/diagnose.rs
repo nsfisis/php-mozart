@@ -92,9 +92,8 @@ async fn check_http_connectivity(url: &str) -> CheckResult {
         return CheckResult::Skip("COMPOSER_DISABLE_NETWORK is set".to_string());
     }
 
-    let client = match reqwest::Client::builder()
+    let client = match mozart_core::http::client_builder()
         .timeout(std::time::Duration::from_secs(10))
-        .user_agent(mozart_core::http::user_agent())
         .build()
     {
         Ok(c) => c,
@@ -120,9 +119,8 @@ async fn check_github_api() -> CheckResult {
         return CheckResult::Skip("COMPOSER_DISABLE_NETWORK is set".to_string());
     }
 
-    let client = match reqwest::Client::builder()
+    let client = match mozart_core::http::client_builder()
         .timeout(std::time::Duration::from_secs(10))
-        .user_agent(mozart_core::http::user_agent())
         .build()
     {
         Ok(c) => c,

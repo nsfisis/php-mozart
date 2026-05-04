@@ -248,9 +248,7 @@ pub async fn fetch_package_versions(
     // Cache miss — fetch from Packagist
     let url = format!("https://repo.packagist.org/p2/{package_name}.json");
     tracing::debug!(%url, "fetching package metadata");
-    let client = reqwest::Client::builder()
-        .user_agent(mozart_core::http::user_agent())
-        .build()?;
+    let client = mozart_core::http::client_builder().build()?;
     let response = client.get(&url).send().await?;
     tracing::debug!(status = %response.status(), "received response");
 
@@ -324,9 +322,7 @@ pub async fn search_packages(
     query: &str,
     package_type: Option<&str>,
 ) -> anyhow::Result<(Vec<SearchResult>, u64)> {
-    let client = reqwest::Client::builder()
-        .user_agent(mozart_core::http::user_agent())
-        .build()?;
+    let client = mozart_core::http::client_builder().build()?;
 
     let mut all_results: Vec<SearchResult> = Vec::new();
     let mut page = 1usize;
@@ -440,9 +436,7 @@ pub struct SecurityAdvisoriesResponse {
 pub async fn fetch_security_advisories(
     package_names: &[&str],
 ) -> anyhow::Result<BTreeMap<String, Vec<SecurityAdvisory>>> {
-    let client = reqwest::Client::builder()
-        .user_agent(mozart_core::http::user_agent())
-        .build()?;
+    let client = mozart_core::http::client_builder().build()?;
 
     let mut all_advisories: BTreeMap<String, Vec<SecurityAdvisory>> = BTreeMap::new();
 

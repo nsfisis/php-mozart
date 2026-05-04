@@ -150,9 +150,8 @@ fn version_from_backup(path: &Path) -> String {
 async fn fetch_releases(include_prerelease: bool) -> anyhow::Result<Vec<GitHubRelease>> {
     let url = format!("{GITHUB_API_BASE}/{GITHUB_REPO}/releases");
 
-    let client = reqwest::Client::builder()
+    let client = mozart_core::http::client_builder()
         .timeout(std::time::Duration::from_secs(30))
-        .user_agent(mozart_core::http::user_agent())
         .build()
         .map_err(|e| anyhow::anyhow!("Could not build HTTP client: {e}"))?;
 
@@ -230,9 +229,8 @@ async fn download_asset(
     show_progress: bool,
     console: &mozart_core::console::Console,
 ) -> anyhow::Result<()> {
-    let client = reqwest::Client::builder()
+    let client = mozart_core::http::client_builder()
         .timeout(std::time::Duration::from_secs(300))
-        .user_agent(mozart_core::http::user_agent())
         .build()
         .map_err(|e| anyhow::anyhow!("Could not build HTTP client: {e}"))?;
 

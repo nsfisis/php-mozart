@@ -254,6 +254,12 @@ pub async fn execute(cli: &Cli) -> anyhow::Result<()> {
         cli.no_ansi,
         cli.no_interaction,
     );
+
+    // Initialize HTTPS root certificates from `config.cafile` / `config.capath`
+    // before any command makes a network request.
+    let tls_opts = config_helpers::load_tls_options(cli);
+    mozart_core::http::init_tls_options(&tls_opts)?;
+
     let command = cli.command.as_ref().expect("command must be set");
     match command {
         Commands::About(args) => about::execute(args, cli, &console).await,

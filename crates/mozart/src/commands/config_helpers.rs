@@ -68,6 +68,53 @@ pub(crate) fn working_dir(cli: &super::Cli) -> anyhow::Result<PathBuf> {
     }
 }
 
+/// Read TLS-related options (`config.cafile`, `config.capath`) from the merged
+/// global + local config. Local values override global. Relative paths are
+/// resolved against the directory of the config file that defined them.
+pub(crate) fn load_tls_options(cli: &super::Cli) -> mozart_core::http::TlsOptions {
+    let mut opts = mozart_core::http::TlsOptions::default();
+
+    let home = composer_home();
+    apply_tls_from_file(&home.join("config.json"), &home, &mut opts);
+
+    if let Ok(wd) = working_dir(cli) {
+        apply_tls_from_file(&wd.join("composer.json"), &wd, &mut opts);
+    }
+
+    opts
+}
+
+fn apply_tls_from_file(path: &Path, base_dir: &Path, opts: &mut mozart_core::http::TlsOptions) {
+    let Ok(content) = std::fs::read_to_string(path) else {
+        return;
+    };
+    let Ok(json) = serde_json::from_str::<serde_json::Value>(&content) else {
+        return;
+    };
+    let Some(cfg) = json.get("config").and_then(|v| v.as_object()) else {
+        return;
+    };
+    if let Some(s) = cfg.get("cafile").and_then(|v| v.as_str())
+        && !s.is_empty()
+    {
+        opts.cafile = Some(resolve_relative(s, base_dir));
+    }
+    if let Some(s) = cfg.get("capath").and_then(|v| v.as_str())
+        && !s.is_empty()
+    {
+        opts.capath = Some(resolve_relative(s, base_dir));
+    }
+}
+
+fn resolve_relative(path: &str, base: &Path) -> PathBuf {
+    let p = Path::new(path);
+    if p.is_absolute() {
+        p.to_path_buf()
+    } else {
+        base.join(p)
+    }
+}
+
 /// Read a JSON file as `serde_json::Value`.
 /// If the file does not exist, return a default skeleton:
 /// `{"config": {}}` for global files, `{}` for local.

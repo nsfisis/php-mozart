@@ -42,7 +42,7 @@ impl ForgejoDriver {
             branches: None,
             info_cache: IndexMap::new(),
             git_driver: None,
-            http_client: Client::new(),
+            http_client: mozart_core::http::default_client(),
             config,
             api_failed: false,
         }
