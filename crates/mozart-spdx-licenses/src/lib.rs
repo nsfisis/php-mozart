@@ -1,4 +1,4 @@
-use indexmap::IndexMap;
+use std::collections::HashMap;
 use std::sync::LazyLock;
 
 include!(concat!(env!("OUT_DIR"), "/spdx_data.rs"));
@@ -21,16 +21,16 @@ pub struct ExceptionInfo {
 
 /// SPDX license database with expression validation.
 pub struct SpdxLicenses {
-    licenses: IndexMap<&'static str, LicenseInfo>,
-    exceptions: IndexMap<&'static str, ExceptionInfo>,
-    name_to_id: IndexMap<&'static str, &'static str>,
+    licenses: HashMap<&'static str, LicenseInfo>,
+    exceptions: HashMap<&'static str, ExceptionInfo>,
+    name_to_id: HashMap<&'static str, &'static str>,
 }
 
 impl SpdxLicenses {
     /// Build the license database from generated data.
     pub fn new() -> Self {
-        let mut licenses = IndexMap::with_capacity(LICENSES.len());
-        let mut name_to_id = IndexMap::with_capacity(LICENSES.len());
+        let mut licenses = HashMap::with_capacity(LICENSES.len());
+        let mut name_to_id = HashMap::with_capacity(LICENSES.len());
         for &(lower, id, full_name, osi, deprecated) in LICENSES {
             licenses.insert(
                 lower,
@@ -44,7 +44,7 @@ impl SpdxLicenses {
             name_to_id.insert(full_name, id);
         }
 
-        let mut exceptions = IndexMap::with_capacity(EXCEPTIONS.len());
+        let mut exceptions = HashMap::with_capacity(EXCEPTIONS.len());
         for &(lower, id, full_name) in EXCEPTIONS {
             exceptions.insert(
                 lower,
@@ -95,7 +95,6 @@ impl SpdxLicenses {
     /// exceptions, the `+` (or-later) operator, LicenseRef, and the special
     /// values `NONE` and `NOASSERTION`.
     pub fn validate(&self, license: &str) -> bool {
-        let license = license.trim();
         if license.is_empty() {
             return false;
         }
@@ -415,6 +414,20 @@ mod tests {
         assert!(!db.validate("MIT)"));
         assert!(!db.validate("MIT WITH"));
         assert!(!db.validate("MIT WITH not-an-exception"));
+    }
+
+    #[test]
+    fn no_edge_whitespace_allowed() {
+        // Composer's `^(NONE|NOASSERTION|...)$` (with `x` flag) admits no
+        // leading or trailing whitespace; mirror that.
+        let db = spdx();
+        assert!(db.validate("MIT"));
+        assert!(!db.validate(" MIT"));
+        assert!(!db.validate("MIT "));
+        assert!(!db.validate(" MIT "));
+        assert!(!db.validate("\tMIT"));
+        assert!(!db.validate("MIT\t"));
+        assert!(!db.validate("\nMIT"));
     }
 
     #[test]

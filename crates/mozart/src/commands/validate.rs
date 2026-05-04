@@ -269,35 +269,64 @@ fn check_name(obj: &serde_json::Map<String, serde_json::Value>, result: &mut Val
     }
 }
 
-/// Check the "license" field: warn if absent or empty, and warn on deprecated SPDX
-/// identifiers. Mirrors Composer's `Util\ConfigValidator::validate()`.
+/// Check the "license" field. Mirrors:
+///   * Composer's `Util\ConfigValidator::validate()` — "No license" + deprecation
+///     warnings (see fix B for these).
+///   * Composer's `Package\Loader\ValidatingArrayLoader::load()` license block —
+///     type-shape warnings, SPDX expression validity, and extra-spaces detection.
+///     The validity/extra-spaces checks are gated on the `time` field: only
+///     releases without a date or within the last 8 days are checked.
 fn check_license(obj: &serde_json::Map<String, serde_json::Value>, result: &mut ValidationResult) {
     let no_license_msg = "No license specified, it is recommended to do so. \
          For closed-source software you may use \"proprietary\" as license."
         .to_string();
 
     // Composer's `empty($manifest['license'])` is true for missing, null, "", and [].
-    let licenses: Vec<&str> = match obj.get("license") {
+    let raw_entries: Vec<&serde_json::Value> = match obj.get("license") {
         None | Some(serde_json::Value::Null) => {
             result.warnings.push(no_license_msg);
             return;
         }
-        Some(serde_json::Value::String(s)) if s.is_empty() => {
-            result.warnings.push(no_license_msg);
+        Some(v @ serde_json::Value::String(s)) => {
+            if s.is_empty() {
+                result.warnings.push(no_license_msg);
+                return;
+            }
+            vec![v]
+        }
+        Some(serde_json::Value::Array(arr)) => {
+            if arr.is_empty() {
+                result.warnings.push(no_license_msg);
+                return;
+            }
+            arr.iter().collect()
+        }
+        // ValidatingArrayLoader: license must be a string or array of strings.
+        Some(other) => {
+            result.warnings.push(format!(
+                "License must be a string or array of strings, got {}.",
+                serde_json::to_string(other).unwrap_or_default()
+            ));
             return;
         }
-        Some(serde_json::Value::Array(arr)) if arr.is_empty() => {
-            result.warnings.push(no_license_msg);
-            return;
-        }
-        Some(serde_json::Value::String(s)) => vec![s.as_str()],
-        Some(serde_json::Value::Array(arr)) => arr.iter().filter_map(|v| v.as_str()).collect(),
-        // Non-string, non-array — schema validation handles the type error elsewhere.
-        Some(_) => return,
     };
 
-    for license in licenses {
-        if license == "proprietary" {
+    // ValidatingArrayLoader: each entry must be a string. Non-string entries
+    // are dropped from the working set with a per-entry warning.
+    let mut licenses: Vec<&str> = Vec::with_capacity(raw_entries.len());
+    for v in raw_entries {
+        match v.as_str() {
+            Some(s) => licenses.push(s),
+            None => result.warnings.push(format!(
+                "License {} should be a string.",
+                serde_json::to_string(v).unwrap_or_default()
+            )),
+        }
+    }
+
+    // ConfigValidator: deprecated identifier warnings.
+    for license in &licenses {
+        if *license == "proprietary" {
             continue;
         }
         if !mozart_core::validation::is_license_deprecated(license) {
@@ -319,6 +348,126 @@ fn check_license(obj: &serde_json::Map<String, serde_json::Value>, result: &mut 
         };
         result.warnings.push(warning);
     }
+
+    // ValidatingArrayLoader: SPDX expression validity, gated on the 8-day
+    // release window. If `time` is absent or unparseable, releaseDate is
+    // treated as null (PHP `try/catch` semantics) → validation runs.
+    let release_ts = obj
+        .get("time")
+        .and_then(|v| v.as_str())
+        .and_then(parse_iso_time_to_unix);
+    let cutoff = current_unix_time().saturating_sub(8 * 86_400);
+    let in_window = release_ts.is_none_or(|ts| ts >= cutoff);
+    if !in_window {
+        return;
+    }
+    for license in &licenses {
+        if *license == "proprietary" {
+            continue;
+        }
+        let to_validate = license.replace("proprietary", "MIT");
+        if mozart_core::validation::validate_license(&to_validate) {
+            continue;
+        }
+        // PHP `json_encode($license)` for a string is `"escaped"`; serde matches.
+        let quoted = serde_json::to_string(license).unwrap_or_else(|_| format!("\"{license}\""));
+        if mozart_core::validation::validate_license(to_validate.trim()) {
+            result.warnings.push(format!(
+                "License {quoted} must not contain extra spaces, make sure to trim it."
+            ));
+        } else {
+            result.warnings.push(format!(
+                "License {quoted} is not a valid SPDX license identifier, see https://spdx.org/licenses/ if you use an open license.\n\
+                 If the software is closed-source, you may use \"proprietary\" as license."
+            ));
+        }
+    }
+}
+
+/// Current time as a Unix timestamp (UTC seconds since epoch). 0 if the
+/// system clock is set before the epoch.
+fn current_unix_time() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0)
+}
+
+/// Parse a Composer-style `time` string into a Unix timestamp.
+///
+/// Accepts `YYYY-MM-DD HH:MM:SS` (Composer's typical output) and
+/// `YYYY-MM-DDTHH:MM:SS` with an optional `Z` or numeric offset suffix. The
+/// timezone suffix is parsed when present; absent suffixes are treated as
+/// UTC, matching `new DateTime($time, new DateTimeZone('UTC'))`.
+fn parse_iso_time_to_unix(s: &str) -> Option<i64> {
+    let bytes = s.as_bytes();
+    if bytes.len() < 19 {
+        return None;
+    }
+    let n = |start: usize, len: usize| -> Option<i64> {
+        std::str::from_utf8(&bytes[start..start + len])
+            .ok()?
+            .parse()
+            .ok()
+    };
+    let year = n(0, 4)? as i32;
+    if bytes[4] != b'-' {
+        return None;
+    }
+    let month = n(5, 2)? as i32;
+    if bytes[7] != b'-' {
+        return None;
+    }
+    let day = n(8, 2)? as i32;
+    if bytes[10] != b' ' && bytes[10] != b'T' {
+        return None;
+    }
+    let hour = n(11, 2)?;
+    if bytes[13] != b':' {
+        return None;
+    }
+    let minute = n(14, 2)?;
+    if bytes[16] != b':' {
+        return None;
+    }
+    let second = n(17, 2)?;
+
+    // Optional timezone suffix.
+    let mut tz_offset_seconds: i64 = 0;
+    if bytes.len() > 19 {
+        let suffix = &s[19..];
+        if suffix == "Z" {
+            tz_offset_seconds = 0;
+        } else {
+            let body = suffix
+            .strip_prefix('+')
+            .or_else(|| suffix.strip_prefix('-'))?;
+            let sign = if suffix.starts_with('+') { 1 } else { -1 };
+            let body: String = body.chars().filter(|c| *c != ':').collect();
+            if body.len() < 4 {
+                return None;
+            }
+            let oh: i64 = body.get(0..2)?.parse().ok()?;
+            let om: i64 = body.get(2..4)?.parse().ok()?;
+            tz_offset_seconds = sign * (oh * 3600 + om * 60);
+        }
+    }
+
+    let utc = days_from_civil(year, month, day) * 86_400 + hour * 3600 + minute * 60 + second
+        - tz_offset_seconds;
+    Some(utc)
+}
+
+/// Howard Hinnant's `days_from_civil`: returns days since 1970-01-01 for a
+/// proleptic Gregorian (year, month, day). Handles negative years correctly.
+fn days_from_civil(y: i32, m: i32, d: i32) -> i64 {
+    let y = if m <= 2 { y - 1 } else { y };
+    let era = if y >= 0 { y / 400 } else { (y - 399) / 400 };
+    let yoe = (y - era * 400) as i64; // [0, 399]
+    let m_adj = if m > 2 { m - 3 } else { m + 9 };
+    let doy = (153 * m_adj as i64 + 2) / 5 + d as i64 - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    (era as i64) * 146_097 + doe - 719_468
 }
 
 /// Warn if the "version" field is present.
@@ -958,6 +1107,193 @@ mod tests {
                 .any(|w| w.contains("deprecated SPDX")),
             "MIT is not deprecated, should not warn",
         );
+    }
+
+    // ── ValidatingArrayLoader-equivalent license checks ────────────────────
+
+    #[test]
+    fn test_validate_license_wrong_type_warns() {
+        let json = r#"{"name": "vendor/pkg", "license": 42}"#;
+        let result = parse_and_validate(json, &make_args());
+        assert!(
+            result.warnings.iter().any(|w| w
+                .contains("License must be a string or array of strings")
+                && w.contains("42")),
+            "got: {:?}",
+            result.warnings
+        );
+    }
+
+    #[test]
+    fn test_validate_license_array_non_string_entry_warns() {
+        let json = r#"{"name": "vendor/pkg", "license": ["MIT", 42]}"#;
+        let result = parse_and_validate(json, &make_args());
+        assert!(
+            result
+                .warnings
+                .iter()
+                .any(|w| w.contains("License 42 should be a string")),
+            "got: {:?}",
+            result.warnings
+        );
+    }
+
+    #[test]
+    fn test_validate_invalid_spdx_license_warns() {
+        let json = r#"{"name": "vendor/pkg", "license": "totally-not-a-license"}"#;
+        let result = parse_and_validate(json, &make_args());
+        assert!(
+            result
+                .warnings
+                .iter()
+                .any(|w| w.contains("\"totally-not-a-license\"")
+                    && w.contains("not a valid SPDX license identifier")),
+            "got: {:?}",
+            result.warnings
+        );
+    }
+
+    #[test]
+    fn test_validate_license_extra_spaces_warns() {
+        // Composer's expression regex tolerates one ASCII space on each end —
+        // the warning only fires when there are more (or non-space whitespace).
+        let json = r#"{"name": "vendor/pkg", "license": "  MIT  "}"#;
+        let result = parse_and_validate(json, &make_args());
+        assert!(
+            result
+                .warnings
+                .iter()
+                .any(|w| w.contains("must not contain extra spaces")),
+            "got: {:?}",
+            result.warnings
+        );
+        assert!(
+            !result
+                .warnings
+                .iter()
+                .any(|w| w.contains("not a valid SPDX")),
+            "extra-spaces case should not also emit invalid-SPDX, got: {:?}",
+            result.warnings
+        );
+    }
+
+    #[test]
+    fn test_validate_license_proprietary_in_expression_validates() {
+        // Composer replaces "proprietary" with "MIT" before validating, so
+        // expressions mixing "proprietary" with real identifiers are accepted.
+        let json = r#"{"name": "vendor/pkg", "license": "(MIT OR proprietary)"}"#;
+        let result = parse_and_validate(json, &make_args());
+        assert!(
+            !result
+                .warnings
+                .iter()
+                .any(|w| w.contains("not a valid SPDX")),
+            "got: {:?}",
+            result.warnings
+        );
+    }
+
+    #[test]
+    fn test_validate_license_old_release_skips_validity_check() {
+        // Release older than 8 days → SPDX validity check is skipped, but
+        // deprecation warnings (ConfigValidator's path) still fire.
+        let json = r#"{
+            "name": "vendor/pkg",
+            "license": "totally-not-a-license",
+            "time": "1970-01-01 00:00:00"
+        }"#;
+        let result = parse_and_validate(json, &make_args());
+        assert!(
+            !result
+                .warnings
+                .iter()
+                .any(|w| w.contains("not a valid SPDX")),
+            "old release should not produce SPDX validity warning, got: {:?}",
+            result.warnings
+        );
+    }
+
+    #[test]
+    fn test_validate_license_recent_release_validates() {
+        // A future "time" is within the cutoff (>= now-8days) → validate.
+        let json = r#"{
+            "name": "vendor/pkg",
+            "license": "totally-not-a-license",
+            "time": "9999-01-01 00:00:00"
+        }"#;
+        let result = parse_and_validate(json, &make_args());
+        assert!(
+            result
+                .warnings
+                .iter()
+                .any(|w| w.contains("not a valid SPDX")),
+            "recent release should produce SPDX validity warning, got: {:?}",
+            result.warnings
+        );
+    }
+
+    #[test]
+    fn test_validate_license_unparseable_time_treated_as_null() {
+        // Unparseable time → releaseDate stays null → validation runs.
+        let json = r#"{
+            "name": "vendor/pkg",
+            "license": "totally-not-a-license",
+            "time": "not-a-date"
+        }"#;
+        let result = parse_and_validate(json, &make_args());
+        assert!(
+            result
+                .warnings
+                .iter()
+                .any(|w| w.contains("not a valid SPDX")),
+            "unparseable time should be treated as null → validate, got: {:?}",
+            result.warnings
+        );
+    }
+
+    // ── parse_iso_time_to_unix ─────────────────────────────────────────────
+
+    #[test]
+    fn test_parse_iso_time_basic() {
+        assert_eq!(parse_iso_time_to_unix("1970-01-01 00:00:00"), Some(0));
+        assert_eq!(
+            parse_iso_time_to_unix("2023-12-15 13:45:30"),
+            Some(1_702_647_930)
+        );
+    }
+
+    #[test]
+    fn test_parse_iso_time_t_separator() {
+        assert_eq!(
+            parse_iso_time_to_unix("2023-12-15T13:45:30"),
+            Some(1_702_647_930)
+        );
+        assert_eq!(
+            parse_iso_time_to_unix("2023-12-15T13:45:30Z"),
+            Some(1_702_647_930)
+        );
+    }
+
+    #[test]
+    fn test_parse_iso_time_with_offset() {
+        // 13:45:30+05:00 = 08:45:30 UTC
+        assert_eq!(
+            parse_iso_time_to_unix("2023-12-15T13:45:30+05:00"),
+            Some(1_702_647_930 - 5 * 3600)
+        );
+        // 13:45:30-05:00 = 18:45:30 UTC
+        assert_eq!(
+            parse_iso_time_to_unix("2023-12-15T13:45:30-05:00"),
+            Some(1_702_647_930 + 5 * 3600)
+        );
+    }
+
+    #[test]
+    fn test_parse_iso_time_invalid() {
+        assert_eq!(parse_iso_time_to_unix(""), None);
+        assert_eq!(parse_iso_time_to_unix("not-a-date"), None);
+        assert_eq!(parse_iso_time_to_unix("2023-12-15"), None);
+        assert_eq!(parse_iso_time_to_unix("2023/12/15 13:45:30"), None);
     }
 
     // ── check_version_field ────────────────────────────────────────────────
