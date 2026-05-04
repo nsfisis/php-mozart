@@ -243,11 +243,11 @@ pub fn normalize_branch_alias_target(alias_target: &str) -> Option<String> {
 /// either side of an `as` clause (`require: "1.0.x-dev as dev-master"`).
 ///
 /// Composer sends both sides through `normalize`, which:
-/// - Maps `master` / `trunk` / `default` (with optional `dev-` prefix) to
-///   `9999999-dev`. Mozart's pool uses the four-segment expansion
-///   `9999999.9999999.9999999.9999999-dev`, which is what
-///   `make_default_branch_alias` emits — keep the same form here so a root
-///   `as dev-master` lines up with synthetic default-branch aliases.
+/// - Maps bare `master` / `trunk` / `default` to the `dev-` prefixed form
+///   (`master` → `dev-master`) for BC with Composer 1, then returns
+///   `dev-NAME` unchanged. Inline `type: package` entries for these branches
+///   land in the pool under the same literal `dev-NAME` form, so root aliases
+///   declared with the matching atom must point at that same string.
 /// - Strips a leading `v` and treats numeric `*.x-dev` branches via
 ///   `normalizeBranch` (= `normalize_branch_alias_target`).
 /// - Leaves other `dev-NAME` strings as `dev-NAME`.
@@ -257,22 +257,27 @@ fn normalize_root_alias_atom(atom: &str) -> Option<String> {
         return None;
     }
     let lower = trimmed.to_lowercase();
-    let stripped = lower.strip_prefix("dev-").unwrap_or(&lower);
-    if matches!(stripped, "master" | "trunk" | "default") {
-        return Some("9999999.9999999.9999999.9999999-dev".to_string());
-    }
-    if let Some(numeric) = normalize_branch_alias_target(trimmed) {
-        return Some(numeric);
-    }
-    if let Some(rest) = lower.strip_prefix("dev-") {
+    // Composer's normalize: bare `master` / `trunk` / `default` get the
+    // `dev-` prefix prepended for BC, then fall through to the `dev-`
+    // branch below.
+    let with_prefix = if matches!(lower.as_str(), "master" | "trunk" | "default") {
+        format!("dev-{lower}")
+    } else {
+        trimmed.to_string()
+    };
+    let lower_pref = with_prefix.to_lowercase();
+    if let Some(rest) = lower_pref.strip_prefix("dev-") {
         return Some(format!("dev-{rest}"));
+    }
+    if let Some(numeric) = normalize_branch_alias_target(&with_prefix) {
+        return Some(numeric);
     }
     // Stable numeric atoms (e.g. `1.1.1`) need to come back in the
     // four-segment form `Version::Display` produces, so the alias
     // matcher's `input.version != alias.version_normalized` check lines
     // up with pool inputs (which carry the 4-segment normalized form).
     // Returning the raw input here would silently never match.
-    parse_normalized(trimmed).map(|v| v.to_string())
+    parse_normalized(&with_prefix).map(|v| v.to_string())
 }
 
 /// A root-level alias declared via the `require: "X as Y"` shorthand on the
