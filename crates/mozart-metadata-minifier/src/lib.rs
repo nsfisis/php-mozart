@@ -6,6 +6,9 @@
 //! library. It operates on raw JSON values (`serde_json::Value`) so that it
 //! stays independent of any particular package struct definition.
 //!
+//! MetadataMinifier::minify() is not ported because it is not used in Composer itself.
+//! The function is mainly for package repositories.
+//!
 //! # Minified format
 //!
 //! A minified version list is a JSON array of objects where:
@@ -18,7 +21,7 @@
 //! A response that uses this encoding contains a top-level key
 //! `"minified": "composer/2.0"`.
 
-use serde_json::{Map, Value};
+use serde_json::Value;
 
 /// The sentinel value used by Composer's metadata minifier to mark a deleted
 /// field.
@@ -63,61 +66,6 @@ pub fn expand(versions: &[Value]) -> Vec<Value> {
     }
 
     expanded
-}
-
-/// Minify a list of fully-expanded version objects into diff form.
-///
-/// The first entry is emitted in full. Each subsequent entry only contains
-/// fields that changed compared to the previous one plus `"__unset"` markers
-/// for fields that were removed.
-pub fn minify(versions: &[Value]) -> Vec<Value> {
-    let mut minified: Vec<Value> = Vec::with_capacity(versions.len());
-
-    let Some((first, rest)) = versions.split_first() else {
-        return minified;
-    };
-
-    let Some(mut last_known) = first.as_object().cloned() else {
-        minified.push(first.clone());
-        return minified;
-    };
-
-    minified.push(Value::Object(last_known.clone()));
-
-    for version in rest {
-        let Some(current) = version.as_object() else {
-            minified.push(version.clone());
-            continue;
-        };
-
-        let mut diff = Map::new();
-
-        // Add changed or new fields.
-        for (key, val) in current {
-            match last_known.get(key) {
-                Some(prev) if prev == val => {} // unchanged — omit
-                _ => {
-                    diff.insert(key.clone(), val.clone());
-                    last_known.insert(key.clone(), val.clone());
-                }
-            }
-        }
-
-        // Mark deleted fields.
-        let removed: Vec<String> = last_known
-            .keys()
-            .filter(|k| !current.contains_key(k.as_str()))
-            .cloned()
-            .collect();
-        for key in &removed {
-            diff.insert(key.clone(), Value::String(UNSET_SENTINEL.to_string()));
-            last_known.remove(key.as_str());
-        }
-
-        minified.push(Value::Object(diff));
-    }
-
-    minified
 }
 
 #[cfg(test)]
@@ -179,81 +127,9 @@ mod tests {
         assert!(expanded[2].get("scripts").is_none());
     }
 
-    /// Mirrors the canonical Composer MetadataMinifierTest.
-    #[test]
-    fn minify_matches_composer_test() {
-        let full = vec![
-            json!({
-                "name": "foo/bar",
-                "version": "2.0.0",
-                "version_normalized": "2.0.0.0",
-                "type": "library",
-                "scripts": {"foo": ["bar"]},
-                "license": ["MIT"]
-            }),
-            json!({
-                "name": "foo/bar",
-                "version": "1.2.0",
-                "version_normalized": "1.2.0.0",
-                "type": "library",
-                "license": ["GPL"],
-                "homepage": "https://example.org"
-            }),
-            json!({
-                "name": "foo/bar",
-                "version": "1.0.0",
-                "version_normalized": "1.0.0.0",
-                "type": "library",
-                "license": ["GPL"]
-            }),
-        ];
-
-        let minified = minify(&full);
-        assert_eq!(minified.len(), 3);
-
-        // First entry — unchanged.
-        assert_eq!(minified[0], full[0]);
-
-        // Second entry — only diffs.
-        let diff1 = minified[1].as_object().unwrap();
-        assert_eq!(diff1["version"], "1.2.0");
-        assert_eq!(diff1["version_normalized"], "1.2.0.0");
-        assert_eq!(diff1["license"], json!(["GPL"]));
-        assert_eq!(diff1["homepage"], "https://example.org");
-        assert_eq!(diff1["scripts"], "__unset");
-        assert!(!diff1.contains_key("name"));
-        assert!(!diff1.contains_key("type"));
-
-        // Third entry — only diffs.
-        let diff2 = minified[2].as_object().unwrap();
-        assert_eq!(diff2["version"], "1.0.0");
-        assert_eq!(diff2["version_normalized"], "1.0.0.0");
-        assert_eq!(diff2["homepage"], "__unset");
-        assert!(!diff2.contains_key("name"));
-        assert!(!diff2.contains_key("type"));
-        assert!(!diff2.contains_key("license"));
-    }
-
-    #[test]
-    fn roundtrip_expand_minify() {
-        let full = vec![
-            json!({"name": "a/b", "version": "2.0.0", "require": {"php": ">=8.0"}}),
-            json!({"name": "a/b", "version": "1.0.0", "require": {"php": ">=7.4"}}),
-        ];
-
-        let minified = minify(&full);
-        let expanded = expand(&minified);
-        assert_eq!(expanded, full);
-    }
-
     #[test]
     fn expand_empty() {
         assert!(expand(&[]).is_empty());
-    }
-
-    #[test]
-    fn minify_empty() {
-        assert!(minify(&[]).is_empty());
     }
 
     #[test]
@@ -262,13 +138,5 @@ mod tests {
         let expanded = expand(&versions);
         assert_eq!(expanded.len(), 1);
         assert_eq!(expanded[0], versions[0]);
-    }
-
-    #[test]
-    fn minify_single_version() {
-        let versions = vec![json!({"name": "a/b", "version": "1.0.0"})];
-        let minified = minify(&versions);
-        assert_eq!(minified.len(), 1);
-        assert_eq!(minified[0], versions[0]);
     }
 }
