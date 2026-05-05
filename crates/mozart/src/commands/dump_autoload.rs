@@ -52,19 +52,31 @@ pub async fn execute(
     cli: &super::Cli,
     console: &mozart_core::console::Console,
 ) -> anyhow::Result<()> {
-    // A: --dev / --no-dev conflict detection
-    if args.dev && args.no_dev {
-        anyhow::bail!("You can not use both --no-dev and --dev as they conflict with each other.");
-    }
-
     let working_dir = cli.working_dir()?;
+    let composer = mozart_core::composer::Composer::require(&working_dir)?;
+
+    let composer_config = composer.config();
 
     let vendor_dir = working_dir.join("vendor");
-    let dev_mode = !args.no_dev;
 
-    // B: Load Composer state (composer.json is required for dump-autoload)
-    let composer = mozart_core::composer::Composer::require(&working_dir)?;
-    let composer_config = composer.config();
+    let installed = mozart_registry::installed::InstalledPackages::read(&vendor_dir)?;
+    let vendor_composer_dir = vendor_dir.join("composer");
+    let mut missing_dependencies = false;
+    for pkg in &installed.packages {
+        if let Some(rel) = &pkg.install_path {
+            let install_path = vendor_composer_dir.join(rel);
+            if !install_path.exists() {
+                missing_dependencies = true;
+                console.info(&format!(
+                    "{}",
+                    mozart_core::console::warning(
+                        "Not all dependencies are installed. Make sure to run a \"composer install\" to install missing dependencies"
+                    )
+                ));
+                break;
+            }
+        }
+    }
 
     let optimize = args.optimize
         || composer_config
@@ -76,27 +88,26 @@ pub async fn execute(
             .get("classmap-authoritative")
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
-    let apcu = args.apcu
-        || args.apcu_prefix.is_some()
+    let apcu_prefix = args.apcu_prefix.clone();
+    let apcu = apcu_prefix.is_some()
+        || args.apcu
         || composer_config
             .get("apcu-autoloader")
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
 
-    // C: Validate --strict-psr and --strict-ambiguous require optimize
-    let effective_optimize = optimize || classmap_authoritative;
-    if args.strict_psr && !effective_optimize {
+    let do_optimize = optimize || classmap_authoritative;
+    if args.strict_psr && !do_optimize {
         anyhow::bail!(
             "--strict-psr mode only works with optimized autoloader, use --optimize or --classmap-authoritative."
         );
     }
-    if args.strict_ambiguous && !effective_optimize {
+    if args.strict_ambiguous && !do_optimize {
         anyhow::bail!(
             "--strict-ambiguous mode only works with optimized autoloader, use --optimize or --classmap-authoritative."
         );
     }
 
-    // D: Pre-generation output message
     if classmap_authoritative {
         console.info("Generating optimized autoload files (authoritative)");
     } else if optimize {
@@ -105,7 +116,10 @@ pub async fn execute(
         console.info("Generating autoload files");
     }
 
-    // Determine suffix: read from existing autoload.php, or from lock file, or generate
+    if args.dev && args.no_dev {
+        anyhow::bail!("You can not use both --no-dev and --dev as they conflict with each other.");
+    }
+
     let suffix = mozart_autoload::autoload::determine_suffix(&working_dir, &vendor_dir)?;
 
     if args.dry_run {
@@ -113,32 +127,41 @@ pub async fn execute(
         return Ok(());
     }
 
-    // E: AutoloadConfig construction using config-merged values
     let autoload_config = mozart_autoload::autoload::AutoloadConfig {
         project_dir: working_dir,
         vendor_dir,
-        dev_mode,
+        dev_mode: !args.no_dev,
         suffix,
         classmap_authoritative,
         optimize,
         apcu,
-        apcu_prefix: args.apcu_prefix.clone(),
+        apcu_prefix,
         strict_psr: args.strict_psr,
         strict_ambiguous: args.strict_ambiguous,
         platform_check: mozart_autoload::autoload::PlatformCheckMode::Full,
         ignore_platform_reqs: args.ignore_platform_reqs,
     };
 
-    // F: Handle GenerateResult and post-generation messages
     let result = mozart_autoload::autoload::generate(&autoload_config)?;
 
-    if effective_optimize || classmap_authoritative {
+    if classmap_authoritative {
+        console.info(&format!(
+            "Generated optimized autoload files (authoritative) containing {} classes",
+            result.class_count
+        ));
+    } else if optimize {
         console.info(&format!(
             "Generated optimized autoload files containing {} classes",
             result.class_count
         ));
     } else {
         console.info("Generated autoload files");
+    }
+
+    if missing_dependencies {
+        return Err(mozart_core::exit_code::bail_silent(
+            mozart_core::exit_code::GENERAL_ERROR,
+        ));
     }
 
     if args.strict_ambiguous && result.has_ambiguous_classes {
