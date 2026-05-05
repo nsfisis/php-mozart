@@ -10,6 +10,7 @@ use std::path::Path;
 
 use anyhow::Result;
 use mozart_core::console_format;
+use mozart_core::console_writeln;
 
 /// Inputs for [`do_execute`], collected from the `depends` / `prohibits` CLI args.
 pub struct DoExecuteArgs<'a> {
@@ -89,13 +90,13 @@ pub fn do_execute(
 
     if results.is_empty() {
         if inverted {
-            console.write_stdout(
+            console_writeln!(
+                console,
                 &console_format!(
                     "<info>{} {} can be installed.</info>",
                     package,
                     version.unwrap_or("")
                 ),
-                mozart_core::console::Verbosity::Normal,
             );
             return Ok(());
         }
@@ -647,9 +648,9 @@ fn sample_versions_from_constraint(
 /// Columns: package name | version | link description | link constraint
 pub fn print_table(results: &[DependencyResult], console: &mozart_core::console::Console) {
     if results.is_empty() {
-        console.write_stdout(
+        console_writeln!(
+            console,
             &format!("{}", mozart_core::console::info("No relationships found.")),
-            mozart_core::console::Verbosity::Normal,
         );
         return;
     }
@@ -680,7 +681,8 @@ pub fn print_table(results: &[DependencyResult], console: &mozart_core::console:
         if !seen.insert(key) {
             continue;
         }
-        console.write_stdout(
+        console_writeln!(
+            console,
             &format!(
                 "{:<name_w$}  {:<ver_w$}  {:<desc_w$}  {}",
                 mozart_core::console::info(&r.package_name),
@@ -691,7 +693,6 @@ pub fn print_table(results: &[DependencyResult], console: &mozart_core::console:
                 ver_w = ver_w,
                 desc_w = desc_w,
             ),
-            mozart_core::console::Verbosity::Normal,
         );
     }
 }
@@ -711,9 +712,9 @@ pub fn print_tree(
     console: &mozart_core::console::Console,
 ) {
     if results.is_empty() && depth == 0 {
-        console.write_stdout(
+        console_writeln!(
+            console,
             &format!("{}", mozart_core::console::info("No relationships found.")),
-            mozart_core::console::Verbosity::Normal,
         );
         return;
     }
@@ -723,7 +724,8 @@ pub fn print_tree(
         let is_last = i + 1 == count;
         let prefix = tree_prefix(depth, is_last);
 
-        console.write_stdout(
+        console_writeln!(
+            console,
             &format!(
                 "{}{:<}  {}  {}  {}",
                 prefix,
@@ -732,7 +734,6 @@ pub fn print_tree(
                 r.link_description,
                 mozart_core::console::comment(&r.link_constraint),
             ),
-            mozart_core::console::Verbosity::Normal,
         );
 
         if !r.children.is_empty() {

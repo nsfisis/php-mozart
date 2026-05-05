@@ -1,6 +1,6 @@
 use clap::Args;
-use mozart_core::console::Verbosity;
 use mozart_core::console_format;
+use mozart_core::console_writeln;
 use regex::Regex;
 use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
@@ -789,15 +789,12 @@ fn output_result(
         ));
     } else if !lock_errors.is_empty() {
         let kind = if check_lock { "errors" } else { "warnings" };
-        console.write_stdout(
+        console_writeln!(
+            console,
             &console_format!("<info>{name} is valid but your composer.lock has some {kind}</info>"),
-            Verbosity::Normal,
         );
     } else {
-        console.write_stdout(
-            &console_format!("<info>{name} is valid</info>"),
-            Verbosity::Normal,
-        );
+        console_writeln!(console, &console_format!("<info>{name} is valid</info>"),);
     }
 
     // Collect error and warning message lines

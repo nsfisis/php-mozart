@@ -1,6 +1,6 @@
 use clap::Args;
 use indexmap::IndexMap;
-use mozart_core::console::Verbosity;
+use mozart_core::console_writeln;
 use sha1::{Digest, Sha1};
 use std::path::{Path, PathBuf};
 
@@ -176,9 +176,9 @@ pub async fn execute(
 
     for pkg_status in &modified_packages {
         if let Some(ref note) = pkg_status.note {
-            console.write_stdout(note, Verbosity::Normal);
+            console_writeln!(console, note);
         } else {
-            console.write_stdout(&pkg_status.install_path, Verbosity::Normal);
+            console_writeln!(console, &pkg_status.install_path);
 
             if show_files {
                 let mut sorted_changes: Vec<&FileChange> = pkg_status.changes.iter().collect();
@@ -190,10 +190,7 @@ pub async fn execute(
                         ChangeKind::Added => '+',
                         ChangeKind::Removed => '-',
                     };
-                    console.write_stdout(
-                        &format!("    {} {}", prefix, change.path),
-                        Verbosity::Normal,
-                    );
+                    console_writeln!(console, &format!("    {} {}", prefix, change.path),);
                 }
             }
         }

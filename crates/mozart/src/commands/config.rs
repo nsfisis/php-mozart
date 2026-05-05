@@ -1,5 +1,8 @@
 use anyhow::anyhow;
 use clap::Args;
+use mozart_core::config::resolve_references;
+use mozart_core::console_writeln;
+use mozart_core::factory::create_config;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
@@ -59,9 +62,6 @@ pub struct ConfigArgs {
     #[arg(long)]
     pub source: bool,
 }
-
-use mozart_core::config::resolve_references;
-use mozart_core::factory::create_config;
 
 /// Classification of config key value types for validation and normalization.
 #[derive(Debug)]
@@ -776,7 +776,8 @@ fn execute_read(
 
     if args.list {
         for (key, value) in config.entries() {
-            console.write_stdout(
+            console_writeln!(
+                console,
                 &format!("[{}] {}", key, render_value(&value)),
                 mozart_core::console::Verbosity::Quiet,
             );
@@ -804,7 +805,8 @@ fn execute_read(
                 if let Some(repos) = raw["repositories"].as_array() {
                     for entry in repos {
                         if entry.get("name").and_then(|n| n.as_str()) == Some(repo_name) {
-                            console.write_stdout(
+                            console_writeln!(
+                                console,
                                 &render_value(entry),
                                 mozart_core::console::Verbosity::Quiet,
                             );
@@ -819,7 +821,11 @@ fn execute_read(
             if key.starts_with("extra.") || key.starts_with("suggest.") {
                 let raw = read_json_file(config_file_path, args.global)?;
                 if let Some(v) = get_nested(&raw, key) {
-                    console.write_stdout(&render_value(v), mozart_core::console::Verbosity::Quiet);
+                    console_writeln!(
+                        console,
+                        &render_value(v),
+                        mozart_core::console::Verbosity::Quiet,
+                    );
                     return Ok(());
                 }
                 return Err(anyhow!("Setting \"{}\" does not exist.", key));
@@ -829,7 +835,11 @@ fn execute_read(
             if CONFIGURABLE_PACKAGE_PROPERTIES.contains(&key.as_str()) {
                 let raw = read_json_file(config_file_path, args.global)?;
                 if let Some(v) = raw.get(key.as_str()) {
-                    console.write_stdout(&render_value(v), mozart_core::console::Verbosity::Quiet);
+                    console_writeln!(
+                        console,
+                        &render_value(v),
+                        mozart_core::console::Verbosity::Quiet,
+                    );
                     return Ok(());
                 }
                 // Fall through to config section lookup
@@ -838,7 +848,8 @@ fn execute_read(
             // 4. Standard config key lookup
             match config.get(key) {
                 Some(value) => {
-                    console.write_stdout(
+                    console_writeln!(
+                        console,
                         &render_value(&value),
                         mozart_core::console::Verbosity::Quiet,
                     );

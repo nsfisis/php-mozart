@@ -1,5 +1,5 @@
 use clap::Args;
-use mozart_core::console::Verbosity;
+use mozart_core::console_writeln;
 use std::path::PathBuf;
 
 #[derive(Args)]
@@ -233,7 +233,7 @@ pub async fn execute(
     } else {
         target_path.display().to_string()
     };
-    console.write_stdout(&format!("Created: {}", display_path), Verbosity::Normal);
+    console_writeln!(console, &format!("Created: {}", display_path),);
 
     Ok(())
 }

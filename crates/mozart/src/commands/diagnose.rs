@@ -1,7 +1,8 @@
 use clap::Args;
 use colored::Colorize;
 use mozart_core::MOZART_VERSION;
-use mozart_core::console::{Console, Verbosity};
+use mozart_core::console::Console;
+use mozart_core::console_writeln;
 use std::path::{Path, PathBuf};
 
 #[derive(Args)]
@@ -29,36 +30,30 @@ fn print_check(label: &str, result: &CheckResult, exit_code: &mut i32, console: 
             let ok_str = "OK".green().bold();
             match detail {
                 Some(d) => {
-                    console.write_stdout(
-                        &format!("Checking {label}: {ok_str} ({d})"),
-                        Verbosity::Normal,
-                    );
+                    console_writeln!(console, &format!("Checking {label}: {ok_str} ({d})"),);
                 }
                 None => {
-                    console.write_stdout(&format!("Checking {label}: {ok_str}"), Verbosity::Normal);
+                    console_writeln!(console, &format!("Checking {label}: {ok_str}"),);
                 }
             }
         }
         CheckResult::Warning(msg) => {
             let warn_str = "WARNING".yellow().bold();
-            console.write_stdout(&format!("Checking {label}: {warn_str}"), Verbosity::Normal);
-            console.write_stdout(&format!("  {}", msg.yellow()), Verbosity::Normal);
+            console_writeln!(console, &format!("Checking {label}: {warn_str}"),);
+            console_writeln!(console, &format!("  {}", msg.yellow()));
             if *exit_code < 1 {
                 *exit_code = 1;
             }
         }
         CheckResult::Fail(msg) => {
             let fail_str = "FAIL".red().bold();
-            console.write_stdout(&format!("Checking {label}: {fail_str}"), Verbosity::Normal);
-            console.write_stdout(&format!("  {}", msg.red()), Verbosity::Normal);
+            console_writeln!(console, &format!("Checking {label}: {fail_str}"),);
+            console_writeln!(console, &format!("  {}", msg.red()));
             *exit_code = 2;
         }
         CheckResult::Skip(reason) => {
             let skip_str = "SKIP".cyan().bold();
-            console.write_stdout(
-                &format!("Checking {label}: {skip_str} ({reason})"),
-                Verbosity::Normal,
-            );
+            console_writeln!(console, &format!("Checking {label}: {skip_str} ({reason})"),);
         }
         CheckResult::Info(_) => {
             // Info results are not "checked" — use print_info_line instead.
@@ -69,7 +64,7 @@ fn print_check(label: &str, result: &CheckResult, exit_code: &mut i32, console: 
 /// Print an informational line (not a check result).
 fn print_info_line(result: &CheckResult, console: &Console) {
     if let CheckResult::Info(msg) = result {
-        console.write_stdout(msg, Verbosity::Normal);
+        console_writeln!(console, msg);
     }
 }
 
@@ -412,7 +407,7 @@ pub async fn execute(
 
     // 1. Mozart version info
     print_info_line(&check_version(), console);
-    console.write_stdout("", Verbosity::Normal);
+    console_writeln!(console, "");
 
     // 2. HTTPS connectivity to Packagist
     let https_result = check_http_connectivity("https://repo.packagist.org/packages.json").await;
@@ -484,24 +479,21 @@ pub async fn execute(
     let cache_result = check_cache_dir(&cache_dir);
     print_check("cache directory", &cache_result, &mut exit_code, console);
 
-    console.write_stdout("", Verbosity::Normal);
+    console_writeln!(console, "");
     if exit_code == 0 {
-        console.write_stdout(
-            &format!("{}", "No issues found.".green()),
-            Verbosity::Normal,
-        );
+        console_writeln!(console, &format!("{}", "No issues found.".green()),);
     } else if exit_code == 1 {
-        console.write_stdout(
+        console_writeln!(
+            console,
             &format!(
                 "{}",
                 "Some warnings were found. See above for details.".yellow()
             ),
-            Verbosity::Normal,
         );
     } else {
-        console.write_stdout(
+        console_writeln!(
+            console,
             &format!("{}", "Some errors were found. See above for details.".red()),
-            Verbosity::Normal,
         );
     }
 

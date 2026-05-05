@@ -1,6 +1,6 @@
 use clap::Args;
-use mozart_core::console::Verbosity;
 use mozart_core::console_format;
+use mozart_core::console_writeln;
 use mozart_registry::packagist::SearchResult;
 use serde::Serialize;
 
@@ -151,7 +151,7 @@ pub async fn execute(
         match format {
             "json" => {
                 let json = serde_json::to_string_pretty(&vendor_names)?;
-                console.write_stdout(&json, Verbosity::Normal);
+                console_writeln!(console, &json);
             }
             _ => {
                 if vendor_names.is_empty() {
@@ -160,10 +160,7 @@ pub async fn execute(
                     ));
                 } else {
                     for vendor in &vendor_names {
-                        console.write_stdout(
-                            &console_format!("<info>{vendor}</info>"),
-                            Verbosity::Normal,
-                        );
+                        console_writeln!(console, &console_format!("<info>{vendor}</info>"),);
                     }
                 }
             }
@@ -179,7 +176,7 @@ pub async fn execute(
                 .map(|r| SearchResultOutput::from(*r))
                 .collect();
             let json = serde_json::to_string_pretty(&output)?;
-            console.write_stdout(&json, Verbosity::Normal);
+            console_writeln!(console, &json);
         }
         _ => {
             if results.is_empty() {
@@ -210,9 +207,9 @@ pub async fn execute(
                 };
 
                 let padding = " ".repeat(name_width.saturating_sub(result.name.len()));
-                console.write_stdout(
+                console_writeln!(
+                    console,
                     &format!("{}{}{}{}", result.name, padding, warning, desc_display),
-                    Verbosity::Normal,
                 );
             }
         }

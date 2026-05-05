@@ -1,9 +1,9 @@
 use clap::Args;
+use mozart_core::console_writeln;
+use mozart_core::console_writeln_error;
+use mozart_registry::packagist::SecurityAdvisory;
 use std::collections::BTreeMap;
 use std::path::Path;
-
-use mozart_core::console::Verbosity;
-use mozart_registry::packagist::SecurityAdvisory;
 
 #[derive(Args)]
 pub struct AuditArgs {
@@ -264,12 +264,12 @@ fn filter_advisories(
         let installed_ver = match mozart_semver::Version::parse(version_str) {
             Ok(v) => v,
             Err(_) => {
-                console.write(
+                console_writeln_error!(
+                    console,
                     &format!(
                         "Warning: could not parse version \"{}\" for package \"{}\", skipping advisory matching",
                         version_str, pkg.name
                     ),
-                    Verbosity::Normal,
                 );
                 continue;
             }
@@ -292,12 +292,12 @@ fn filter_advisories(
             let constraint = match mozart_semver::VersionConstraint::parse(&normalized_constraint) {
                 Ok(c) => c,
                 Err(_) => {
-                    console.write(
+                    console_writeln_error!(
+                        console,
                         &format!(
                             "Warning: could not parse affected versions \"{}\" for advisory \"{}\", skipping",
                             advisory.affected_versions, advisory.advisory_id
                         ),
-                        Verbosity::Normal,
                     );
                     continue;
                 }
@@ -393,11 +393,11 @@ fn render_table(result: &AuditResult, console: &mozart_core::console::Console) {
             "Found {} security vulnerability {} affecting {} package(s):",
             result.total_advisory_count, advisory_word, result.affected_package_count
         );
-        console.write(
+        console_writeln_error!(
+            console,
             &format!("{}", mozart_core::console::highlight(&header)),
-            Verbosity::Normal,
         );
-        console.write("", Verbosity::Normal);
+        console_writeln_error!(console, "");
 
         for advisories in result.advisories.values() {
             for matched in advisories {
@@ -429,9 +429,10 @@ fn render_table(result: &AuditResult, console: &mozart_core::console::Console) {
                     vw = value_width
                 );
 
-                console.write(&separator, Verbosity::Normal);
+                console_writeln_error!(console, &separator);
                 for (label, value) in &rows {
-                    console.write(
+                    console_writeln_error!(
+                        console,
                         &format!(
                             "| {:<lw$} | {:<vw$} |",
                             label,
@@ -439,22 +440,21 @@ fn render_table(result: &AuditResult, console: &mozart_core::console::Console) {
                             lw = label_width,
                             vw = value_width
                         ),
-                        Verbosity::Normal,
                     );
                 }
-                console.write(&separator, Verbosity::Normal);
-                console.write("", Verbosity::Normal);
+                console_writeln_error!(console, &separator);
+                console_writeln_error!(console, "");
             }
         }
     }
 
     if !result.abandoned.is_empty() {
         let header = format!("Found {} abandoned package(s):", result.abandoned.len());
-        console.write(
+        console_writeln_error!(
+            console,
             &format!("{}", mozart_core::console::highlight(&header)),
-            Verbosity::Normal,
         );
-        console.write("", Verbosity::Normal);
+        console_writeln_error!(console, "");
 
         let name_width = 20usize;
         let ver_width = result
@@ -477,7 +477,8 @@ fn render_table(result: &AuditResult, console: &mozart_core::console::Console) {
             .unwrap_or(0)
             .max("Suggested Replacement".len());
 
-        console.write(
+        console_writeln_error!(
+            console,
             &format!(
                 "| {:<nw$} | {:<vw$} | {:<rw$} |",
                 "Abandoned Package",
@@ -487,9 +488,9 @@ fn render_table(result: &AuditResult, console: &mozart_core::console::Console) {
                 vw = ver_width,
                 rw = repl_width
             ),
-            Verbosity::Normal,
         );
-        console.write(
+        console_writeln_error!(
+            console,
             &format!(
                 "+-{:-<nw$}-+-{:-<vw$}-+-{:-<rw$}-+",
                 "",
@@ -499,14 +500,14 @@ fn render_table(result: &AuditResult, console: &mozart_core::console::Console) {
                 vw = ver_width,
                 rw = repl_width
             ),
-            Verbosity::Normal,
         );
         for pkg in &result.abandoned {
             let replacement = pkg
                 .replacement
                 .as_deref()
                 .unwrap_or("No replacement suggested");
-            console.write(
+            console_writeln_error!(
+                console,
                 &format!(
                     "| {:<nw$} | {:<vw$} | {:<rw$} |",
                     pkg.name,
@@ -516,10 +517,9 @@ fn render_table(result: &AuditResult, console: &mozart_core::console::Console) {
                     vw = ver_width,
                     rw = repl_width
                 ),
-                Verbosity::Normal,
             );
         }
-        console.write("", Verbosity::Normal);
+        console_writeln_error!(console, "");
     }
 }
 
@@ -535,68 +535,59 @@ fn render_plain(result: &AuditResult, console: &mozart_core::console::Console) {
         } else {
             "advisories"
         };
-        console.write(
+        console_writeln_error!(
+            console,
             &format!(
                 "Found {} security vulnerability {} affecting {} package(s):",
                 result.total_advisory_count, advisory_word, result.affected_package_count
             ),
-            Verbosity::Normal,
         );
-        console.write("", Verbosity::Normal);
+        console_writeln_error!(console, "");
 
         for advisories in result.advisories.values() {
             for matched in advisories {
                 let adv = &matched.advisory;
-                console.write(&format!("Package: {}", adv.package_name), Verbosity::Normal);
-                console.write(
-                    &format!("Version: {}", matched.installed_version),
-                    Verbosity::Normal,
-                );
-                console.write(
+                console_writeln_error!(console, &format!("Package: {}", adv.package_name),);
+                console_writeln_error!(console, &format!("Version: {}", matched.installed_version),);
+                console_writeln_error!(
+                    console,
                     &format!("Severity: {}", adv.severity.as_deref().unwrap_or("")),
-                    Verbosity::Normal,
                 );
-                console.write(
-                    &format!("Advisory ID: {}", adv.advisory_id),
-                    Verbosity::Normal,
-                );
-                console.write(
+                console_writeln_error!(console, &format!("Advisory ID: {}", adv.advisory_id),);
+                console_writeln_error!(
+                    console,
                     &format!("CVE: {}", adv.cve.as_deref().unwrap_or("NO CVE")),
-                    Verbosity::Normal,
                 );
-                console.write(&format!("Title: {}", adv.title), Verbosity::Normal);
-                console.write(
+                console_writeln_error!(console, &format!("Title: {}", adv.title),);
+                console_writeln_error!(
+                    console,
                     &format!("URL: {}", adv.link.as_deref().unwrap_or("")),
-                    Verbosity::Normal,
                 );
-                console.write(
+                console_writeln_error!(
+                    console,
                     &format!("Affected versions: {}", adv.affected_versions),
-                    Verbosity::Normal,
                 );
-                console.write(
-                    &format!("Reported at: {}", adv.reported_at),
-                    Verbosity::Normal,
-                );
-                console.write("--------", Verbosity::Normal);
+                console_writeln_error!(console, &format!("Reported at: {}", adv.reported_at),);
+                console_writeln_error!(console, "--------");
             }
         }
     }
 
     for pkg in &result.abandoned {
         match &pkg.replacement {
-            Some(repl) => console.write(
+            Some(repl) => console_writeln_error!(
+                console,
                 &format!(
                     "{} ({}) is abandoned. Use {} instead.",
                     pkg.name, pkg.version, repl
                 ),
-                Verbosity::Normal,
             ),
-            None => console.write(
+            None => console_writeln_error!(
+                console,
                 &format!(
                     "{} ({}) is abandoned. No replacement was suggested.",
                     pkg.name, pkg.version
                 ),
-                Verbosity::Normal,
             ),
         }
     }
@@ -635,7 +626,7 @@ fn render_json(
         "abandoned": abandoned_map,
     });
 
-    console.write_stdout(&serde_json::to_string_pretty(&output)?, Verbosity::Normal);
+    console_writeln!(console, &serde_json::to_string_pretty(&output)?,);
     Ok(())
 }
 
@@ -648,31 +639,31 @@ fn render_summary(result: &AuditResult, console: &mozart_core::console::Console)
         } else {
             "advisories"
         };
-        console.write(
+        console_writeln_error!(
+            console,
             &format!(
                 "Found {} security vulnerability {} affecting {} package(s).",
                 result.total_advisory_count, advisory_word, result.affected_package_count
             ),
-            Verbosity::Normal,
         );
         console.info("Run \"mozart audit\" for a full list of advisories.");
     }
 
     for pkg in &result.abandoned {
         match &pkg.replacement {
-            Some(repl) => console.write(
+            Some(repl) => console_writeln_error!(
+                console,
                 &format!(
                     "{} ({}) is abandoned. Use {} instead.",
                     pkg.name, pkg.version, repl
                 ),
-                Verbosity::Normal,
             ),
-            None => console.write(
+            None => console_writeln_error!(
+                console,
                 &format!(
                     "{} ({}) is abandoned. No replacement was suggested.",
                     pkg.name, pkg.version
                 ),
-                Verbosity::Normal,
             ),
         }
     }

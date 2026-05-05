@@ -1,6 +1,7 @@
 use clap::Args;
 use mozart_core::composer::Composer;
 use mozart_core::console_format;
+use mozart_core::console_writeln;
 use std::path::{Path, PathBuf};
 
 #[derive(Args)]
@@ -22,7 +23,6 @@ pub async fn execute(
     cli: &super::Cli,
     console: &mozart_core::console::Console,
 ) -> anyhow::Result<()> {
-    use mozart_core::console::Verbosity;
     let working_dir = cli.working_dir()?;
 
     // ExecCommand uses requireComposer in Composer; composer.json must exist.
@@ -37,21 +37,15 @@ pub async fn execute(
                 bin_dir.display()
             );
         }
-        console.write_stdout(
+        console_writeln!(
+            console,
             &console_format!("<comment>Available binaries:</comment>"),
-            Verbosity::Normal,
         );
         for (name, is_local) in &binaries {
             if *is_local {
-                console.write_stdout(
-                    &console_format!("<info>- {} (local)</info>", name),
-                    Verbosity::Normal,
-                );
+                console_writeln!(console, &console_format!("<info>- {} (local)</info>", name),);
             } else {
-                console.write_stdout(
-                    &console_format!("<info>- {}</info>", name),
-                    Verbosity::Normal,
-                );
+                console_writeln!(console, &console_format!("<info>- {}</info>", name),);
             }
         }
         return Ok(());

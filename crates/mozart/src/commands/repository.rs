@@ -1,5 +1,6 @@
 use anyhow::anyhow;
 use clap::Args;
+use mozart_core::console_writeln;
 use std::path::PathBuf;
 
 use super::config_helpers::{
@@ -91,10 +92,7 @@ fn execute_list(
         if let Some(obj) = entry.as_object() {
             // Check for disabled repo entry like {"packagist.org": false}
             if let Some((key, _)) = obj.iter().find(|(_, v)| v == &&serde_json::json!(false)) {
-                console.write_stdout(
-                    &format!("[{key}] disabled"),
-                    mozart_core::console::Verbosity::Normal,
-                );
+                console_writeln!(console, &format!("[{key}] disabled"),);
                 if key == "packagist.org" {
                     has_packagist_disable = true;
                 }
@@ -112,16 +110,13 @@ fn execute_list(
             .unwrap_or("unknown");
         let url = entry.get("url").and_then(|u| u.as_str()).unwrap_or("");
 
-        console.write_stdout(
-            &format!("[{name}] {repo_type} {url}"),
-            mozart_core::console::Verbosity::Normal,
-        );
+        console_writeln!(console, &format!("[{name}] {repo_type} {url}"),);
     }
 
     if !has_packagist_disable {
-        console.write_stdout(
+        console_writeln!(
+            console,
             "[packagist.org] composer https://repo.packagist.org",
-            mozart_core::console::Verbosity::Normal,
         );
     }
 
@@ -273,10 +268,7 @@ fn execute_get_url(
             let entry = &repos[idx];
             match entry.get("url") {
                 Some(url_val) => {
-                    console.write_stdout(
-                        &render_value(url_val),
-                        mozart_core::console::Verbosity::Normal,
-                    );
+                    console_writeln!(console, &render_value(url_val),);
                     Ok(())
                 }
                 None => Err(anyhow!("The \"{name}\" repository does not have a URL")),

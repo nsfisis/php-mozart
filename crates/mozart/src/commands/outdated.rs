@@ -1,5 +1,6 @@
 use clap::Args;
 use indexmap::IndexSet;
+use mozart_core::console_writeln;
 use mozart_core::matches_wildcard;
 use std::cmp::Ordering;
 use std::path::Path;
@@ -438,12 +439,10 @@ fn passes_level_filter(args: &OutdatedArgs, current: &str, latest: &str) -> bool
 }
 
 fn render_text(entries: &[OutdatedEntry], console: &mozart_core::console::Console) {
-    use mozart_core::console::Verbosity;
-
     if entries.is_empty() {
-        console.write_stdout(
+        console_writeln!(
+            console,
             &mozart_core::console::info("All packages are up to date.").to_string(),
-            Verbosity::Normal,
         );
         return;
     }
@@ -481,7 +480,8 @@ fn render_text(entries: &[OutdatedEntry], console: &mozart_core::console::Consol
             ),
         };
 
-        console.write_stdout(
+        console_writeln!(
+            console,
             &format!(
                 "{} {} {} {}",
                 name_str,
@@ -489,7 +489,6 @@ fn render_text(entries: &[OutdatedEntry], console: &mozart_core::console::Consol
                 lat_str,
                 entry.description
             ),
-            Verbosity::Normal,
         );
     }
 }
@@ -498,7 +497,6 @@ fn render_json(
     entries: &[OutdatedEntry],
     console: &mozart_core::console::Console,
 ) -> anyhow::Result<()> {
-    use mozart_core::console::Verbosity;
     let json_entries: Vec<serde_json::Value> = entries
         .iter()
         .map(|entry| {
@@ -519,7 +517,7 @@ fn render_json(
         .collect();
 
     let output = serde_json::json!({ "installed": json_entries });
-    console.write_stdout(&serde_json::to_string_pretty(&output)?, Verbosity::Normal);
+    console_writeln!(console, &serde_json::to_string_pretty(&output)?);
     Ok(())
 }
 

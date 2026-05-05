@@ -2,8 +2,8 @@ use clap::Args;
 use indexmap::IndexMap;
 use indexmap::IndexSet;
 use mozart_core::console;
-use mozart_core::console::Verbosity;
 use mozart_core::console_format;
+use mozart_core::console_writeln;
 use std::collections::BTreeMap;
 use std::path::Path;
 
@@ -130,13 +130,13 @@ pub async fn execute(
         let shown = filtered.len();
         let diff = total_before_direct_filter.saturating_sub(shown);
         if diff > 0 {
-            console.write_stdout(
+            console_writeln!(
+                console,
                 &format!(
                     "{} by transitive dependencies can be shown with {}",
                     console_format!("<info>{diff} additional suggestions</info>"),
                     console_format!("<info>--all</info>"),
                 ),
-                Verbosity::Normal,
             );
         }
     }
@@ -148,7 +148,7 @@ pub async fn execute(
         render_by_suggestion(&filtered, console);
     } else if args.by_package && args.by_suggestion {
         render_by_package(&filtered, console);
-        console.write_stdout(&"-".repeat(78), Verbosity::Normal);
+        console_writeln!(console, &"-".repeat(78));
         render_by_suggestion(&filtered, console);
     } else {
         // Default: by-package
@@ -423,7 +423,7 @@ fn render_list(suggestions: &[&Suggestion], console: &console::Console) {
     targets.sort_unstable();
     targets.dedup();
     for t in targets {
-        console.write_stdout(&console_format!("<info>{}</info>", t), Verbosity::Normal);
+        console_writeln!(console, &console_format!("<info>{}</info>", t),);
     }
 }
 
@@ -434,25 +434,22 @@ fn render_by_package(suggestions: &[&Suggestion], console: &console::Console) {
         grouped.entry(s.source.as_str()).or_default().push(s);
     }
     for (source, items) in &grouped {
-        console.write_stdout(
+        console_writeln!(
+            console,
             &console_format!("<comment>{}</comment> suggests:", source),
-            Verbosity::Normal,
         );
         for s in items {
             let reason = sanitize_reason(&s.reason);
             if reason.is_empty() {
-                console.write_stdout(
-                    &console_format!(" - <info>{}</info>", &s.target),
-                    Verbosity::Normal,
-                );
+                console_writeln!(console, &console_format!(" - <info>{}</info>", &s.target),);
             } else {
-                console.write_stdout(
+                console_writeln!(
+                    console,
                     &console_format!(" - <info>{}</info>: {}", &s.target, reason),
-                    Verbosity::Normal,
                 );
             }
         }
-        console.write_stdout("", Verbosity::Normal);
+        console_writeln!(console, "");
     }
 }
 
@@ -463,25 +460,25 @@ fn render_by_suggestion(suggestions: &[&Suggestion], console: &console::Console)
         grouped.entry(s.target.as_str()).or_default().push(s);
     }
     for (target, items) in &grouped {
-        console.write_stdout(
+        console_writeln!(
+            console,
             &console_format!("<info>{}</info> is suggested by:", target),
-            Verbosity::Normal,
         );
         for s in items {
             let reason = sanitize_reason(&s.reason);
             if reason.is_empty() {
-                console.write_stdout(
+                console_writeln!(
+                    console,
                     &console_format!(" - <comment>{}</comment>", &s.source),
-                    Verbosity::Normal,
                 );
             } else {
-                console.write_stdout(
+                console_writeln!(
+                    console,
                     &console_format!(" - <comment>{}</comment>: {}", &s.source, reason),
-                    Verbosity::Normal,
                 );
             }
         }
-        console.write_stdout("", Verbosity::Normal);
+        console_writeln!(console, "");
     }
 }
 

@@ -1,6 +1,7 @@
 use clap::Args;
 use indexmap::IndexSet;
-use mozart_core::console::{Console, Verbosity};
+use mozart_core::console::Console;
+use mozart_core::console_writeln;
 use serde::Serialize;
 use std::path::Path;
 
@@ -195,23 +196,23 @@ fn render_text(
     } else {
         root_licenses.join(", ")
     };
-    console.write_stdout(
+    console_writeln!(
+        console,
         &format!("Name: {}", mozart_core::console::comment(root_name)),
-        Verbosity::Normal,
     );
-    console.write_stdout(
+    console_writeln!(
+        console,
         &format!("Version: {}", mozart_core::console::comment(root_version)),
-        Verbosity::Normal,
     );
-    console.write_stdout(
+    console_writeln!(
+        console,
         &format!(
             "Licenses: {}",
             mozart_core::console::comment(&license_display)
         ),
-        Verbosity::Normal,
     );
-    console.write_stdout("Dependencies:", Verbosity::Normal);
-    console.write_stdout("", Verbosity::Normal);
+    console_writeln!(console, "Dependencies:");
+    console_writeln!(console, "");
 
     if entries.is_empty() {
         return;
@@ -230,7 +231,8 @@ fn render_text(
         .unwrap_or(0)
         .max("Version".len());
 
-    console.write_stdout(
+    console_writeln!(
+        console,
         &format!(
             "{:<nw$}  {:<vw$}  Licenses",
             "Name",
@@ -238,7 +240,6 @@ fn render_text(
             nw = name_width,
             vw = version_width
         ),
-        Verbosity::Normal,
     );
 
     for entry in entries {
@@ -247,7 +248,8 @@ fn render_text(
         } else {
             entry.licenses.join(", ")
         };
-        console.write_stdout(
+        console_writeln!(
+            console,
             &format!(
                 "{:<nw$}  {:<vw$}  {}",
                 entry.name,
@@ -256,7 +258,6 @@ fn render_text(
                 nw = name_width,
                 vw = version_width
             ),
-            Verbosity::Normal,
         );
     }
 }
@@ -300,7 +301,7 @@ fn render_json(
     let formatter = serde_json::ser::PrettyFormatter::with_indent(b"    ");
     let mut ser = serde_json::Serializer::with_formatter(buf, formatter);
     output.serialize(&mut ser)?;
-    console.write_stdout(&String::from_utf8(ser.into_inner())?, Verbosity::Normal);
+    console_writeln!(console, &String::from_utf8(ser.into_inner())?,);
     Ok(())
 }
 
@@ -308,7 +309,7 @@ fn render_summary(entries: &[LicenseEntry], console: &Console) {
     let counts = count_licenses(entries);
 
     if counts.is_empty() {
-        console.write_stdout("No dependencies found.", Verbosity::Normal);
+        console_writeln!(console, "No dependencies found.");
         return;
     }
 
@@ -330,11 +331,9 @@ fn render_summary(entries: &[LicenseEntry], console: &Console) {
     let border_col1 = "-".repeat(license_width + 2);
     let border_col2 = "-".repeat(count_width + 2);
 
-    console.write_stdout(
-        &format!(" {} {}", border_col1, border_col2),
-        Verbosity::Normal,
-    );
-    console.write_stdout(
+    console_writeln!(console, &format!(" {} {}", border_col1, border_col2),);
+    console_writeln!(
+        console,
         &format!(
             "  {:<lw$}   {:<cw$}",
             "License",
@@ -342,14 +341,11 @@ fn render_summary(entries: &[LicenseEntry], console: &Console) {
             lw = license_width,
             cw = count_width
         ),
-        Verbosity::Normal,
     );
-    console.write_stdout(
-        &format!(" {} {}", border_col1, border_col2),
-        Verbosity::Normal,
-    );
+    console_writeln!(console, &format!(" {} {}", border_col1, border_col2),);
     for (license, count) in &counts {
-        console.write_stdout(
+        console_writeln!(
+            console,
             &format!(
                 "  {:<lw$}   {:<cw$}",
                 license,
@@ -357,13 +353,9 @@ fn render_summary(entries: &[LicenseEntry], console: &Console) {
                 lw = license_width,
                 cw = count_width
             ),
-            Verbosity::Normal,
         );
     }
-    console.write_stdout(
-        &format!(" {} {}", border_col1, border_col2),
-        Verbosity::Normal,
-    );
+    console_writeln!(console, &format!(" {} {}", border_col1, border_col2),);
 }
 
 #[cfg(test)]

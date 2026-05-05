@@ -1,7 +1,8 @@
 use clap::Args;
 use indexmap::{IndexMap, IndexSet};
-use mozart_core::console::Verbosity;
 use mozart_core::console_format;
+use mozart_core::console_writeln;
+use mozart_core::console_writeln_error;
 use mozart_core::matches_wildcard;
 use std::path::Path;
 
@@ -158,11 +159,11 @@ pub async fn execute(
 
     // Fix 8: --ignore without --outdated warning
     if !args.ignore.is_empty() && !args.outdated {
-        console.write(
+        console_writeln_error!(
+            console,
             &console_format!(
                 "<warning>You are using the option \"ignore\" for action other than \"outdated\", it will be ignored.</warning>"
             ),
-            Verbosity::Normal,
         );
     }
 
@@ -212,11 +213,11 @@ async fn execute_installed(
         if composer_json_path.exists() {
             let root = mozart_core::package::read_from_file(&composer_json_path)?;
             if !root.require.is_empty() || !root.require_dev.is_empty() {
-                console.write(
+                console_writeln_error!(
+                    console,
                     &console_format!(
                         "<warning>No dependencies installed. Try running mozart install or update.</warning>"
                     ),
-                    Verbosity::Normal,
                 );
             }
         }
@@ -236,7 +237,7 @@ async fn execute_installed(
             Some(p) => {
                 let install_path = vendor_dir.join(&p.name);
                 let path_str = resolve_path(&install_path);
-                console.write_stdout(&format!("{} {}", p.name, path_str), Verbosity::Normal);
+                console_writeln!(console, &format!("{} {}", p.name, path_str),);
             }
             None => {
                 anyhow::bail!(
@@ -268,7 +269,7 @@ async fn execute_installed(
         for pkg in &packages {
             let install_path = vendor_dir.join(&pkg.name);
             let path_str = resolve_path(&install_path);
-            console.write_stdout(&format!("{} {}", pkg.name, path_str), Verbosity::Normal);
+            console_writeln!(console, &format!("{} {}", pkg.name, path_str),);
         }
         return Ok(());
     }
@@ -327,7 +328,7 @@ async fn show_installed_package_list(
 
     if args.name_only {
         for pkg in packages {
-            console.write_stdout(&pkg.name, Verbosity::Normal);
+            console_writeln!(console, &pkg.name);
         }
         return Ok(());
     }
@@ -480,17 +481,17 @@ async fn show_installed_package_list(
                 }
                 None => format!("{:<width$}", "", width = latest_width),
             };
-            console.write_stdout(
+            console_writeln!(
+                console,
                 &format!(
                     "{} {} {} {}",
                     name_str, version_str, latest_str, entry.description
                 ),
-                Verbosity::Normal,
             );
         } else {
-            console.write_stdout(
+            console_writeln!(
+                console,
                 &format!("{} {} {}", name_str, version_str, entry.description),
-                Verbosity::Normal,
             );
         }
     }
@@ -601,7 +602,7 @@ fn render_installed_json(
         .collect();
 
     let output = serde_json::json!({ "installed": json_entries });
-    console.write_stdout(&serde_json::to_string_pretty(&output)?, Verbosity::Normal);
+    console_writeln!(console, &serde_json::to_string_pretty(&output)?,);
     Ok(())
 }
 
@@ -629,64 +630,64 @@ fn show_installed_package_detail(
 
     let vendor_dir = working_dir.join("vendor");
 
-    console.write_stdout(
+    console_writeln!(
+        console,
         &format!("{} : {}", console_format!("<info>name</info>"), pkg.name),
-        Verbosity::Normal,
     );
-    console.write_stdout(
+    console_writeln!(
+        console,
         &format!(
             "{} : {}",
             console_format!("<info>descrip.</info>"),
             get_installed_description(pkg)
         ),
-        Verbosity::Normal,
     );
-    console.write_stdout(
+    console_writeln!(
+        console,
         &format!(
             "{} : {}",
             console_format!("<info>keywords</info>"),
             get_installed_keywords(pkg)
         ),
-        Verbosity::Normal,
     );
-    console.write_stdout(
+    console_writeln!(
+        console,
         &format!(
             "{} : {}",
             console_format!("<info>versions</info>"),
             format_version_highlight(&pkg.version)
         ),
-        Verbosity::Normal,
     );
-    console.write_stdout(
+    console_writeln!(
+        console,
         &format!(
             "{} : {}",
             console_format!("<info>type</info>"),
             pkg.package_type.as_deref().unwrap_or("library")
         ),
-        Verbosity::Normal,
     );
 
     // License — one line per identifier, matching Composer's printLicenses.
     for license_id in get_installed_licenses(pkg) {
-        console.write_stdout(
+        console_writeln!(
+            console,
             &format!(
                 "{} : {}",
                 console_format!("<info>license</info>"),
                 format_license_for_show(&license_id),
             ),
-            Verbosity::Normal,
         );
     }
 
     // Homepage
     if let Some(homepage) = get_installed_homepage(pkg) {
-        console.write_stdout(
+        console_writeln!(
+            console,
             &format!(
                 "{} : {}",
                 console_format!("<info>homepage</info>"),
                 homepage
             ),
-            Verbosity::Normal,
         );
     }
 
@@ -698,7 +699,8 @@ fn show_installed_package_detail(
             .get("reference")
             .and_then(|v| v.as_str())
             .unwrap_or("");
-        console.write_stdout(
+        console_writeln!(
+            console,
             &format!(
                 "{} : [{}] {} {}",
                 console_format!("<info>source</info>"),
@@ -706,7 +708,6 @@ fn show_installed_package_detail(
                 console_format!("<comment>{}</comment>", source_url),
                 source_ref
             ),
-            Verbosity::Normal,
         );
     }
 
@@ -715,7 +716,8 @@ fn show_installed_package_detail(
         let dist_type = dist.get("type").and_then(|v| v.as_str()).unwrap_or("");
         let dist_url = dist.get("url").and_then(|v| v.as_str()).unwrap_or("");
         let dist_ref = dist.get("reference").and_then(|v| v.as_str()).unwrap_or("");
-        console.write_stdout(
+        console_writeln!(
+            console,
             &format!(
                 "{} : [{}] {} {}",
                 console_format!("<info>dist</info>"),
@@ -723,20 +725,19 @@ fn show_installed_package_detail(
                 console_format!("<comment>{}</comment>", dist_url),
                 dist_ref
             ),
-            Verbosity::Normal,
         );
     }
 
     // Path
     let install_path = vendor_dir.join(&pkg.name);
     if install_path.exists() {
-        console.write_stdout(
+        console_writeln!(
+            console,
             &format!(
                 "{} : {}",
                 console_format!("<info>path</info>"),
                 install_path.display()
             ),
-            Verbosity::Normal,
         );
     }
 
@@ -744,13 +745,13 @@ fn show_installed_package_detail(
     if let Some(requires) = pkg.extra_fields.get("require").and_then(|v| v.as_object())
         && !requires.is_empty()
     {
-        console.write_stdout("", Verbosity::Normal);
-        console.write_stdout(&console_format!("<info>requires</info>"), Verbosity::Normal);
+        console_writeln!(console, "");
+        console_writeln!(console, &console_format!("<info>requires</info>"),);
         for (name, constraint) in requires {
             let c = constraint.as_str().unwrap_or("");
-            console.write_stdout(
+            console_writeln!(
+                console,
                 &format!("{} {}", name, console_format!("<comment>{}</comment>", c)),
-                Verbosity::Normal,
             );
         }
     }
@@ -762,16 +763,13 @@ fn show_installed_package_detail(
         .and_then(|v| v.as_object())
         && !requires_dev.is_empty()
     {
-        console.write_stdout("", Verbosity::Normal);
-        console.write_stdout(
-            &console_format!("<info>requires (dev)</info>"),
-            Verbosity::Normal,
-        );
+        console_writeln!(console, "");
+        console_writeln!(console, &console_format!("<info>requires (dev)</info>"),);
         for (name, constraint) in requires_dev {
             let c = constraint.as_str().unwrap_or("");
-            console.write_stdout(
+            console_writeln!(
+                console,
                 &format!("{} {}", name, console_format!("<comment>{}</comment>", c)),
-                Verbosity::Normal,
             );
         }
     }
@@ -845,7 +843,7 @@ async fn show_locked_package_list(
 
     if args.name_only {
         for pkg in packages {
-            console.write_stdout(&pkg.name, Verbosity::Normal);
+            console_writeln!(console, &pkg.name);
         }
         return Ok(());
     }
@@ -996,17 +994,17 @@ async fn show_locked_package_list(
                 }
                 None => format!("{:<width$}", "", width = latest_width),
             };
-            console.write_stdout(
+            console_writeln!(
+                console,
                 &format!(
                     "{} {} {} {}",
                     name_str, version_str, latest_str, entry.description
                 ),
-                Verbosity::Normal,
             );
         } else {
-            console.write_stdout(
+            console_writeln!(
+                console,
                 &format!("{} {} {}", name_str, version_str, entry.description),
-                Verbosity::Normal,
             );
         }
     }
@@ -1057,7 +1055,7 @@ fn render_locked_json(
         .collect();
 
     let output = serde_json::json!({ "installed": json_entries });
-    console.write_stdout(&serde_json::to_string_pretty(&output)?, Verbosity::Normal);
+    console_writeln!(console, &serde_json::to_string_pretty(&output)?,);
     Ok(())
 }
 
@@ -1080,17 +1078,17 @@ fn show_locked_package_detail(
         }
     };
 
-    console.write_stdout(
+    console_writeln!(
+        console,
         &format!("{} : {}", console_format!("<info>name</info>"), pkg.name),
-        Verbosity::Normal,
     );
-    console.write_stdout(
+    console_writeln!(
+        console,
         &format!(
             "{} : {}",
             console_format!("<info>descrip.</info>"),
             pkg.description.as_deref().unwrap_or("")
         ),
-        Verbosity::Normal,
     );
 
     // Keywords
@@ -1099,61 +1097,62 @@ fn show_locked_package_detail(
         .as_ref()
         .map(|kw| kw.join(", "))
         .unwrap_or_default();
-    console.write_stdout(
+    console_writeln!(
+        console,
         &format!(
             "{} : {}",
             console_format!("<info>keywords</info>"),
             keywords
         ),
-        Verbosity::Normal,
     );
 
-    console.write_stdout(
+    console_writeln!(
+        console,
         &format!(
             "{} : * {}",
             console_format!("<info>versions</info>"),
             format_version(&pkg.version)
         ),
-        Verbosity::Normal,
     );
-    console.write_stdout(
+    console_writeln!(
+        console,
         &format!(
             "{} : {}",
             console_format!("<info>type</info>"),
             pkg.package_type.as_deref().unwrap_or("library")
         ),
-        Verbosity::Normal,
     );
 
     // License — one line per identifier, matching Composer's printLicenses.
     if let Some(ref licenses) = pkg.license {
         for license_id in licenses {
-            console.write_stdout(
+            console_writeln!(
+                console,
                 &format!(
                     "{} : {}",
                     console_format!("<info>license</info>"),
                     format_license_for_show(license_id),
                 ),
-                Verbosity::Normal,
             );
         }
     }
 
     // Homepage
     if let Some(ref homepage) = pkg.homepage {
-        console.write_stdout(
+        console_writeln!(
+            console,
             &format!(
                 "{} : {}",
                 console_format!("<info>homepage</info>"),
                 homepage
             ),
-            Verbosity::Normal,
         );
     }
 
     // Source
     if let Some(ref source) = pkg.source {
-        console.write_stdout(
+        console_writeln!(
+            console,
             &format!(
                 "{} : [{}] {} {}",
                 console_format!("<info>source</info>"),
@@ -1161,13 +1160,13 @@ fn show_locked_package_detail(
                 console_format!("<comment>{}</comment>", &source.url),
                 source.reference.as_deref().unwrap_or("")
             ),
-            Verbosity::Normal,
         );
     }
 
     // Dist
     if let Some(ref dist) = pkg.dist {
-        console.write_stdout(
+        console_writeln!(
+            console,
             &format!(
                 "{} : [{}] {} {}",
                 console_format!("<info>dist</info>"),
@@ -1175,41 +1174,37 @@ fn show_locked_package_detail(
                 console_format!("<comment>{}</comment>", &dist.url),
                 dist.reference.as_deref().unwrap_or("")
             ),
-            Verbosity::Normal,
         );
     }
 
     // Requires
     if !pkg.require.is_empty() {
-        console.write_stdout("", Verbosity::Normal);
-        console.write_stdout(&console_format!("<info>requires</info>"), Verbosity::Normal);
+        console_writeln!(console, "");
+        console_writeln!(console, &console_format!("<info>requires</info>"),);
         for (name, constraint) in &pkg.require {
-            console.write_stdout(
+            console_writeln!(
+                console,
                 &format!(
                     "{} {}",
                     name,
                     console_format!("<comment>{}</comment>", constraint)
                 ),
-                Verbosity::Normal,
             );
         }
     }
 
     // Requires (dev)
     if !pkg.require_dev.is_empty() {
-        console.write_stdout("", Verbosity::Normal);
-        console.write_stdout(
-            &console_format!("<info>requires (dev)</info>"),
-            Verbosity::Normal,
-        );
+        console_writeln!(console, "");
+        console_writeln!(console, &console_format!("<info>requires (dev)</info>"),);
         for (name, constraint) in &pkg.require_dev {
-            console.write_stdout(
+            console_writeln!(
+                console,
                 &format!(
                     "{} {}",
                     name,
                     console_format!("<comment>{}</comment>", constraint)
                 ),
-                Verbosity::Normal,
             );
         }
     }
@@ -1218,16 +1213,16 @@ fn show_locked_package_detail(
     if let Some(ref suggests) = pkg.suggest
         && !suggests.is_empty()
     {
-        console.write_stdout("", Verbosity::Normal);
-        console.write_stdout(&console_format!("<info>suggests</info>"), Verbosity::Normal);
+        console_writeln!(console, "");
+        console_writeln!(console, &console_format!("<info>suggests</info>"),);
         for (name, reason) in suggests {
-            console.write_stdout(
+            console_writeln!(
+                console,
                 &format!(
                     "{} {}",
                     name,
                     console_format!("<comment>{}</comment>", reason)
                 ),
-                Verbosity::Normal,
             );
         }
     }
@@ -1247,82 +1242,79 @@ fn show_self(
     let root = mozart_core::package::read_from_file(&composer_json_path)?;
 
     if args.name_only {
-        console.write_stdout(&root.name, Verbosity::Normal);
+        console_writeln!(console, &root.name);
         return Ok(());
     }
 
-    console.write_stdout(
+    console_writeln!(
+        console,
         &format!("{} : {}", console_format!("<info>name</info>"), root.name),
-        Verbosity::Normal,
     );
-    console.write_stdout(
+    console_writeln!(
+        console,
         &format!(
             "{} : {}",
             console_format!("<info>descrip.</info>"),
             root.description.as_deref().unwrap_or("")
         ),
-        Verbosity::Normal,
     );
-    console.write_stdout(
+    console_writeln!(
+        console,
         &format!(
             "{} : {}",
             console_format!("<info>type</info>"),
             root.package_type.as_deref().unwrap_or("project")
         ),
-        Verbosity::Normal,
     );
     if let Some(ref license) = root.license {
-        console.write_stdout(
+        console_writeln!(
+            console,
             &format!(
                 "{} : {}",
                 console_format!("<info>license</info>"),
                 format_license_for_show(license),
             ),
-            Verbosity::Normal,
         );
     }
     if let Some(ref homepage) = root.homepage {
-        console.write_stdout(
+        console_writeln!(
+            console,
             &format!(
                 "{} : {}",
                 console_format!("<info>homepage</info>"),
                 homepage
             ),
-            Verbosity::Normal,
         );
     }
 
     // Requires
     if !root.require.is_empty() {
-        console.write_stdout("", Verbosity::Normal);
-        console.write_stdout(&console_format!("<info>requires</info>"), Verbosity::Normal);
+        console_writeln!(console, "");
+        console_writeln!(console, &console_format!("<info>requires</info>"),);
         for (name, constraint) in &root.require {
-            console.write_stdout(
+            console_writeln!(
+                console,
                 &format!(
                     "{} {}",
                     name,
                     console_format!("<comment>{}</comment>", constraint)
                 ),
-                Verbosity::Normal,
             );
         }
     }
 
     // Requires (dev)
     if !root.require_dev.is_empty() {
-        console.write_stdout("", Verbosity::Normal);
-        console.write_stdout(
-            &console_format!("<info>requires (dev)</info>"),
-            Verbosity::Normal,
-        );
+        console_writeln!(console, "");
+        console_writeln!(console, &console_format!("<info>requires (dev)</info>"),);
         for (name, constraint) in &root.require_dev {
-            console.write_stdout(
+            console_writeln!(
+                console,
                 &format!(
                     "{} {}",
                     name,
                     console_format!("<comment>{}</comment>", constraint)
                 ),
-                Verbosity::Normal,
             );
         }
     }
@@ -1378,13 +1370,13 @@ fn show_tree(
     };
 
     // Print root
-    console.write_stdout(
+    console_writeln!(
+        console,
         &console_format!(
             "<info>{}</info> <comment>{}</comment>",
             &root.name,
             root.description.as_deref().unwrap_or("")
         ),
-        Verbosity::Normal,
     );
 
     // Render each root dependency as a tree
@@ -1430,22 +1422,22 @@ fn print_tree_node(
         let description = pkg.description.as_deref().unwrap_or("");
         let version = format_version(&pkg.version);
 
-        console.write_stdout(
+        console_writeln!(
+            console,
             &format!(
                 "{} {} {}",
                 prefix,
                 console_format!("<info>{}</info> <comment>{}</comment>", pkg_name, &version),
                 description
             ),
-            Verbosity::Normal,
         );
 
         // Detect circular dependency or depth limit
         if visited.contains(&key) || depth >= MAX_DEPTH {
             if visited.contains(&key) {
-                console.write_stdout(
+                console_writeln!(
+                    console,
                     &format!("{}    {} (circular dependency)", child_prefix, pkg_name),
-                    Verbosity::Normal,
                 );
             }
             return;
@@ -1494,14 +1486,14 @@ fn print_tree_node(
     } else {
         // Package not found in lock file (platform package or not installed)
         if !is_platform_package(&key) {
-            console.write_stdout(
+            console_writeln!(
+                console,
                 &format!(
                     "{} {} {} (not installed)",
                     prefix,
                     console_format!("<comment>{}</comment>", pkg_name),
                     constraint
                 ),
-                Verbosity::Normal,
             );
         }
     }
@@ -1588,9 +1580,9 @@ fn show_platform(
                 })
             })
             .collect();
-        console.write_stdout(
+        console_writeln!(
+            console,
             &serde_json::to_string_pretty(&serde_json::json!({ "platform": json_entries }))?,
-            Verbosity::Normal,
         );
         return Ok(());
     }
@@ -1604,7 +1596,7 @@ fn show_platform(
 
     if args.name_only {
         for (name, _, _) in &platform_packages {
-            console.write_stdout(name, Verbosity::Normal);
+            console_writeln!(console, name);
         }
         return Ok(());
     }
@@ -1621,7 +1613,8 @@ fn show_platform(
         .unwrap_or(0);
 
     for (name, version, _source) in &platform_packages {
-        console.write_stdout(
+        console_writeln!(
+            console,
             &format!(
                 "{} {}",
                 console_format!("<info>{:<width$}</info>", name, width = name_width),
@@ -1631,7 +1624,6 @@ fn show_platform(
                     width = version_width
                 ),
             ),
-            Verbosity::Normal,
         );
     }
 
@@ -1661,13 +1653,13 @@ async fn show_available(
             let lock_path = working_dir.join("composer.lock");
             if lock_path.exists() {
                 let lock = mozart_registry::lockfile::LockFile::read_from_file(&lock_path)?;
-                console.write_stdout(
+                console_writeln!(
+                    console,
                     &console_format!(
                         "<info>Available versions for locked packages (from Packagist):</info>"
                     ),
-                    Verbosity::Normal,
                 );
-                console.write_stdout("", Verbosity::Normal);
+                console_writeln!(console, "");
 
                 let mut all_packages: Vec<&mozart_registry::lockfile::LockedPackage> =
                     lock.packages.iter().collect();
@@ -1686,23 +1678,23 @@ async fn show_available(
                 return Ok(());
             }
 
-            console.write(
+            console_writeln_error!(
+                console,
                 &console_format!(
                     "<warning>No dependencies installed. Try running mozart install or update.</warning>"
                 ),
-                Verbosity::Normal,
             );
             return Ok(());
         }
     };
 
-    console.write_stdout(
+    console_writeln!(
+        console,
         &console_format!(
             "<info>Available versions for installed packages (from Packagist):</info>"
         ),
-        Verbosity::Normal,
     );
-    console.write_stdout("", Verbosity::Normal);
+    console_writeln!(console, "");
 
     let format = args.format.as_deref().unwrap_or("text");
 
@@ -1732,7 +1724,7 @@ async fn show_available(
             }
         }
         let output = serde_json::json!({ "packages": json_entries });
-        console.write_stdout(&serde_json::to_string_pretty(&output)?, Verbosity::Normal);
+        console_writeln!(console, &serde_json::to_string_pretty(&output)?,);
         return Ok(());
     }
 
@@ -1754,10 +1746,7 @@ async fn show_available_versions(
 ) -> anyhow::Result<()> {
     let versions = mozart_registry::packagist::fetch_package_versions(pkg_name, repo_cache).await?;
     if versions.is_empty() {
-        console.write_stdout(
-            &format!("No versions found for {pkg_name}"),
-            Verbosity::Normal,
-        );
+        console_writeln!(console, &format!("No versions found for {pkg_name}"),);
         return Ok(());
     }
 
@@ -1768,18 +1757,18 @@ async fn show_available_versions(
             "name": pkg_name,
             "versions": version_strings,
         });
-        console.write_stdout(&serde_json::to_string_pretty(&output)?, Verbosity::Normal);
+        console_writeln!(console, &serde_json::to_string_pretty(&output)?,);
         return Ok(());
     }
 
-    console.write_stdout(
+    console_writeln!(
+        console,
         &console_format!("<info>Available versions for {pkg_name}:</info>"),
-        Verbosity::Normal,
     );
     for v in &versions {
-        console.write_stdout(
+        console_writeln!(
+            console,
             &format!("  {}", console_format!("<comment>{}</comment>", &v.version)),
-            Verbosity::Normal,
         );
     }
     Ok(())
@@ -1793,12 +1782,12 @@ async fn show_available_versions_inline(
     match mozart_registry::packagist::fetch_package_versions(pkg_name, repo_cache).await {
         Ok(versions) => {
             if versions.is_empty() {
-                console.write_stdout(
+                console_writeln!(
+                    console,
                     &format!(
                         "{}: no versions found",
                         console_format!("<info>{}</info>", pkg_name)
                     ),
-                    Verbosity::Normal,
                 );
                 return;
             }
@@ -1813,23 +1802,23 @@ async fn show_available_versions_inline(
             } else {
                 String::new()
             };
-            console.write_stdout(
+            console_writeln!(
+                console,
                 &format!(
                     "{}: {}{}",
                     console_format!("<info>{}</info>", pkg_name),
                     console_format!("<comment>{}</comment>", &shown.join(", ")),
                     rest
                 ),
-                Verbosity::Normal,
             );
         }
         Err(_) => {
-            console.write_stdout(
+            console_writeln!(
+                console,
                 &format!(
                     "{}: (could not fetch from Packagist)",
                     console_format!("<comment>{}</comment>", pkg_name)
                 ),
-                Verbosity::Normal,
             );
         }
     }

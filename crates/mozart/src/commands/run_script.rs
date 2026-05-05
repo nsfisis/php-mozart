@@ -1,4 +1,5 @@
 use clap::Args;
+use mozart_core::console_writeln;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -198,12 +199,10 @@ fn list_scripts(
     descriptions: &BTreeMap<String, String>,
     console: &mozart_core::console::Console,
 ) -> anyhow::Result<()> {
-    use mozart_core::console::Verbosity;
-
-    console.write_stdout("scripts:", Verbosity::Normal);
+    console_writeln!(console, "scripts:");
     for name in scripts.keys() {
         let desc = descriptions.get(name).map(|s| s.as_str()).unwrap_or("");
-        console.write_stdout(&format!("  {}  {}", name, desc), Verbosity::Normal);
+        console_writeln!(console, &format!("  {}  {}", name, desc));
     }
     Ok(())
 }

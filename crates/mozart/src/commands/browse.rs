@@ -1,5 +1,6 @@
 use clap::Args;
 use mozart_core::console_format;
+use mozart_core::console_writeln;
 use mozart_core::exit_code;
 use std::path::Path;
 use std::process::Command;
@@ -49,10 +50,7 @@ pub async fn execute(
         match resolve_url(package_name, &working_dir, args.homepage, &repo_cache).await? {
             ResolveResult::Found(url) => {
                 if args.show {
-                    console.write_stdout(
-                        &console_format!("<info>{}</info>", url),
-                        mozart_core::console::Verbosity::Normal,
-                    );
+                    console_writeln!(console, &console_format!("<info>{}</info>", url),);
                 } else {
                     open_browser(&url, console)?;
                 }

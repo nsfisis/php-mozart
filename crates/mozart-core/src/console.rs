@@ -259,6 +259,66 @@ impl Console {
     }
 }
 
+/// Writes a message to the output.
+///
+/// ref: \Composer\IO\IOInterface::write()
+#[macro_export]
+macro_rules! console_writeln {
+    ($console:expr, $msg:expr $(,)?) => {
+        $crate::console_writeln!($console, $msg, $crate::console::Verbosity::Normal)
+    };
+    ($console:expr, $msg:expr, $verbosity:expr $(,)?) => {
+        if ($console).verbosity >= $verbosity {
+            println!("{}", $msg);
+        }
+    };
+}
+
+/// Writes a message to the output without newline.
+///
+/// ref: \Composer\IO\IOInterface::write()
+#[macro_export]
+macro_rules! console_write {
+    ($console:expr, $msg:expr $(,)?) => {
+        $crate::console_write!($console, $msg, $crate::console::Verbosity::Normal)
+    };
+    ($console:expr, $msg:expr, $verbosity:expr $(,)?) => {
+        if ($console).verbosity >= $verbosity {
+            print!("{}", $msg);
+        }
+    };
+}
+
+/// Writes a message to the error output.
+///
+/// ref: \Composer\IO\IOInterface::writeError()
+#[macro_export]
+macro_rules! console_writeln_error {
+    ($console:expr, $msg:expr $(,)?) => {
+        $crate::console_writeln_error!($console, $msg, $crate::console::Verbosity::Normal)
+    };
+    ($console:expr, $msg:expr, $verbosity:expr $(,)?) => {
+        if ($console).verbosity >= $verbosity {
+            eprintln!("{}", $msg);
+        }
+    };
+}
+
+/// Writes a message to the error output without newline.
+///
+/// ref: \Composer\IO\IOInterface::writeError()
+#[macro_export]
+macro_rules! console_write_error {
+    ($console:expr, $msg:expr $(,)?) => {
+        $crate::console_write_error!($console, $msg, $crate::console::Verbosity::Normal)
+    };
+    ($console:expr, $msg:expr, $verbosity:expr $(,)?) => {
+        if ($console).verbosity >= $verbosity {
+            eprint!("{}", $msg);
+        }
+    };
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------

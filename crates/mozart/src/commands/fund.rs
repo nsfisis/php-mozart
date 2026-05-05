@@ -1,6 +1,7 @@
 use clap::Args;
 use mozart_core::console;
 use mozart_core::console_format;
+use mozart_core::console_writeln;
 use serde::Serialize;
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -177,47 +178,41 @@ fn render_text(
     console: &console::Console,
 ) {
     if grouped.is_empty() {
-        console.write_stdout(
+        console_writeln!(
+            console,
             "No funding links were found in your package dependencies. \
              This doesn't mean they don't need your support!",
-            console::Verbosity::Normal,
         );
         return;
     }
 
-    console.write_stdout(
+    console_writeln!(
+        console,
         "The following packages were found in your dependencies which publish funding information:",
-        console::Verbosity::Normal,
     );
 
     for (vendor, url_map) in grouped {
-        console.write_stdout("", console::Verbosity::Normal);
-        console.write_stdout(
-            &console_format!("<comment>{vendor}</comment>"),
-            console::Verbosity::Normal,
-        );
+        console_writeln!(console, "");
+        console_writeln!(console, &console_format!("<comment>{vendor}</comment>"));
         for (url, packages) in url_map {
             // Deduplicate cross-URL: only print package-names line when it differs from prev
             let mut prev: Option<String> = None;
             let packages_str = packages.join(", ");
             if prev.as_deref() != Some(packages_str.as_str()) {
-                console.write_stdout(
-                    &console_format!("  <info>{packages_str}</info>"),
-                    console::Verbosity::Normal,
-                );
+                console_writeln!(console, &console_format!("  <info>{packages_str}</info>"));
             }
             prev = Some(packages_str);
             let _ = prev;
-            console.write_stdout(&format!("    {url}"), console::Verbosity::Normal);
+            console_writeln!(console, &format!("    {url}"));
         }
     }
 
-    console.write_stdout("", console::Verbosity::Normal);
-    console.write_stdout(
+    console_writeln!(console, "");
+    console_writeln!(
+        console,
         "Please consider following these links and sponsoring the work of package authors!",
-        console::Verbosity::Normal,
     );
-    console.write_stdout("Thank you!", console::Verbosity::Normal);
+    console_writeln!(console, "Thank you!");
 }
 
 fn render_json(
@@ -228,10 +223,7 @@ fn render_json(
     let formatter = serde_json::ser::PrettyFormatter::with_indent(b"    ");
     let mut ser = serde_json::Serializer::with_formatter(buf, formatter);
     grouped.serialize(&mut ser)?;
-    console.write_stdout(
-        &String::from_utf8(ser.into_inner())?,
-        console::Verbosity::Normal,
-    );
+    console_writeln!(console, &String::from_utf8(ser.into_inner())?);
     Ok(())
 }
 

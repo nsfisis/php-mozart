@@ -1,7 +1,7 @@
 use clap::Args;
 use indexmap::{IndexMap, IndexSet};
-use mozart_core::console::Verbosity;
 use mozart_core::console_format;
+use mozart_core::console_writeln;
 use mozart_core::package::{self, Stability};
 use mozart_core::validation;
 use mozart_registry::lockfile;
@@ -462,11 +462,11 @@ pub async fn execute(
                     anyhow::bail!("Invalid package name: \"{name}\"");
                 }
 
-                console.write_stdout(
+                console_writeln!(
+                    console,
                     &console_format!(
                         "<info>Using version constraint for {name} from Packagist...</info>"
                     ),
-                    Verbosity::Normal,
                 );
 
                 let versions = packagist::fetch_package_versions(&name, &repo_cache).await?;
@@ -489,9 +489,9 @@ pub async fn execute(
                     )
                 };
 
-                console.write_stdout(
+                console_writeln!(
+                    console,
                     &console_format!("<info>Using version {constraint} for {name}</info>"),
-                    Verbosity::Normal,
                 );
 
                 (name, constraint)
@@ -543,16 +543,16 @@ pub async fn execute(
         };
 
         if let Some(existing) = target.get(name) {
-            console.write_stdout(
+            console_writeln!(
+                console,
                 &console_format!(
                     "<comment>Updating {name} from {existing} to {constraint} in {section_name}</comment>"
                 ),
-                Verbosity::Normal,
             );
         } else {
-            console.write_stdout(
+            console_writeln!(
+                console,
                 &console_format!("<info>Adding {name} ({constraint}) to {section_name}</info>"),
-                Verbosity::Normal,
             );
         }
 
@@ -578,9 +578,9 @@ pub async fn execute(
 
     // Write back composer.json (unless --dry-run)
     if args.dry_run {
-        console.write_stdout(
+        console_writeln!(
+            console,
             &console_format!("<comment>Dry run: composer.json not modified.</comment>"),
-            Verbosity::Normal,
         );
     } else {
         package::write_to_file(&raw, &composer_path)?;
@@ -588,11 +588,11 @@ pub async fn execute(
 
     // Handle --no-update: skip resolution entirely
     if args.no_update {
-        console.write_stdout(
+        console_writeln!(
+            console,
             &console_format!(
                 "<comment>Not updating dependencies, only modifying composer.json.</comment>"
             ),
-            Verbosity::Normal,
         );
         return Ok(());
     }

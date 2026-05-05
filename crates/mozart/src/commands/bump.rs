@@ -1,7 +1,7 @@
 use clap::Args;
 use indexmap::IndexMap;
-use mozart_core::console::Verbosity;
 use mozart_core::console_format;
+use mozart_core::console_writeln;
 
 /// Exit code for stale lock file (matches Composer's BumpCommand::ERROR_LOCK_OUTDATED)
 const ERROR_LOCK_OUTDATED: i32 = 2;
@@ -149,34 +149,34 @@ pub async fn execute(
     let total_changes = require_changes.len() + require_dev_changes.len();
 
     if total_changes == 0 {
-        console.write_stdout(
+        console_writeln!(
+            console,
             &console_format!(
                 "<info>No requirements to update in {}.</info>",
                 composer_json_path.display()
             ),
-            Verbosity::Normal,
         );
         return Ok(());
     }
 
     if args.dry_run {
-        console.write_stdout(
+        console_writeln!(
+            console,
             &console_format!(
                 "<info>{} would be updated with:</info>",
                 composer_json_path.display()
             ),
-            Verbosity::Normal,
         );
         for (name, _old, new) in &require_changes {
-            console.write_stdout(
+            console_writeln!(
+                console,
                 &console_format!("<info> - require.{name}: {new}</info>"),
-                Verbosity::Normal,
             );
         }
         for (name, _old, new) in &require_dev_changes {
-            console.write_stdout(
+            console_writeln!(
+                console,
                 &console_format!("<info> - require-dev.{name}: {new}</info>"),
-                Verbosity::Normal,
             );
         }
         // Return exit code 1 when dry-run detects changes (useful for CI to detect un-bumped constraints)
@@ -204,12 +204,12 @@ pub async fn execute(
     updated_lock.content_hash = new_hash;
     updated_lock.write_to_file(&lock_path)?;
 
-    console.write_stdout(
+    console_writeln!(
+        console,
         &console_format!(
             "<info>{} has been updated ({total_changes} changes).</info>",
             composer_json_path.display()
         ),
-        Verbosity::Normal,
     );
 
     Ok(())

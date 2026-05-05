@@ -1,5 +1,6 @@
 use clap::Args;
 use mozart_core::console_format;
+use mozart_core::console_writeln;
 use mozart_core::package;
 
 #[derive(Args)]
@@ -164,14 +165,14 @@ pub async fn execute(
         for pkg in &selected {
             let locked = find_locked_package(&all_locked, &pkg.name);
             if let Some(lp) = locked {
-                console.write_stdout(
+                console_writeln!(
+                    console,
                     &format!("  - Would reinstall {} ({})", lp.name, lp.version),
-                    mozart_core::console::Verbosity::Normal,
                 );
             } else {
-                console.write_stdout(
+                console_writeln!(
+                    console,
                     &format!("  - Would reinstall {} (not found in lock file)", pkg.name),
-                    mozart_core::console::Verbosity::Normal,
                 );
             }
         }
@@ -241,10 +242,7 @@ pub async fn execute(
     }
 
     if reinstalled_count == 0 {
-        console.write_stdout(
-            "Nothing was reinstalled.",
-            mozart_core::console::Verbosity::Normal,
-        );
+        console_writeln!(console, "Nothing was reinstalled.",);
         return Ok(());
     }
 
