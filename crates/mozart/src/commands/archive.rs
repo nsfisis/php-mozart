@@ -104,15 +104,10 @@ pub async fn execute(
     let (config_archive_format, config_archive_dir) = match composer.as_ref() {
         Some(c) => {
             let cfg = c.config();
-            let fmt = cfg
-                .get("archive-format")
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_string());
-            let dir = cfg
-                .get("archive-dir")
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_string());
-            (fmt, dir)
+            (
+                Some(cfg.archive_format.clone()),
+                Some(cfg.archive_dir.clone()),
+            )
         }
         None => (None, None),
     };

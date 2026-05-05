@@ -78,23 +78,11 @@ pub async fn execute(
         }
     }
 
-    let optimize = args.optimize
-        || composer_config
-            .get("optimize-autoloader")
-            .and_then(|v| v.as_bool())
-            .unwrap_or(false);
-    let classmap_authoritative = args.classmap_authoritative
-        || composer_config
-            .get("classmap-authoritative")
-            .and_then(|v| v.as_bool())
-            .unwrap_or(false);
+    let optimize = args.optimize || composer_config.optimize_autoloader;
+    let classmap_authoritative =
+        args.classmap_authoritative || composer_config.classmap_authoritative;
     let apcu_prefix = args.apcu_prefix.clone();
-    let apcu = apcu_prefix.is_some()
-        || args.apcu
-        || composer_config
-            .get("apcu-autoloader")
-            .and_then(|v| v.as_bool())
-            .unwrap_or(false);
+    let apcu = apcu_prefix.is_some() || args.apcu || composer_config.apcu_autoloader;
 
     let do_optimize = optimize || classmap_authoritative;
     if args.strict_psr && !do_optimize {

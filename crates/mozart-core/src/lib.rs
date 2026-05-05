@@ -1,4 +1,5 @@
 pub mod composer;
+pub mod config;
 pub mod console;
 pub mod exit_code;
 pub mod http;

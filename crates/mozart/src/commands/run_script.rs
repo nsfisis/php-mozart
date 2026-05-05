@@ -110,12 +110,14 @@ pub async fn execute(
     let timeout = match args.timeout {
         Some(0) => None,
         Some(secs) => Some(Duration::from_secs(secs)),
-        None => composer
-            .config()
-            .get("process-timeout")
-            .and_then(|v| v.as_u64())
-            .filter(|s| *s != 0)
-            .map(Duration::from_secs),
+        None => {
+            let t = composer.config().process_timeout;
+            if t != 0 {
+                Some(Duration::from_secs(t))
+            } else {
+                None
+            }
+        }
     };
 
     let dev_mode = !args.no_dev;
@@ -445,12 +447,7 @@ fn wait_with_timeout(
 
 fn resolve_bin_dir(working_dir: &Path, composer: &mozart_core::composer::Composer) -> PathBuf {
     // bin-dir's `{$vendor-dir}` placeholder is already resolved by Composer::load.
-    let bin_dir = composer
-        .config()
-        .get("bin-dir")
-        .and_then(|v| v.as_str())
-        .unwrap_or("vendor/bin");
-    working_dir.join(bin_dir)
+    working_dir.join(&composer.config().bin_dir)
 }
 
 fn is_php_callback(entry: &str) -> bool {

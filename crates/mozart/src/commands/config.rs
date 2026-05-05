@@ -60,7 +60,7 @@ pub struct ConfigArgs {
     pub source: bool,
 }
 
-pub use mozart_core::composer::{ComposerConfig, resolve_references};
+use mozart_core::config::{Config, resolve_references};
 
 /// Classification of config key value types for validation and normalization.
 #[derive(Debug)]
@@ -754,17 +754,17 @@ fn execute_read(
     console: &mozart_core::console::Console,
 ) -> anyhow::Result<()> {
     // Build the effective config for config-section keys.
-    let mut config = ComposerConfig::defaults();
+    let mut config = Config::default();
 
     if args.global {
         let global_config_path = composer_home().join("config.json");
         let overrides = load_config_section(&global_config_path)?;
-        config.merge(&overrides);
+        config.merge(&overrides)?;
     } else {
         let wd = cli.working_dir()?;
         let composer_json = wd.join("composer.json");
         let overrides = load_config_section(&composer_json)?;
-        config.merge(&overrides);
+        config.merge(&overrides)?;
     }
 
     resolve_references(&mut config);
@@ -772,27 +772,13 @@ fn execute_read(
     // If --absolute is requested, resolve *-dir values to absolute paths.
     if args.absolute {
         let wd = cli.working_dir()?;
-        let keys: Vec<String> = config.values.keys().cloned().collect();
-        for key in keys {
-            if key.ends_with("-dir")
-                && let Some(serde_json::Value::String(s)) = config.values.get(&key).cloned()
-            {
-                let p = std::path::Path::new(&s);
-                if p.is_relative() {
-                    let abs = wd.join(p);
-                    config.values.insert(
-                        key,
-                        serde_json::Value::String(abs.to_string_lossy().into_owned()),
-                    );
-                }
-            }
-        }
+        config.make_dirs_absolute(&wd);
     }
 
     if args.list {
-        for (key, value) in &config.values {
+        for (key, value) in config.entries() {
             console.write_stdout(
-                &format!("[{}] {}", key, render_value(value)),
+                &format!("[{}] {}", key, render_value(&value)),
                 mozart_core::console::Verbosity::Quiet,
             );
         }
@@ -853,8 +839,10 @@ fn execute_read(
             // 4. Standard config key lookup
             match config.get(key) {
                 Some(value) => {
-                    console
-                        .write_stdout(&render_value(value), mozart_core::console::Verbosity::Quiet);
+                    console.write_stdout(
+                        &render_value(&value),
+                        mozart_core::console::Verbosity::Quiet,
+                    );
                 }
                 None => {
                     return Err(anyhow!("Setting \"{}\" does not exist.", key));
@@ -872,7 +860,7 @@ mod tests {
 
     #[test]
     fn test_defaults_contain_expected_keys() {
-        let cfg = ComposerConfig::defaults();
+        let cfg = Config::default();
 
         let required_keys = [
             "process-timeout",
@@ -908,127 +896,109 @@ mod tests {
         ];
 
         for key in &required_keys {
-            assert!(cfg.values.contains_key(*key), "defaults missing key: {key}");
+            assert!(cfg.get(*key).is_some(), "defaults missing key: {key}");
         }
     }
 
     #[test]
     fn test_defaults_values_correct() {
-        let cfg = ComposerConfig::defaults();
+        let cfg = Config::default();
 
-        assert_eq!(cfg.values["process-timeout"], serde_json::json!(300));
-        assert_eq!(cfg.values["preferred-install"], serde_json::json!("dist"));
-        assert_eq!(cfg.values["vendor-dir"], serde_json::json!("vendor"));
-        assert_eq!(
-            cfg.values["github-protocols"],
-            serde_json::json!(["https", "ssh", "git"])
-        );
-        assert_eq!(cfg.values["secure-http"], serde_json::json!(true));
-        assert_eq!(cfg.values["lock"], serde_json::json!(true));
-        assert_eq!(cfg.values["autoloader-suffix"], serde_json::Value::Null);
+        assert_eq!(cfg.process_timeout, 300);
+        assert_eq!(cfg.preferred_install, serde_json::json!("dist"));
+        assert_eq!(cfg.vendor_dir, "vendor");
+        assert_eq!(cfg.github_protocols, vec!["https", "ssh", "git"]);
+        assert_eq!(cfg.secure_http, true);
+        assert_eq!(cfg.lock, true);
+        assert_eq!(cfg.autoloader_suffix, None);
     }
 
     #[test]
     fn test_merge_overrides_existing_key() {
-        let mut cfg = ComposerConfig::defaults();
+        let mut cfg = Config::default();
 
         let mut overrides = BTreeMap::new();
         overrides.insert("vendor-dir".to_string(), serde_json::json!("packages"));
         overrides.insert("sort-packages".to_string(), serde_json::json!(true));
 
-        cfg.merge(&overrides);
+        cfg.merge(&overrides).unwrap();
 
-        assert_eq!(cfg.values["vendor-dir"], serde_json::json!("packages"));
-        assert_eq!(cfg.values["sort-packages"], serde_json::json!(true));
+        assert_eq!(cfg.vendor_dir, "packages");
+        assert_eq!(cfg.sort_packages, true);
     }
 
     #[test]
     fn test_merge_adds_new_key() {
-        let mut cfg = ComposerConfig::defaults();
+        let mut cfg = Config::default();
 
         let mut overrides = BTreeMap::new();
         overrides.insert("custom-key".to_string(), serde_json::json!("custom-value"));
 
-        cfg.merge(&overrides);
+        cfg.merge(&overrides).unwrap();
 
-        assert_eq!(cfg.values["custom-key"], serde_json::json!("custom-value"));
+        assert_eq!(cfg.extra["custom-key"], serde_json::json!("custom-value"));
     }
 
     #[test]
     fn test_merge_empty_overrides_leaves_defaults_intact() {
-        let mut cfg = ComposerConfig::defaults();
-        let original_vendor = cfg.values["vendor-dir"].clone();
+        let mut cfg = Config::default();
+        let original_vendor = cfg.vendor_dir.clone();
 
-        cfg.merge(&BTreeMap::new());
+        cfg.merge(&BTreeMap::new()).unwrap();
 
-        assert_eq!(cfg.values["vendor-dir"], original_vendor);
+        assert_eq!(cfg.vendor_dir, original_vendor);
     }
 
     #[test]
     fn test_reference_resolution_bin_dir() {
-        let mut cfg = ComposerConfig::defaults();
+        let mut cfg = Config::default();
         // bin-dir default is "{$vendor-dir}/bin"; vendor-dir default is "vendor"
         resolve_references(&mut cfg);
 
-        assert_eq!(cfg.values["bin-dir"], serde_json::json!("vendor/bin"));
+        assert_eq!(cfg.bin_dir, "vendor/bin");
     }
 
     #[test]
     fn test_reference_resolution_custom_vendor_dir() {
-        let mut cfg = ComposerConfig::defaults();
+        let mut cfg = Config::default();
 
-        // Override vendor-dir before resolving
-        cfg.values
-            .insert("vendor-dir".to_string(), serde_json::json!("lib"));
+        cfg.vendor_dir = "lib".to_string();
         resolve_references(&mut cfg);
 
-        assert_eq!(cfg.values["bin-dir"], serde_json::json!("lib/bin"));
+        assert_eq!(cfg.bin_dir, "lib/bin");
     }
 
     #[test]
     fn test_reference_resolution_cache_dirs() {
-        let mut cfg = ComposerConfig::defaults();
+        let mut cfg = Config::default();
         // Inject a predictable home so the test is environment-independent.
-        cfg.values.insert(
-            "cache-dir".to_string(),
-            serde_json::json!("/home/user/.cache/composer"),
-        );
+        cfg.cache_dir = "/home/user/.cache/composer".to_string();
         resolve_references(&mut cfg);
 
-        assert_eq!(
-            cfg.values["cache-files-dir"],
-            serde_json::json!("/home/user/.cache/composer/files")
-        );
-        assert_eq!(
-            cfg.values["cache-repo-dir"],
-            serde_json::json!("/home/user/.cache/composer/repo")
-        );
-        assert_eq!(
-            cfg.values["cache-vcs-dir"],
-            serde_json::json!("/home/user/.cache/composer/vcs")
-        );
+        assert_eq!(cfg.cache_files_dir, "/home/user/.cache/composer/files");
+        assert_eq!(cfg.cache_repo_dir, "/home/user/.cache/composer/repo");
+        assert_eq!(cfg.cache_vcs_dir, "/home/user/.cache/composer/vcs");
     }
 
     #[test]
     fn test_reference_resolution_no_change_for_non_string() {
-        let mut cfg = ComposerConfig::defaults();
-        let before = cfg.values["process-timeout"].clone();
+        let mut cfg = Config::default();
+        let before = cfg.process_timeout;
         resolve_references(&mut cfg);
-        // Numeric values should be untouched.
-        assert_eq!(cfg.values["process-timeout"], before);
+        assert_eq!(cfg.process_timeout, before);
     }
 
     #[test]
     fn test_get_existing_key() {
-        let cfg = ComposerConfig::defaults();
+        let cfg = Config::default();
         let value = cfg.get("vendor-dir");
         assert!(value.is_some());
-        assert_eq!(value.unwrap(), &serde_json::json!("vendor"));
+        assert_eq!(value.unwrap(), serde_json::json!("vendor"));
     }
 
     #[test]
     fn test_get_nonexistent_key_returns_none() {
-        let cfg = ComposerConfig::defaults();
+        let cfg = Config::default();
         assert!(cfg.get("does-not-exist").is_none());
     }
 
@@ -1118,17 +1088,14 @@ mod tests {
         .unwrap();
 
         let overrides = load_config_section(&composer_json).unwrap();
-        let mut cfg = ComposerConfig::defaults();
-        cfg.merge(&overrides);
+        let mut cfg = Config::default();
+        cfg.merge(&overrides).unwrap();
         resolve_references(&mut cfg);
 
-        assert_eq!(cfg.values["vendor-dir"], serde_json::json!("custom_vendor"));
-        assert_eq!(cfg.values["sort-packages"], serde_json::json!(true));
+        assert_eq!(cfg.vendor_dir, "custom_vendor");
+        assert_eq!(cfg.sort_packages, true);
         // bin-dir should have resolved against the overridden vendor-dir
-        assert_eq!(
-            cfg.values["bin-dir"],
-            serde_json::json!("custom_vendor/bin")
-        );
+        assert_eq!(cfg.bin_dir, "custom_vendor/bin");
     }
 
     #[test]

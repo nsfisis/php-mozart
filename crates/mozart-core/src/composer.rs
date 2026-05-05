@@ -11,6 +11,8 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
+use crate::config::{Config, resolve_references};
+
 /// Return the Composer home directory, respecting `COMPOSER_HOME` and falling
 /// back to the platform default using Composer-compatible logic.
 ///
@@ -69,134 +71,12 @@ fn use_xdg() -> bool {
         || std::path::Path::new("/etc/xdg").is_dir()
 }
 
-/// Effective Composer config key/value pairs for a project.
-/// Keys mirror `Composer\Config`'s defaults; values are stored as raw
-/// `serde_json::Value` so callers can re-interpret them per key.
-pub struct ComposerConfig {
-    pub values: BTreeMap<String, serde_json::Value>,
-}
-
-impl ComposerConfig {
-    /// Build a `ComposerConfig` populated with Composer's built-in defaults.
-    pub fn defaults() -> Self {
-        let mut m: BTreeMap<String, serde_json::Value> = BTreeMap::new();
-
-        m.insert("process-timeout".to_string(), serde_json::json!(300));
-        m.insert("use-include-path".to_string(), serde_json::json!(false));
-        m.insert("preferred-install".to_string(), serde_json::json!("dist"));
-        m.insert("notify-on-install".to_string(), serde_json::json!(true));
-        m.insert(
-            "github-protocols".to_string(),
-            serde_json::json!(["https", "ssh", "git"]),
-        );
-        m.insert("vendor-dir".to_string(), serde_json::json!("vendor"));
-        m.insert(
-            "bin-dir".to_string(),
-            serde_json::json!("{$vendor-dir}/bin"),
-        );
-        m.insert("bin-compat".to_string(), serde_json::json!("auto"));
-        m.insert("cache-dir".to_string(), serde_json::json!("{$home}/cache"));
-        m.insert(
-            "cache-files-dir".to_string(),
-            serde_json::json!("{$cache-dir}/files"),
-        );
-        m.insert(
-            "cache-repo-dir".to_string(),
-            serde_json::json!("{$cache-dir}/repo"),
-        );
-        m.insert(
-            "cache-vcs-dir".to_string(),
-            serde_json::json!("{$cache-dir}/vcs"),
-        );
-        m.insert("cache-files-ttl".to_string(), serde_json::json!(15_552_000));
-        m.insert(
-            "cache-files-maxsize".to_string(),
-            serde_json::json!("300MiB"),
-        );
-        m.insert("cache-read-only".to_string(), serde_json::json!(false));
-        m.insert("prepend-autoloader".to_string(), serde_json::json!(true));
-        m.insert("autoloader-suffix".to_string(), serde_json::Value::Null);
-        m.insert("optimize-autoloader".to_string(), serde_json::json!(false));
-        m.insert("sort-packages".to_string(), serde_json::json!(false));
-        m.insert(
-            "classmap-authoritative".to_string(),
-            serde_json::json!(false),
-        );
-        m.insert("apcu-autoloader".to_string(), serde_json::json!(false));
-        m.insert("platform".to_string(), serde_json::json!({}));
-        m.insert("platform-check".to_string(), serde_json::json!("php-only"));
-        m.insert("lock".to_string(), serde_json::json!(true));
-        m.insert("discard-changes".to_string(), serde_json::json!(false));
-        m.insert("archive-format".to_string(), serde_json::json!("tar"));
-        m.insert("archive-dir".to_string(), serde_json::json!("."));
-        m.insert("htaccess-protect".to_string(), serde_json::json!(true));
-        m.insert("secure-http".to_string(), serde_json::json!(true));
-        m.insert("allow-plugins".to_string(), serde_json::json!({}));
-
-        Self { values: m }
-    }
-
-    /// Merge `overrides` on top of the current values.
-    pub fn merge(&mut self, overrides: &BTreeMap<String, serde_json::Value>) {
-        for (k, v) in overrides {
-            self.values.insert(k.clone(), v.clone());
-        }
-    }
-
-    /// Return the effective value for a single key, or `None` if absent.
-    pub fn get(&self, key: &str) -> Option<&serde_json::Value> {
-        self.values.get(key)
-    }
-}
-
-/// Resolve `{$vendor-dir}`, `{$home}`, `{$cache-dir}` placeholders inside
-/// string values.  Only one pass is performed (no recursive expansion).
-pub fn resolve_references(config: &mut ComposerConfig) {
-    // Snapshot the values we need for substitution before mutating.
-    let vendor_dir = config
-        .values
-        .get("vendor-dir")
-        .and_then(|v| v.as_str())
-        .unwrap_or("vendor")
-        .to_string();
-
-    let home = composer_home().to_string_lossy().into_owned();
-
-    let cache_dir = config
-        .values
-        .get("cache-dir")
-        .and_then(|v| v.as_str())
-        .unwrap_or("{$home}/cache")
-        .replace("{$home}", &home);
-
-    let replacements: &[(&str, &str)] = &[
-        ("{$vendor-dir}", &vendor_dir),
-        ("{$home}", &home),
-        ("{$cache-dir}", &cache_dir),
-    ];
-
-    let keys: Vec<String> = config.values.keys().cloned().collect();
-    for key in keys {
-        if let Some(serde_json::Value::String(s)) = config.values.get(&key).cloned() {
-            let mut resolved = s.clone();
-            for (placeholder, replacement) in replacements {
-                resolved = resolved.replace(placeholder, replacement);
-            }
-            if resolved != s {
-                config
-                    .values
-                    .insert(key, serde_json::Value::String(resolved));
-            }
-        }
-    }
-}
-
 /// Project-level Composer state. Currently only carries the merged
-/// `ComposerConfig`; additional accessors (root package, locker, …) can be
+/// [`Config`]; additional accessors (root package, locker, …) can be
 /// layered on as commands need them.
 pub struct Composer {
     project_dir: PathBuf,
-    config: ComposerConfig,
+    config: Config,
 }
 
 impl Composer {
@@ -229,13 +109,13 @@ impl Composer {
     fn load(project_dir: PathBuf, composer_json: &Path) -> anyhow::Result<Self> {
         let content = std::fs::read_to_string(composer_json)?;
         let value: serde_json::Value = serde_json::from_str(&content)?;
-        let mut config = ComposerConfig::defaults();
+        let mut config = Config::default();
         if let Some(cfg_obj) = value.get("config").and_then(|v| v.as_object()) {
             let overrides: BTreeMap<String, serde_json::Value> = cfg_obj
                 .iter()
                 .map(|(k, v)| (k.clone(), v.clone()))
                 .collect();
-            config.merge(&overrides);
+            config.merge(&overrides)?;
         }
         resolve_references(&mut config);
         Ok(Self {
@@ -248,7 +128,7 @@ impl Composer {
         &self.project_dir
     }
 
-    pub fn config(&self) -> &ComposerConfig {
+    pub fn config(&self) -> &Config {
         &self.config
     }
 }

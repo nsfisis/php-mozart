@@ -117,12 +117,7 @@ pub async fn execute(
 
 fn resolve_bin_dir(working_dir: &Path, composer: &Composer) -> PathBuf {
     // bin-dir's `{$vendor-dir}` placeholder is already resolved by Composer::load.
-    let bin_dir = composer
-        .config()
-        .get("bin-dir")
-        .and_then(|v| v.as_str())
-        .unwrap_or("vendor/bin");
-    working_dir.join(bin_dir)
+    working_dir.join(&composer.config().bin_dir)
 }
 
 /// Returns a vec of (name, is_local) tuples for all available binaries.
