@@ -17,7 +17,7 @@ pub async fn execute(
 
     // Build the list of (key, path) pairs to process.
     // cache-dir is only included in full clear mode, not GC mode.
-    let mut cache_paths: Vec<(&str, &std::path::PathBuf)> = vec![
+    let mut cache_paths = vec![
         ("cache-vcs-dir", &config.cache_vcs_dir),
         ("cache-repo-dir", &config.cache_repo_dir),
         ("cache-files-dir", &config.cache_files_dir),
@@ -27,18 +27,18 @@ pub async fn execute(
     }
 
     for (key, path) in &cache_paths {
-        // Read-only guard: skip with informational message
-        if config.read_only {
-            console.info(&format!("Cache is not enabled ({key}): {}", path.display()));
-            continue;
-        }
-
         // Non-existent directory: skip with informational message
         if !path.exists() {
             console.info(&format!(
                 "Cache directory does not exist ({key}): {}",
                 path.display()
             ));
+            continue;
+        }
+
+        // Read-only guard: skip with informational message
+        if config.read_only {
+            console.info(&format!("Cache is not enabled ({key}): {}", path.display()));
             continue;
         }
 
