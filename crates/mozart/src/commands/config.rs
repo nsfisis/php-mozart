@@ -60,7 +60,8 @@ pub struct ConfigArgs {
     pub source: bool,
 }
 
-use mozart_core::config::{Config, resolve_references};
+use mozart_core::config::resolve_references;
+use mozart_core::factory::create_config;
 
 /// Classification of config key value types for validation and normalization.
 #[derive(Debug)]
@@ -754,13 +755,11 @@ fn execute_read(
     console: &mozart_core::console::Console,
 ) -> anyhow::Result<()> {
     // Build the effective config for config-section keys.
-    let mut config = Config::default();
+    // Global baseline (defaults + platform dirs + $COMPOSER_HOME/config.json),
+    // then overlay project config on top when not in --global mode.
+    let mut config = create_config()?;
 
-    if args.global {
-        let global_config_path = composer_home().join("config.json");
-        let overrides = load_config_section(&global_config_path)?;
-        config.merge(&overrides)?;
-    } else {
+    if !args.global {
         let wd = cli.working_dir()?;
         let composer_json = wd.join("composer.json");
         let overrides = load_config_section(&composer_json)?;
@@ -857,6 +856,7 @@ fn execute_read(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use mozart_core::config::Config;
 
     #[test]
     fn test_defaults_contain_expected_keys() {

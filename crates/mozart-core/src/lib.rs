@@ -2,6 +2,7 @@ pub mod composer;
 pub mod config;
 pub mod console;
 pub mod exit_code;
+pub mod factory;
 pub mod http;
 pub mod package;
 pub mod platform;

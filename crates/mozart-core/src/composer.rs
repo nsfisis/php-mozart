@@ -12,6 +12,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use crate::config::{Config, resolve_references};
+use crate::factory::create_config;
 
 /// Return the Composer home directory, respecting `COMPOSER_HOME` and falling
 /// back to the platform default using Composer-compatible logic.
@@ -109,7 +110,7 @@ impl Composer {
     fn load(project_dir: PathBuf, composer_json: &Path) -> anyhow::Result<Self> {
         let content = std::fs::read_to_string(composer_json)?;
         let value: serde_json::Value = serde_json::from_str(&content)?;
-        let mut config = Config::default();
+        let mut config = create_config()?;
         if let Some(cfg_obj) = value.get("config").and_then(|v| v.as_object()) {
             let overrides: BTreeMap<String, serde_json::Value> = cfg_obj
                 .iter()
