@@ -1,9 +1,26 @@
 use std::path::{Path, PathBuf};
+use std::sync::LazyLock;
 
 use anyhow::{Result, bail};
-use sha1::{Digest, Sha1};
+use regex::Regex;
 
 use crate::process::{ProcessExecutor, ProcessOutput};
+
+/// Modern GitHub token pattern (40+ hex chars, `ghp_…`, `github_pat_…`).
+///
+/// Mirrors `Composer\Util\GitHub::GITHUB_TOKEN_REGEX`.
+static GITHUB_TOKEN_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"^([a-fA-F0-9]{12,}|gh[a-zA-Z]_[a-zA-Z0-9_]+|github_pat_[a-zA-Z0-9_]+)$").unwrap()
+});
+
+/// `[?&]access_token=...` query parameter.
+static ACCESS_TOKEN_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"([&?]access_token=)[^&]+").unwrap());
+
+/// `<scheme>://user:password@` credential block.
+static CREDENTIALS_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?i)(?P<prefix>[a-z0-9]+://)?(?P<user>[^:/\s@]+):(?P<password>[^@\s/]+)@").unwrap()
+});
 
 /// Git utility for mirror management and protocol fallback.
 ///
@@ -161,12 +178,25 @@ impl GitUtil {
             .map(|s| s.to_string())
     }
 
-    /// Sanitize a URL for use as a directory name.
+    /// Sanitize a URL for use as a cache directory name.
+    ///
+    /// Mirrors Composer's `Preg::replace('{[^a-z0-9.]}i', '-', Url::sanitize($url))`
+    /// pattern (see `GitDriver::initialize` and `GitDownloader`): credentials and
+    /// access tokens are first redacted, then every byte outside `[a-zA-Z0-9.]`
+    /// is replaced with `-`. The redaction step keeps cache keys stable across
+    /// URLs that differ only in their embedded token.
     pub fn sanitize_url(url: &str) -> String {
-        let mut hasher = Sha1::new();
-        hasher.update(url.as_bytes());
-        let hash = hasher.finalize();
-        format!("{:x}", hash)
+        let redacted = sanitize_url_credentials(url);
+        redacted
+            .chars()
+            .map(|c| {
+                if c.is_ascii_alphanumeric() || c == '.' {
+                    c
+                } else {
+                    '-'
+                }
+            })
+            .collect()
     }
 
     /// Get the cache mirror path for a URL.
@@ -198,5 +228,87 @@ impl GitUtil {
         }
 
         urls
+    }
+}
+
+/// Redact credentials and access tokens from `url`.
+///
+/// Mirrors Composer's `Util\Url::sanitize`. Two replacements are applied:
+/// 1. `[?&]access_token=…` query values → `***`
+/// 2. `<scheme>://user:password@` credentials → `***:***@` if `user` looks like
+///    a GitHub token, otherwise just `user:***@`
+fn sanitize_url_credentials(url: &str) -> String {
+    let url = ACCESS_TOKEN_RE.replace_all(url, "${1}***");
+    CREDENTIALS_RE
+        .replace_all(&url, |caps: &regex::Captures<'_>| {
+            let prefix = caps.name("prefix").map(|m| m.as_str()).unwrap_or("");
+            let user = &caps["user"];
+            if GITHUB_TOKEN_RE.is_match(user) {
+                format!("{prefix}***:***@")
+            } else {
+                format!("{prefix}{user}:***@")
+            }
+        })
+        .into_owned()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sanitize_url_replaces_special_chars_with_dash() {
+        assert_eq!(
+            GitUtil::sanitize_url("https://github.com/owner/repo.git"),
+            "https---github.com-owner-repo.git"
+        );
+    }
+
+    #[test]
+    fn sanitize_url_preserves_dot() {
+        // Dot must survive — it appears in hostnames and ".git" suffixes.
+        let key = GitUtil::sanitize_url("git://example.org/foo.bar/baz.git");
+        assert!(key.contains(".org"));
+        assert!(key.ends_with(".git"));
+    }
+
+    #[test]
+    fn sanitize_url_redacts_password_in_credentials() {
+        let key = GitUtil::sanitize_url("https://alice:s3cret@example.com/repo.git");
+        // Password is replaced with ***, then non-alphanumerics become '-'.
+        assert!(key.contains("alice"));
+        assert!(!key.contains("s3cret"));
+    }
+
+    #[test]
+    fn sanitize_url_redacts_user_when_looks_like_github_token() {
+        // 40-hex token in the user position triggers full redaction.
+        let token = "abcdef0123456789abcdef0123456789abcdef01";
+        let key = GitUtil::sanitize_url(&format!("https://{token}:x-oauth-basic@github.com/o/r"));
+        assert!(!key.contains("abcdef"));
+    }
+
+    #[test]
+    fn sanitize_url_redacts_modern_github_pat() {
+        // ghp_xxx and github_pat_xxx forms.
+        let key1 = GitUtil::sanitize_url("https://ghp_abc123XYZ:x@github.com/o/r");
+        assert!(!key1.contains("ghp_"));
+        let key2 = GitUtil::sanitize_url("https://github_pat_abc123:x@github.com/o/r");
+        assert!(!key2.contains("github_pat_"));
+    }
+
+    #[test]
+    fn sanitize_url_strips_access_token_query() {
+        let key = GitUtil::sanitize_url("https://api.github.com/x?access_token=secrettoken");
+        assert!(!key.contains("secrettoken"));
+    }
+
+    #[test]
+    fn sanitize_url_token_variants_share_cache_key() {
+        // Two pulls of the same repo with different access tokens should land
+        // in the same cache subdirectory.
+        let a = GitUtil::sanitize_url("https://api.github.com/repo?access_token=tokenA");
+        let b = GitUtil::sanitize_url("https://api.github.com/repo?access_token=tokenB");
+        assert_eq!(a, b);
     }
 }
