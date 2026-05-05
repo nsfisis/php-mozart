@@ -6,7 +6,7 @@
 
 use indexmap::IndexSet;
 use std::collections::BTreeMap;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use anyhow::Result;
 use mozart_core::console_format;
@@ -46,10 +46,7 @@ pub fn do_execute(
         inverted,
     } = args;
 
-    let working_dir = match &cli.working_dir {
-        Some(dir) => PathBuf::from(dir),
-        None => std::env::current_dir()?,
-    };
+    let working_dir = cli.working_dir()?;
 
     let packages = load_packages(&working_dir, locked)?;
 

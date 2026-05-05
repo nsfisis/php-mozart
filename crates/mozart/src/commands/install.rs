@@ -10,7 +10,7 @@ use mozart_registry::installer_executor::{
 };
 use mozart_registry::lockfile;
 use std::collections::BTreeMap;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 #[derive(Args)]
 pub struct InstallArgs {
@@ -157,14 +157,6 @@ pub enum Action {
 pub struct InstallOp<'a> {
     pub package: &'a lockfile::LockedPackage,
     pub action: Action,
-}
-
-/// Resolve the working directory from the CLI option, falling back to cwd.
-pub fn resolve_working_dir(cli: &super::Cli) -> PathBuf {
-    match &cli.working_dir {
-        Some(dir) => PathBuf::from(dir),
-        None => std::env::current_dir().expect("Failed to determine current directory"),
-    }
 }
 
 /// Compute install operations by comparing locked packages against installed packages.
@@ -1333,7 +1325,7 @@ pub async fn execute(
             mozart_registry::cache::Cache::repo(&cache_config),
         ));
     let mut executor = FilesystemExecutor::new(mozart_registry::cache::Cache::files(&cache_config));
-    let working_dir = resolve_working_dir(cli);
+    let working_dir = cli.working_dir()?;
     run(
         &working_dir,
         None,

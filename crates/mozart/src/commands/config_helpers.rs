@@ -3,14 +3,6 @@ use std::path::{Path, PathBuf};
 
 pub(crate) use mozart_core::composer::composer_home;
 
-/// Build the working directory path, preferring `--working-dir` over `cwd`.
-pub(crate) fn working_dir(cli: &super::Cli) -> anyhow::Result<PathBuf> {
-    match &cli.working_dir {
-        Some(d) => Ok(PathBuf::from(d)),
-        None => Ok(std::env::current_dir()?),
-    }
-}
-
 /// Read TLS-related options (`config.cafile`, `config.capath`) from the merged
 /// global + local config. Local values override global. Relative paths are
 /// resolved against the directory of the config file that defined them.
@@ -20,7 +12,7 @@ pub(crate) fn load_tls_options(cli: &super::Cli) -> mozart_core::http::TlsOption
     let home = composer_home();
     apply_tls_from_file(&home.join("config.json"), &home, &mut opts);
 
-    if let Ok(wd) = working_dir(cli) {
+    if let Ok(wd) = cli.working_dir() {
         apply_tls_from_file(&wd.join("composer.json"), &wd, &mut opts);
     }
 

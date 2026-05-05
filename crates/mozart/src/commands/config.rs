@@ -4,8 +4,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use super::config_helpers::{
-    add_repository, composer_home, read_json_file, remove_repository, render_value, working_dir,
-    write_json_file,
+    add_repository, composer_home, read_json_file, remove_repository, render_value, write_json_file,
 };
 
 #[derive(Args)]
@@ -354,7 +353,7 @@ fn resolve_config_file_path(args: &ConfigArgs, cli: &super::Cli) -> anyhow::Resu
     if let Some(ref file) = args.file {
         return Ok(PathBuf::from(file));
     }
-    Ok(working_dir(cli)?.join("composer.json"))
+    Ok(cli.working_dir()?.join("composer.json"))
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -788,7 +787,7 @@ fn execute_read(
         let overrides = load_config_section(&global_config_path)?;
         config.merge(&overrides);
     } else {
-        let wd = working_dir(cli)?;
+        let wd = cli.working_dir()?;
         let composer_json = wd.join("composer.json");
         let overrides = load_config_section(&composer_json)?;
         config.merge(&overrides);
@@ -798,7 +797,7 @@ fn execute_read(
 
     // If --absolute is requested, resolve *-dir values to absolute paths.
     if args.absolute {
-        let wd = working_dir(cli)?;
+        let wd = cli.working_dir()?;
         let keys: Vec<String> = config.values.keys().cloned().collect();
         for key in keys {
             if key.ends_with("-dir")

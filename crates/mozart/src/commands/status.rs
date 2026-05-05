@@ -51,10 +51,7 @@ pub async fn execute(
     cli: &super::Cli,
     console: &mozart_core::console::Console,
 ) -> anyhow::Result<()> {
-    let working_dir = match &cli.working_dir {
-        Some(dir) => PathBuf::from(dir),
-        None => std::env::current_dir()?,
-    };
+    let working_dir = cli.working_dir()?;
 
     let vendor_dir = working_dir.join("vendor");
     let installed = mozart_registry::installed::InstalledPackages::read(&vendor_dir)?;

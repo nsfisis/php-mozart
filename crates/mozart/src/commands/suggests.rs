@@ -5,7 +5,7 @@ use mozart_core::console;
 use mozart_core::console::Verbosity;
 use mozart_core::console_format;
 use std::collections::BTreeMap;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 #[derive(Args)]
 pub struct SuggestsArgs {
@@ -48,10 +48,7 @@ pub async fn execute(
     cli: &super::Cli,
     console: &console::Console,
 ) -> anyhow::Result<()> {
-    let working_dir = match &cli.working_dir {
-        Some(dir) => PathBuf::from(dir),
-        None => std::env::current_dir()?,
-    };
+    let working_dir = cli.working_dir()?;
 
     let lock_path = working_dir.join("composer.lock");
     let has_lock = lock_path.exists();

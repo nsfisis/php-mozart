@@ -4,8 +4,7 @@ use std::path::PathBuf;
 
 use super::config_helpers::{
     add_repository, composer_home, ensure_repositories_array, find_repo_by_name, insert_repository,
-    normalize_repositories, read_json_file, remove_repository, render_value, working_dir,
-    write_json_file,
+    normalize_repositories, read_json_file, remove_repository, render_value, write_json_file,
 };
 
 #[derive(Args)]
@@ -53,7 +52,7 @@ fn resolve_file_path(args: &RepositoryArgs, cli: &super::Cli) -> anyhow::Result<
     if let Some(ref file) = args.file {
         return Ok(PathBuf::from(file));
     }
-    Ok(working_dir(cli)?.join("composer.json"))
+    Ok(cli.working_dir()?.join("composer.json"))
 }
 
 pub async fn execute(

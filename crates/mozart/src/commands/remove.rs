@@ -118,8 +118,7 @@ pub async fn execute(
         console.info(&console_format!("<warning>The -W / --update-with-all-dependencies flag is deprecated. Use --with-all-dependencies instead.</warning>"));
     }
 
-    // Step 3: Resolve working directory and read composer.json
-    let working_dir = super::install::resolve_working_dir(cli);
+    let working_dir = cli.working_dir()?;
     let composer_path = working_dir.join("composer.json");
 
     if !composer_path.exists() {

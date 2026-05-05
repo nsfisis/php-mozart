@@ -10,7 +10,7 @@ use mozart_core::validation;
 use mozart_registry::{packagist, version};
 use std::collections::BTreeMap;
 use std::io::{BufRead, Write};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::Command;
 
 #[derive(Args)]
@@ -68,10 +68,7 @@ pub async fn execute(
     let cache_config = mozart_registry::cache::build_cache_config(cli.no_cache);
     let repo_cache = mozart_registry::cache::Cache::repo(&cache_config);
 
-    let working_dir = match &cli.working_dir {
-        Some(dir) => PathBuf::from(dir),
-        None => std::env::current_dir().context("Failed to get current directory")?,
-    };
+    let working_dir = cli.working_dir()?;
 
     let composer_file = working_dir.join("composer.json");
     if composer_file.exists() {

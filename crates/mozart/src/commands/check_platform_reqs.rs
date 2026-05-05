@@ -1,7 +1,7 @@
 use clap::Args;
 use mozart_core::console::{Console, Verbosity};
 use std::collections::BTreeMap;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 #[derive(Args)]
 pub struct CheckPlatformReqsArgs {
@@ -58,10 +58,7 @@ pub async fn execute(
     cli: &super::Cli,
     console: &mozart_core::console::Console,
 ) -> anyhow::Result<()> {
-    let working_dir = match &cli.working_dir {
-        Some(dir) => PathBuf::from(dir),
-        None => std::env::current_dir()?,
-    };
+    let working_dir = cli.working_dir()?;
 
     // Validate format
     let format = args.format.as_deref().unwrap_or("text");

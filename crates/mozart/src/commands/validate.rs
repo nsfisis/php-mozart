@@ -93,10 +93,7 @@ pub async fn execute(
     cli: &super::Cli,
     console: &mozart_core::console::Console,
 ) -> anyhow::Result<()> {
-    let working_dir = match &cli.working_dir {
-        Some(dir) => PathBuf::from(dir),
-        None => std::env::current_dir()?,
-    };
+    let working_dir = cli.working_dir()?;
 
     // Determine which file to validate
     let file = match &args.file {

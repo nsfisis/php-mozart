@@ -1,6 +1,6 @@
 use clap::Args;
 use std::collections::BTreeMap;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use mozart_core::console::Verbosity;
 use mozart_registry::packagist::SecurityAdvisory;
@@ -94,11 +94,7 @@ pub async fn execute(
         ),
     };
 
-    // Determine working directory
-    let working_dir = match &cli.working_dir {
-        Some(dir) => PathBuf::from(dir),
-        None => std::env::current_dir()?,
-    };
+    let working_dir = cli.working_dir()?;
 
     // Load packages
     let packages = load_packages(&working_dir, args.locked, args.no_dev)?;

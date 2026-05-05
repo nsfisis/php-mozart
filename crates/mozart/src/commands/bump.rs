@@ -2,7 +2,6 @@ use clap::Args;
 use indexmap::IndexMap;
 use mozart_core::console::Verbosity;
 use mozart_core::console_format;
-use std::path::PathBuf;
 
 /// Exit code for stale lock file (matches Composer's BumpCommand::ERROR_LOCK_OUTDATED)
 const ERROR_LOCK_OUTDATED: i32 = 2;
@@ -32,10 +31,7 @@ pub async fn execute(
     cli: &super::Cli,
     console: &mozart_core::console::Console,
 ) -> anyhow::Result<()> {
-    let working_dir = match &cli.working_dir {
-        Some(dir) => PathBuf::from(dir),
-        None => std::env::current_dir()?,
-    };
+    let working_dir = cli.working_dir()?;
 
     let composer_json_path = working_dir.join("composer.json");
     let lock_path = working_dir.join("composer.lock");

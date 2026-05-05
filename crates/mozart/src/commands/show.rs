@@ -3,7 +3,7 @@ use indexmap::{IndexMap, IndexSet};
 use mozart_core::console::Verbosity;
 use mozart_core::console_format;
 use mozart_core::matches_wildcard;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 #[derive(Args)]
 pub struct ShowArgs {
@@ -166,10 +166,7 @@ pub async fn execute(
         );
     }
 
-    let working_dir = match &cli.working_dir {
-        Some(dir) => PathBuf::from(dir),
-        None => std::env::current_dir()?,
-    };
+    let working_dir = cli.working_dir()?;
 
     // --platform: show detected platform packages
     if args.platform {

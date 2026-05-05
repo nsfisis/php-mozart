@@ -996,7 +996,7 @@ pub async fn execute(
     let mut executor = mozart_registry::installer_executor::FilesystemExecutor::new(
         mozart_registry::cache::Cache::files(&cache_config),
     );
-    let working_dir = super::install::resolve_working_dir(cli);
+    let working_dir = cli.working_dir()?;
     run(
         &working_dir,
         None,

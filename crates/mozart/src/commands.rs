@@ -62,7 +62,7 @@ pub struct Cli {
 
     /// If specified, use the given directory as working directory
     #[arg(short = 'd', long = "working-dir", global = true)]
-    pub working_dir: Option<String>,
+    working_dir: Option<String>,
 
     /// Prevent use of the cache
     #[arg(long, global = true)]
@@ -83,6 +83,18 @@ pub struct Cli {
     /// Disable ANSI output
     #[arg(long, global = true)]
     pub no_ansi: bool,
+}
+
+impl Cli {
+    /// Resolve the working directory: returns `--working-dir` if set, otherwise
+    /// the current working directory.
+    pub fn working_dir(&self) -> anyhow::Result<std::path::PathBuf> {
+        match &self.working_dir {
+            Some(dir) => Ok(std::path::PathBuf::from(dir)),
+            None => std::env::current_dir()
+                .map_err(|e| anyhow::anyhow!("Failed to get current directory: {}", e)),
+        }
+    }
 }
 
 #[derive(clap::Subcommand)]

@@ -2,7 +2,7 @@ use clap::Args;
 use indexmap::IndexSet;
 use mozart_core::matches_wildcard;
 use std::cmp::Ordering;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 #[derive(Args)]
 pub struct OutdatedArgs {
@@ -111,10 +111,7 @@ pub async fn execute(
         anyhow::bail!("Only one of --major-only, --minor-only or --patch-only can be used at once");
     }
 
-    let working_dir = match &cli.working_dir {
-        Some(dir) => PathBuf::from(dir),
-        None => std::env::current_dir()?,
-    };
+    let working_dir = cli.working_dir()?;
 
     // Load packages (installed or locked)
     let packages = if args.locked {

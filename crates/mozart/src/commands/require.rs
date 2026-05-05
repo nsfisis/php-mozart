@@ -348,7 +348,7 @@ pub async fn execute(
         }
         // Interactive search — we need composer.json first to know what's already required.
         // We'll perform a quick check that composer.json exists, then run the search.
-        let working_dir = super::install::resolve_working_dir(cli);
+        let working_dir = cli.working_dir()?;
         let composer_path = working_dir.join("composer.json");
         if !composer_path.exists() {
             anyhow::bail!(
@@ -411,8 +411,7 @@ pub async fn execute(
         console.info(&console_format!("<warning>The -W / --update-with-all-dependencies flag is deprecated. Use --with-all-dependencies instead.</warning>"));
     }
 
-    // Resolve working directory
-    let working_dir = super::install::resolve_working_dir(cli);
+    let working_dir = cli.working_dir()?;
 
     let composer_path = working_dir.join("composer.json");
     if !composer_path.exists() {

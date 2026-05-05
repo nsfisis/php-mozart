@@ -1,7 +1,7 @@
 use clap::Args;
 use mozart_core::console_format;
 use mozart_core::exit_code;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::Command;
 
 #[derive(Args)]
@@ -28,10 +28,7 @@ pub async fn execute(
     let cache_config = mozart_registry::cache::build_cache_config(cli.no_cache);
     let repo_cache = mozart_registry::cache::Cache::repo(&cache_config);
 
-    let working_dir = match &cli.working_dir {
-        Some(dir) => PathBuf::from(dir),
-        None => std::env::current_dir()?,
-    };
+    let working_dir = cli.working_dir()?;
 
     // If no packages specified, use root package name from composer.json
     let packages: Vec<String> = if args.packages.is_empty() {

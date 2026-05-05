@@ -1,7 +1,6 @@
 use clap::Args;
 use mozart_core::console_format;
 use mozart_core::package;
-use std::path::PathBuf;
 
 #[derive(Args)]
 pub struct ReinstallArgs {
@@ -72,11 +71,7 @@ pub async fn execute(
     cli: &super::Cli,
     console: &mozart_core::console::Console,
 ) -> anyhow::Result<()> {
-    // Step 1: Resolve working directory
-    let working_dir = match &cli.working_dir {
-        Some(dir) => PathBuf::from(dir),
-        None => std::env::current_dir()?,
-    };
+    let working_dir = cli.working_dir()?;
 
     let vendor_dir = working_dir.join("vendor");
 

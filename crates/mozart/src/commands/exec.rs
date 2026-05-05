@@ -25,10 +25,7 @@ pub async fn execute(
     console: &mozart_core::console::Console,
 ) -> anyhow::Result<()> {
     use mozart_core::console::Verbosity;
-    let working_dir = match &cli.working_dir {
-        Some(dir) => PathBuf::from(dir),
-        None => std::env::current_dir()?,
-    };
+    let working_dir = cli.working_dir()?;
 
     // ExecCommand uses requireComposer in Composer; composer.json must exist.
     let composer = Composer::require(&working_dir)?;

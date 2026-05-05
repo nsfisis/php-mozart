@@ -99,10 +99,7 @@ pub async fn execute(
     let files_cache = mozart_registry::cache::Cache::files(&cache_config);
 
     // 1. Determine working directory
-    let working_dir = match &cli.working_dir {
-        Some(dir) => PathBuf::from(dir),
-        None => std::env::current_dir()?,
-    };
+    let working_dir = cli.working_dir()?;
 
     // 2. Load Composer state for format/dir defaults. Composer's
     //    `archive` command falls back to `Factory::createConfig()` when no

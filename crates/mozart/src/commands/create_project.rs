@@ -227,7 +227,7 @@ pub async fn execute(
     let version_constraint: Option<String> = version_from_arg.or_else(|| args.version.clone());
 
     // --- Step 2: Determine target directory ---
-    let working_dir = super::install::resolve_working_dir(cli);
+    let working_dir = cli.working_dir()?;
 
     let target_dir: PathBuf = {
         let dir_name = args

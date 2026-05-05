@@ -400,10 +400,7 @@ pub async fn execute(
     cli: &super::Cli,
     console: &Console,
 ) -> anyhow::Result<()> {
-    let working_dir = match &cli.working_dir {
-        Some(dir) => PathBuf::from(dir),
-        None => std::env::current_dir()?,
-    };
+    let working_dir = cli.working_dir()?;
 
     let mut exit_code: i32 = 0;
 

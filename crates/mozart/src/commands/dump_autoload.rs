@@ -1,5 +1,4 @@
 use clap::Args;
-use std::path::PathBuf;
 
 #[derive(Args)]
 pub struct DumpAutoloadArgs {
@@ -58,10 +57,7 @@ pub async fn execute(
         anyhow::bail!("You can not use both --no-dev and --dev as they conflict with each other.");
     }
 
-    let working_dir = match &cli.working_dir {
-        Some(dir) => PathBuf::from(dir),
-        None => std::env::current_dir()?,
-    };
+    let working_dir = cli.working_dir()?;
 
     let vendor_dir = working_dir.join("vendor");
     let dev_mode = !args.no_dev;
