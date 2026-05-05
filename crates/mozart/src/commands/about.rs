@@ -1,4 +1,5 @@
 use clap::Args;
+use mozart_core::MOZART_VERSION;
 use mozart_core::console;
 use mozart_core::console_format;
 
@@ -10,9 +11,10 @@ pub async fn execute(
     _cli: &super::Cli,
     console: &console::Console,
 ) -> anyhow::Result<()> {
-    let version = env!("CARGO_PKG_VERSION");
     console.write_stdout(
-        &console_format!("<info>Mozart - Dependency Manager for PHP - version {version}</info>"),
+        &console_format!(
+            "<info>Mozart - Dependency Manager for PHP - version {MOZART_VERSION}</info>",
+        ),
         console::Verbosity::Normal,
     );
     console.write_stdout(

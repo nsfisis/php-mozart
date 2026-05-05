@@ -1,3 +1,4 @@
+use crate::MOZART_VERSION;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
@@ -9,7 +10,7 @@ use anyhow::{Context, Result, anyhow, bail};
 pub fn user_agent() -> String {
     format!(
         "Mozart/{} ({}; {})",
-        env!("CARGO_PKG_VERSION"),
+        MOZART_VERSION,
         std::env::consts::OS,
         std::env::consts::ARCH,
     )

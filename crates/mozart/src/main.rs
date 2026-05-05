@@ -1,5 +1,6 @@
 use clap::Parser;
 use mozart::commands;
+use mozart_core::MOZART_VERSION;
 use mozart_core::exit_code;
 use tracing_subscriber::{EnvFilter, fmt, prelude::*};
 
@@ -48,7 +49,7 @@ async fn main() {
             "{}",
             mozart_core::console_format!(
                 "<info>Mozart</info> version <comment>{}</comment> {}",
-                env!("CARGO_PKG_VERSION"),
+                MOZART_VERSION,
                 build_date
             )
         );

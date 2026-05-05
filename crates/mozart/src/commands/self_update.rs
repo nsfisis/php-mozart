@@ -1,4 +1,5 @@
 use clap::Args;
+use mozart_core::MOZART_VERSION;
 use mozart_core::console::Verbosity;
 use mozart_core::console_format;
 use std::io::Write;
@@ -89,12 +90,6 @@ fn get_data_dir() -> anyhow::Result<PathBuf> {
         .join(".local")
         .join("share")
         .join("mozart"))
-}
-
-// ─── Version helpers ──────────────────────────────────────────────────────────
-
-fn get_current_version() -> &'static str {
-    env!("CARGO_PKG_VERSION")
 }
 
 /// Returns the platform-specific binary asset name for the current build target.
@@ -286,7 +281,7 @@ async fn update(
     data_dir: &Path,
     console: &mozart_core::console::Console,
 ) -> anyhow::Result<()> {
-    let current_version = get_current_version();
+    let current_version = MOZART_VERSION;
     let channel = effective_channel(args.preview);
 
     // Fetch releases

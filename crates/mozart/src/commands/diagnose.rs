@@ -1,5 +1,6 @@
 use clap::Args;
 use colored::Colorize;
+use mozart_core::MOZART_VERSION;
 use mozart_core::console::{Console, Verbosity};
 use std::path::{Path, PathBuf};
 
@@ -80,8 +81,7 @@ fn print_info_line(result: &CheckResult, console: &Console) {
 
 /// Check 1: Mozart version info (informational).
 fn check_version() -> CheckResult {
-    let version = env!("CARGO_PKG_VERSION");
-    CheckResult::Info(format!("Mozart version {version}"))
+    CheckResult::Info(format!("Mozart version {MOZART_VERSION}"))
 }
 
 /// Check 2 & 3: HTTP/HTTPS connectivity to Packagist.

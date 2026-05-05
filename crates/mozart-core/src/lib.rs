@@ -10,3 +10,5 @@ pub mod wildcard;
 
 pub use mozart_console_macros::console_format;
 pub use wildcard::matches_wildcard;
+
+pub const MOZART_VERSION: &str = env!("CARGO_PKG_VERSION");
