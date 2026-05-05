@@ -715,10 +715,6 @@ fn tilde_matches(version_normalized: &str, constraint_base: &str) -> bool {
 mod tests {
     use super::*;
 
-    // ─────────────────────────────────────────────────────────────────────────
-    // dir_from_package_name tests
-    // ─────────────────────────────────────────────────────────────────────────
-
     #[test]
     fn test_directory_from_package_name() {
         assert_eq!(dir_from_package_name("vendor/package"), "package");
@@ -727,10 +723,6 @@ mod tests {
         // No slash: use entire string
         assert_eq!(dir_from_package_name("novendor"), "novendor");
     }
-
-    // ─────────────────────────────────────────────────────────────────────────
-    // Target directory validation tests
-    // ─────────────────────────────────────────────────────────────────────────
 
     #[test]
     fn test_non_empty_directory_rejected() {
@@ -770,10 +762,6 @@ mod tests {
         );
     }
 
-    // ─────────────────────────────────────────────────────────────────────────
-    // self.version replacement tests
-    // ─────────────────────────────────────────────────────────────────────────
-
     #[test]
     fn test_self_version_replacement() {
         let mut raw = package::RawPackageData::new("vendor/pkg".to_string());
@@ -810,10 +798,6 @@ mod tests {
 
         assert_eq!(raw.require.get("vendor/dep-a").unwrap(), "^1.0");
     }
-
-    // ─────────────────────────────────────────────────────────────────────────
-    // Version constraint matching tests
-    // ─────────────────────────────────────────────────────────────────────────
 
     #[test]
     fn test_version_matches_caret() {

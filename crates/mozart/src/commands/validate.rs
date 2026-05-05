@@ -45,8 +45,6 @@ pub struct ValidateArgs {
     pub strict: bool,
 }
 
-// ─── Result accumulator ─────────────────────────────────────────────────────
-
 struct ValidationResult {
     errors: Vec<String>,
     publish_errors: Vec<String>,
@@ -75,8 +73,6 @@ impl ValidationResult {
     }
 }
 
-// ─── Helpers ─────────────────────────────────────────────────────────────────
-
 fn should_check_lock(args: &ValidateArgs, manifest: &serde_json::Value) -> bool {
     let config_lock_enabled = manifest
         .get("config")
@@ -85,8 +81,6 @@ fn should_check_lock(args: &ValidateArgs, manifest: &serde_json::Value) -> bool 
         .unwrap_or(true);
     (!args.no_check_lock && config_lock_enabled) || args.check_lock
 }
-
-// ─── Entry point ─────────────────────────────────────────────────────────────
 
 pub async fn execute(
     args: &ValidateArgs,
@@ -195,8 +189,6 @@ pub async fn execute(
     Ok(())
 }
 
-// ─── Manifest validation ─────────────────────────────────────────────────────
-
 fn validate_manifest(
     manifest: &serde_json::Value,
     args: &ValidateArgs,
@@ -227,8 +219,6 @@ fn validate_manifest(
     check_minimum_stability(obj, result);
     check_scripts_orphans(obj, result);
 }
-
-// ─── Individual checks ───────────────────────────────────────────────────────
 
 /// Check the "name" field: must be present (for published packages) and lowercase.
 fn check_name(obj: &serde_json::Map<String, serde_json::Value>, result: &mut ValidationResult) {
@@ -647,8 +637,6 @@ fn check_scripts_orphans(
     }
 }
 
-// ─── Dependency validation ───────────────────────────────────────────────
-
 fn validate_dependencies(
     vendor_dir: &Path,
     args: &ValidateArgs,
@@ -736,8 +724,6 @@ fn validate_dependencies(
     (dep_errors, dep_warnings)
 }
 
-// ─── Lock file freshness ─────────────────────────────────────────────────────
-
 fn check_lock_freshness(
     composer_json_content: &str,
     composer_json_path: &Path,
@@ -768,8 +754,6 @@ fn check_lock_freshness(
         }
     }
 }
-
-// ─── Output ──────────────────────────────────────────────────────────────────
 
 fn output_result(
     console: &mozart_core::console::Console,
@@ -871,8 +855,6 @@ fn output_result(
     }
 }
 
-// ─── Exit code ───────────────────────────────────────────────────────────────
-
 /// Compute the exit code following Composer's convention:
 /// 0 = valid, 1 = warnings (only with --strict), 2 = errors, 3 = file unreadable (handled earlier)
 fn compute_exit_code(
@@ -899,8 +881,6 @@ fn compute_exit_code(
     0
 }
 
-// ─── Tests ───────────────────────────────────────────────────────────────────
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -924,8 +904,6 @@ mod tests {
         validate_manifest(&value, args, &mut result);
         result
     }
-
-    // ── check_name ─────────────────────────────────────────────────────────
 
     #[test]
     fn test_validate_missing_name_is_publish_error() {
@@ -972,8 +950,6 @@ mod tests {
         assert!(!result.errors.is_empty());
         assert!(result.errors[0].contains("vendor/package"));
     }
-
-    // ── check_license ──────────────────────────────────────────────────────
 
     #[test]
     fn test_validate_missing_license_warns() {
@@ -1109,8 +1085,6 @@ mod tests {
             "MIT is not deprecated, should not warn",
         );
     }
-
-    // ── ValidatingArrayLoader-equivalent license checks ────────────────────
 
     #[test]
     fn test_validate_license_wrong_type_warns() {
@@ -1252,8 +1226,6 @@ mod tests {
         );
     }
 
-    // ── parse_iso_time_to_unix ─────────────────────────────────────────────
-
     #[test]
     fn test_parse_iso_time_basic() {
         assert_eq!(parse_iso_time_to_unix("1970-01-01 00:00:00"), Some(0));
@@ -1297,8 +1269,6 @@ mod tests {
         assert_eq!(parse_iso_time_to_unix("2023/12/15 13:45:30"), None);
     }
 
-    // ── check_version_field ────────────────────────────────────────────────
-
     #[test]
     fn test_validate_version_field_warns() {
         let json = r#"{"name": "vendor/pkg", "license": "MIT", "version": "1.0.0"}"#;
@@ -1314,8 +1284,6 @@ mod tests {
         let result = parse_and_validate(json, &args);
         assert!(!result.warnings.iter().any(|w| w.contains("version field")));
     }
-
-    // ── check_package_type ─────────────────────────────────────────────────
 
     #[test]
     fn test_validate_deprecated_type_warns() {
@@ -1340,8 +1308,6 @@ mod tests {
                 .any(|w| w.contains("composer-installer"))
         );
     }
-
-    // ── check_require_overlap ──────────────────────────────────────────────
 
     #[test]
     fn test_validate_require_overlap_warns() {
@@ -1372,8 +1338,6 @@ mod tests {
         assert!(!result.warnings.iter().any(|w| w.contains("required both")));
     }
 
-    // ── check_provide_replace_overlap ──────────────────────────────────────
-
     #[test]
     fn test_validate_provide_replace_overlap_warns() {
         let json = r#"{
@@ -1390,8 +1354,6 @@ mod tests {
                 .any(|w| w.contains("also listed in provide"))
         );
     }
-
-    // ── check_commit_references ────────────────────────────────────────────
 
     #[test]
     fn test_validate_commit_ref_warns() {
@@ -1414,8 +1376,6 @@ mod tests {
         let result = parse_and_validate(json, &make_args());
         assert!(!result.warnings.iter().any(|w| w.contains("commit-ref")));
     }
-
-    // ── check_empty_psr_prefixes ───────────────────────────────────────────
 
     #[test]
     fn test_validate_empty_psr4_prefix_warns() {
@@ -1450,8 +1410,6 @@ mod tests {
         assert!(!result.warnings.iter().any(|w| w.contains("psr-4")));
     }
 
-    // ── check_minimum_stability ────────────────────────────────────────────
-
     #[test]
     fn test_validate_invalid_stability_errors() {
         let json = r#"{"name": "vendor/pkg", "license": "MIT", "minimum-stability": "invalid"}"#;
@@ -1482,8 +1440,6 @@ mod tests {
         }
     }
 
-    // ── validate_manifest with non-object ──────────────────────────────────
-
     #[test]
     fn test_validate_non_object_json_errors() {
         let value = serde_json::json!([1, 2, 3]);
@@ -1491,8 +1447,6 @@ mod tests {
         validate_manifest(&value, &make_args(), &mut result);
         assert!(result.errors.iter().any(|e| e.contains("JSON object")));
     }
-
-    // ── compute_exit_code ─────────────────────────────────────────────────
 
     #[test]
     fn test_compute_exit_code_no_issues() {
@@ -1556,8 +1510,6 @@ mod tests {
         result.warnings.push("some warning".to_string());
         assert_eq!(compute_exit_code(&result, &[], true, true, false), 0);
     }
-
-    // ── check_lock_freshness ───────────────────────────────────────────────
 
     #[test]
     fn test_check_lock_freshness_no_lock_file() {
@@ -1651,8 +1603,6 @@ mod tests {
         assert!(lock_errors[0].contains("not up to date"));
     }
 
-    // ── check_scripts_orphans ──────────────────────────────────────────────
-
     #[test]
     fn test_validate_scripts_descriptions_orphan_warns() {
         let json = r#"{
@@ -1725,8 +1675,6 @@ mod tests {
         );
     }
 
-    // ── should_check_lock ──────────────────────────────────────────────────
-
     #[test]
     fn test_should_check_lock_config_false_disables() {
         let args = make_args();
@@ -1748,8 +1696,6 @@ mod tests {
         let manifest = serde_json::json!({"name": "vendor/pkg"});
         assert!(should_check_lock(&args, &manifest));
     }
-
-    // ── Full manifest: valid package ───────────────────────────────────────
 
     #[test]
     fn test_validate_no_errors_on_valid_package() {

@@ -19,15 +19,11 @@ pub struct LicensesArgs {
     pub locked: bool,
 }
 
-// ─── Data structures ────────────────────────────────────────────────────────
-
 struct LicenseEntry {
     name: String,
     version: String,
     licenses: Vec<String>,
 }
-
-// ─── Main entry point ───────────────────────────────────────────────────────
 
 pub async fn execute(
     args: &LicensesArgs,
@@ -93,8 +89,6 @@ pub async fn execute(
     Ok(())
 }
 
-// ─── Package loading ─────────────────────────────────────────────────────────
-
 fn load_installed_licenses(working_dir: &Path, no_dev: bool) -> anyhow::Result<Vec<LicenseEntry>> {
     let vendor_dir = working_dir.join("vendor");
     let installed = mozart_registry::installed::InstalledPackages::read(&vendor_dir)?;
@@ -155,8 +149,6 @@ fn load_locked_licenses(working_dir: &Path, no_dev: bool) -> anyhow::Result<Vec<
     Ok(entries)
 }
 
-// ─── License extraction ───────────────────────────────────────────────────────
-
 fn extract_installed_licenses(
     pkg: &mozart_registry::installed::InstalledPackageEntry,
 ) -> Vec<String> {
@@ -171,8 +163,6 @@ fn extract_installed_licenses(
         })
         .unwrap_or_default()
 }
-
-// ─── License counting ─────────────────────────────────────────────────────────
 
 fn count_licenses(entries: &[LicenseEntry]) -> Vec<(String, usize)> {
     let mut counts: std::collections::BTreeMap<String, usize> = std::collections::BTreeMap::new();
@@ -192,8 +182,6 @@ fn count_licenses(entries: &[LicenseEntry]) -> Vec<(String, usize)> {
     result.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
     result
 }
-
-// ─── Rendering ───────────────────────────────────────────────────────────────
 
 fn render_text(
     root_name: &str,
@@ -378,8 +366,6 @@ fn render_summary(entries: &[LicenseEntry], console: &Console) {
     );
 }
 
-// ─── Tests ───────────────────────────────────────────────────────────────────
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -403,8 +389,6 @@ mod tests {
             extra_fields: extra,
         }
     }
-
-    // ── extract_installed_licenses ────────────────────────────────────────────
 
     #[test]
     fn test_extract_installed_licenses_present() {
@@ -439,8 +423,6 @@ mod tests {
         let pkg = make_installed_pkg("vendor/pkg", "1.0.0", extra);
         assert!(extract_installed_licenses(&pkg).is_empty());
     }
-
-    // ── count_licenses ────────────────────────────────────────────────────────
 
     #[test]
     fn test_count_licenses() {
@@ -487,8 +469,6 @@ mod tests {
         assert_eq!(counts.len(), 1);
         assert_eq!(counts[0], ("none".to_string(), 1));
     }
-
-    // ── Integration tests ─────────────────────────────────────────────────────
 
     #[test]
     fn test_load_installed_licenses_basic() {
@@ -684,8 +664,6 @@ mod tests {
         let entries_all = load_locked_licenses(working_dir, false).unwrap();
         assert_eq!(entries_all.len(), 2);
     }
-
-    // ── Root license parsing ──────────────────────────────────────────────────
 
     #[test]
     fn test_root_license_array_in_json() {

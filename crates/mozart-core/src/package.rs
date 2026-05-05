@@ -238,10 +238,6 @@ pub trait RootPackage: CompletePackage {
     fn aliases(&self) -> &[VersionAlias];
 }
 
-// ──────────────────────────────────────────────
-// Delegation macros
-// ──────────────────────────────────────────────
-
 /// Implements `Package` trait by delegating to an inner `PackageData` field.
 macro_rules! delegate_package {
     ($type:ty => $($path:ident).+) => {

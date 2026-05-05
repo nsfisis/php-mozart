@@ -33,15 +33,11 @@ pub struct SuggestsArgs {
     pub no_dev: bool,
 }
 
-// ─── Data structures ─────────────────────────────────────────────────────────
-
 struct Suggestion {
     source: String, // package making the suggestion
     target: String, // suggested package name
     reason: String, // human-readable reason (may be empty)
 }
-
-// ─── Main entry point ────────────────────────────────────────────────────────
 
 pub async fn execute(
     args: &SuggestsArgs,
@@ -162,8 +158,6 @@ pub async fn execute(
     Ok(())
 }
 
-// ─── Suggestion collection ───────────────────────────────────────────────────
-
 fn collect_suggestions_from_locked(
     working_dir: &Path,
     no_dev: bool,
@@ -266,8 +260,6 @@ fn collect_suggestions_from_root(working_dir: &Path) -> anyhow::Result<Vec<Sugge
     }
     Ok(result)
 }
-
-// ─── Installed name collection ───────────────────────────────────────────────
 
 fn collect_installed_names_from_lock(
     working_dir: &Path,
@@ -379,8 +371,6 @@ fn is_platform_package(name: &str) -> bool {
     n == "php" || n.starts_with("php-") || n.starts_with("ext-") || n.starts_with("lib-")
 }
 
-// ─── Direct deps helper ───────────────────────────────────────────────────────
-
 fn compute_direct_deps(working_dir: &Path) -> anyhow::Result<IndexSet<String>> {
     let composer_json_path = working_dir.join("composer.json");
     if !composer_json_path.exists() {
@@ -398,8 +388,6 @@ fn compute_direct_deps(working_dir: &Path) -> anyhow::Result<IndexSet<String>> {
     Ok(deps)
 }
 
-// ─── Sanitization ────────────────────────────────────────────────────────────
-
 /// Sanitize a suggestion reason string for safe terminal output.
 /// Replaces newlines with spaces and strips control characters.
 fn sanitize_reason(reason: &str) -> String {
@@ -409,8 +397,6 @@ fn sanitize_reason(reason: &str) -> String {
         .filter(|c| !c.is_control() || *c == ' ')
         .collect()
 }
-
-// ─── Deduplication ────────────────────────────────────────────────────────────
 
 /// Deduplicate suggestions by (source, target) pair.
 /// If the same source suggests the same target multiple times, the last reason wins.
@@ -431,8 +417,6 @@ fn deduplicate_suggestions(suggestions: Vec<Suggestion>) -> Vec<Suggestion> {
 
     deduped
 }
-
-// ─── Rendering ───────────────────────────────────────────────────────────────
 
 fn render_list(suggestions: &[&Suggestion], console: &console::Console) {
     let mut targets: Vec<&str> = suggestions.iter().map(|s| s.target.as_str()).collect();
@@ -501,14 +485,10 @@ fn render_by_suggestion(suggestions: &[&Suggestion], console: &console::Console)
     }
 }
 
-// ─── Tests ───────────────────────────────────────────────────────────────────
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::collections::BTreeMap;
-
-    // ── Helpers ───────────────────────────────────────────────────────────────
 
     fn make_suggestion(source: &str, target: &str, reason: &str) -> Suggestion {
         Suggestion {
@@ -595,8 +575,6 @@ mod tests {
         }
     }
 
-    // ── Deduplication tests ────────────────────────────────────────────────────
-
     #[test]
     fn test_deduplicate_keeps_last_reason() {
         let suggestions = vec![
@@ -635,8 +613,6 @@ mod tests {
         let deduped = deduplicate_suggestions(suggestions);
         assert_eq!(deduped.len(), 2);
     }
-
-    // ── Filter tests ──────────────────────────────────────────────────────────
 
     #[test]
     fn test_filter_removes_installed_targets() {
@@ -724,8 +700,6 @@ mod tests {
 
         assert_eq!(filtered.len(), 3);
     }
-
-    // ── Collection tests ──────────────────────────────────────────────────────
 
     #[test]
     fn test_suggests_from_lockfile() {

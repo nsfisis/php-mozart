@@ -96,13 +96,9 @@ pub fn format_did_you_mean(suggestions: &[&str]) -> Option<String> {
     Some(format!("Did you mean {}?", formatted))
 }
 
-// ─── Tests ───────────────────────────────────────────────────────────────────
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    // ── levenshtein ───────────────────────────────────────────────────────────
 
     #[test]
     fn test_levenshtein_identical() {
@@ -150,8 +146,6 @@ mod tests {
         assert_eq!(levenshtein("monolog/monolog", "monolong/monolog"), 1);
     }
 
-    // ── find_similar ──────────────────────────────────────────────────────────
-
     #[test]
     fn test_find_similar_returns_close_matches() {
         let candidates = ["psr/log", "psr/cache", "monolog/monolog", "symfony/console"];
@@ -195,8 +189,6 @@ mod tests {
         // "psr/log" vs "psr/log" (both lowercased) = distance 0, so excluded
         assert!(results.is_empty());
     }
-
-    // ── format_did_you_mean ───────────────────────────────────────────────────
 
     #[test]
     fn test_format_did_you_mean_empty() {

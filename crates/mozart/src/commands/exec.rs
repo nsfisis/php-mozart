@@ -17,8 +17,6 @@ pub struct ExecArgs {
     pub list: bool,
 }
 
-// ─── Main entry point ────────────────────────────────────────────────────────
-
 pub async fn execute(
     args: &ExecArgs,
     cli: &super::Cli,
@@ -117,8 +115,6 @@ pub async fn execute(
     Ok(())
 }
 
-// ─── Helpers ──────────────────────────────────────────────────────────────────
-
 fn resolve_bin_dir(working_dir: &Path, composer: &Composer) -> PathBuf {
     // bin-dir's `{$vendor-dir}` placeholder is already resolved by Composer::load.
     let bin_dir = composer
@@ -187,14 +183,10 @@ fn get_binaries(working_dir: &Path, bin_dir: &Path) -> Vec<(String, bool)> {
     binaries
 }
 
-// ─── Tests ───────────────────────────────────────────────────────────────────
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::fs;
-
-    // ── resolve_bin_dir ───────────────────────────────────────────────────────
 
     #[test]
     fn test_resolve_bin_dir_default() {
@@ -251,8 +243,6 @@ mod tests {
         let result = resolve_bin_dir(dir.path(), &composer);
         assert_eq!(result, dir.path().join("packages/commands"));
     }
-
-    // ── get_binaries ──────────────────────────────────────────────────────────
 
     #[test]
     fn test_get_binaries_from_bin_dir() {

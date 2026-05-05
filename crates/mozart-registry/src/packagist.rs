@@ -267,10 +267,6 @@ pub async fn fetch_package_versions(
     parse_p2_response(&body, package_name)
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Packagist search API
-// ─────────────────────────────────────────────────────────────────────────────
-
 /// A single search result from the Packagist search API.
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct SearchResult {
@@ -370,10 +366,6 @@ pub async fn search_packages(
 
     Ok((all_results, total))
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Security Advisories API
-// ─────────────────────────────────────────────────────────────────────────────
 
 /// A single security advisory from the Packagist API.
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -557,8 +549,6 @@ mod tests {
         assert_eq!(versions[1].version, "1.0.0");
     }
 
-    // ──────────── branch_aliases() tests ────────────
-
     #[test]
     fn test_branch_aliases_present() {
         let json = r#"{
@@ -652,8 +642,6 @@ mod tests {
         assert!(aliases.is_empty());
     }
 
-    // ──────────── __unset sentinel handling ────────────────────────────────
-
     #[test]
     fn parse_p2_response_unset_fields() {
         // Packagist metadata minifier uses "__unset" to mark deleted fields.
@@ -704,8 +692,6 @@ mod tests {
         assert!(versions[1].extra.is_none());
         assert!(versions[1].suggest.is_none());
     }
-
-    // ──────────── minified metadata expansion ──────────────────────────────
 
     #[test]
     fn parse_p2_response_minified_expand() {
@@ -864,8 +850,6 @@ mod tests {
         assert_eq!(versions[1].require.get("ext-json").unwrap(), "*");
         assert!(versions[1].replace.is_empty());
     }
-
-    // ──────────── SecurityAdvisory parsing tests ─────────────────────────────
 
     #[test]
     fn test_parse_security_advisories_response() {

@@ -32,8 +32,6 @@ pub struct AuditArgs {
     pub ignore_unreachable: bool,
 }
 
-// ─── Internal types ───────────────────────────────────────────────────────────
-
 #[derive(Debug)]
 struct PackageEntry {
     name: String,
@@ -66,8 +64,6 @@ struct AuditResult {
     /// Total count of individual advisories.
     total_advisory_count: usize,
 }
-
-// ─── Main entry point ─────────────────────────────────────────────────────────
 
 pub async fn execute(
     args: &AuditArgs,
@@ -165,8 +161,6 @@ pub async fn execute(
     Ok(())
 }
 
-// ─── Package loading ──────────────────────────────────────────────────────────
-
 fn load_packages(
     working_dir: &Path,
     locked: bool,
@@ -244,8 +238,6 @@ fn load_locked_packages(working_dir: &Path, no_dev: bool) -> anyhow::Result<Vec<
 
     Ok(packages)
 }
-
-// ─── Advisory filtering ───────────────────────────────────────────────────────
 
 fn filter_advisories(
     all_advisories: &BTreeMap<String, Vec<SecurityAdvisory>>,
@@ -327,8 +319,6 @@ fn filter_advisories(
     result
 }
 
-// ─── Helpers ─────────────────────────────────────────────────────────────────
-
 /// Normalize single-pipe OR separators (`|`) in a version constraint string to
 /// double-pipe (`||`) so the constraint parser can handle both forms.
 ///
@@ -360,8 +350,6 @@ fn normalize_or_separator(constraint: &str) -> String {
     result
 }
 
-// ─── Abandoned detection ──────────────────────────────────────────────────────
-
 fn detect_abandoned(packages: &[PackageEntry]) -> Vec<AbandonedPackage> {
     let mut result = Vec::new();
 
@@ -385,8 +373,6 @@ fn detect_abandoned(packages: &[PackageEntry]) -> Vec<AbandonedPackage> {
 
     result
 }
-
-// ─── Output rendering ─────────────────────────────────────────────────────────
 
 fn render_table(result: &AuditResult, console: &mozart_core::console::Console) {
     if result.total_advisory_count == 0 && result.abandoned.is_empty() {
@@ -692,8 +678,6 @@ fn render_summary(result: &AuditResult, console: &mozart_core::console::Console)
     }
 }
 
-// ─── Tests ────────────────────────────────────────────────────────────────────
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -743,8 +727,6 @@ mod tests {
             abandoned,
         }
     }
-
-    // ── filter_advisories ────────────────────────────────────────────────────
 
     fn make_console() -> mozart_core::console::Console {
         mozart_core::console::Console::new(0, false, false, false, false)
@@ -834,8 +816,6 @@ mod tests {
         assert!(result.is_empty());
     }
 
-    // ── detect_abandoned ─────────────────────────────────────────────────────
-
     #[test]
     fn test_detect_abandoned_true() {
         let packages = vec![make_pkg_abandoned("old/pkg", "1.0.0", None)];
@@ -873,8 +853,6 @@ mod tests {
         assert!(result.iter().any(|p| p.name == "old/pkg"));
         assert!(result.iter().any(|p| p.name == "dead/pkg"));
     }
-
-    // ── load_installed_packages ───────────────────────────────────────────────
 
     #[test]
     fn test_load_installed_packages() {
@@ -1099,8 +1077,6 @@ mod tests {
         assert!(msg.contains("composer.lock"));
     }
 
-    // ── render_json ───────────────────────────────────────────────────────────
-
     #[test]
     fn test_render_json_structure() {
         let advisory = make_advisory("PKSA-0001", "vendor/pkg", ">=1.0,<2.0", Some("high"));
@@ -1143,8 +1119,6 @@ mod tests {
         render_json(&result, &console).unwrap();
     }
 
-    // ── argument validation ───────────────────────────────────────────────────
-
     #[test]
     fn test_invalid_format() {
         // We test the validation logic directly
@@ -1179,8 +1153,6 @@ mod tests {
             assert!(valid, "abandoned value {} should be valid", value);
         }
     }
-
-    // ── AdvisorySource used in test helper (suppress dead_code) ──────────────
 
     #[test]
     fn test_advisory_source_fields() {

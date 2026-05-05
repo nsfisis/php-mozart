@@ -12,8 +12,6 @@ pub struct FundArgs {
     pub format: Option<String>,
 }
 
-// ─── Data structures ────────────────────────────────────────────────────────
-
 struct FundingLink {
     url: String,
     funding_type: Option<String>,
@@ -23,8 +21,6 @@ struct FundingEntry {
     full_name: String,
     links: Vec<FundingLink>,
 }
-
-// ─── Main entry point ───────────────────────────────────────────────────────
 
 pub async fn execute(
     args: &FundArgs,
@@ -59,8 +55,6 @@ pub async fn execute(
 
     Ok(())
 }
-
-// ─── Package loading ─────────────────────────────────────────────────────────
 
 fn collect_funding_from_locked(working_dir: &Path) -> anyhow::Result<Vec<FundingEntry>> {
     let lock_path = working_dir.join("composer.lock");
@@ -120,8 +114,6 @@ fn collect_funding_from_installed(working_dir: &Path) -> anyhow::Result<Vec<Fund
     Ok(entries)
 }
 
-// ─── Funding helpers ──────────────────────────────────────────────────────────
-
 fn extract_funding_links(funding_json: &[serde_json::Value]) -> Vec<FundingLink> {
     funding_json
         .iter()
@@ -179,8 +171,6 @@ fn group_by_vendor(entries: &[FundingEntry]) -> BTreeMap<String, BTreeMap<String
 
     grouped
 }
-
-// ─── Rendering ───────────────────────────────────────────────────────────────
 
 fn render_text(
     grouped: &BTreeMap<String, BTreeMap<String, Vec<String>>>,
@@ -245,13 +235,9 @@ fn render_json(
     Ok(())
 }
 
-// ─── Tests ───────────────────────────────────────────────────────────────────
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    // ── Helper ────────────────────────────────────────────────────────────────
 
     fn make_funding_json(entries: &[(&str, &str)]) -> Vec<serde_json::Value> {
         entries
@@ -259,8 +245,6 @@ mod tests {
             .map(|(t, u)| serde_json::json!({"type": t, "url": u}))
             .collect()
     }
-
-    // ── extract_funding_links ─────────────────────────────────────────────────
 
     #[test]
     fn test_extract_funding_links_basic() {
@@ -290,8 +274,6 @@ mod tests {
         assert!(links.is_empty());
     }
 
-    // ── rewrite_github_url ────────────────────────────────────────────────────
-
     #[test]
     fn test_rewrite_github_url_profile() {
         let result = rewrite_github_url("https://github.com/Seldaek", Some("github"));
@@ -317,8 +299,6 @@ mod tests {
         let result = rewrite_github_url("https://github.com/user/repo", Some("github"));
         assert_eq!(result, "https://github.com/user/repo");
     }
-
-    // ── group_by_vendor ───────────────────────────────────────────────────────
 
     #[test]
     fn test_group_by_vendor_basic() {
@@ -381,8 +361,6 @@ mod tests {
         let grouped = group_by_vendor(&[]);
         assert!(grouped.is_empty());
     }
-
-    // ── Integration tests ─────────────────────────────────────────────────────
 
     #[test]
     fn test_fund_from_lockfile() {

@@ -18,8 +18,6 @@ pub struct CheckPlatformReqsArgs {
     pub format: Option<String>,
 }
 
-// ─── Data structures ─────────────────────────────────────────────────────────
-
 /// A single platform requirement collected from a package.
 #[derive(Debug, Clone)]
 struct PlatformRequirement {
@@ -50,8 +48,6 @@ struct CheckResult {
     /// The first failed constraint and its provider.
     failed_requirement: Option<(String, String)>,
 }
-
-// ─── Main entry point ────────────────────────────────────────────────────────
 
 pub async fn execute(
     args: &CheckPlatformReqsArgs,
@@ -110,8 +106,6 @@ pub async fn execute(
 
     Ok(())
 }
-
-// ─── Requirement collection ──────────────────────────────────────────────────
 
 /// Collect platform requirements from all packages (lock/installed) plus root.
 ///
@@ -275,8 +269,6 @@ fn add_platform_requirements_from_map(
     }
 }
 
-// ─── Requirement checking ────────────────────────────────────────────────────
-
 fn check_requirements(
     requirements: &BTreeMap<String, Vec<PlatformRequirement>>,
     platform: &[mozart_core::platform::PlatformPackage],
@@ -351,8 +343,6 @@ fn determine_exit_code(results: &[CheckResult]) -> i32 {
     }
     code
 }
-
-// ─── Rendering ───────────────────────────────────────────────────────────────
 
 fn render_text(results: &[CheckResult], console: &Console) {
     if results.is_empty() {
@@ -454,16 +444,12 @@ fn render_json(results: &[CheckResult], console: &Console) -> anyhow::Result<()>
     Ok(())
 }
 
-// ─── Tests ───────────────────────────────────────────────────────────────────
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use mozart_core::platform::PlatformPackage;
     use std::collections::BTreeMap;
     use tempfile::tempdir;
-
-    // ── Helpers ──────────────────────────────────────────────────────────────
 
     fn test_console() -> mozart_core::console::Console {
         mozart_core::console::Console::new(0, true, false, true, true)
@@ -534,8 +520,6 @@ mod tests {
         std::fs::write(path, serde_json::to_string_pretty(&lock_json).unwrap()).unwrap();
     }
 
-    // ── test_is_platform_package ──────────────────────────────────────────────
-
     #[test]
     fn test_is_platform_package() {
         assert!(mozart_core::platform::is_platform_package("php"));
@@ -558,8 +542,6 @@ mod tests {
             "symfony/console"
         ));
     }
-
-    // ── test_collect_requirements_from_lock ──────────────────────────────────
 
     #[test]
     fn test_collect_requirements_from_lock() {
@@ -607,8 +589,6 @@ mod tests {
         assert_eq!(php_reqs[0].constraint, ">=8.1");
         assert_eq!(php_reqs[0].provider, "vendor/pkg");
     }
-
-    // ── test_collect_requirements_no_dev ─────────────────────────────────────
 
     #[test]
     fn test_collect_requirements_no_dev() {
@@ -662,8 +642,6 @@ mod tests {
         );
     }
 
-    // ── test_collect_requirements_includes_root ───────────────────────────────
-
     #[test]
     fn test_collect_requirements_includes_root() {
         let dir = tempdir().unwrap();
@@ -704,8 +682,6 @@ mod tests {
         );
     }
 
-    // ── test_check_requirements_all_pass ─────────────────────────────────────
-
     #[test]
     fn test_check_requirements_all_pass() {
         let requirements =
@@ -725,8 +701,6 @@ mod tests {
         assert_eq!(determine_exit_code(&results), 0);
     }
 
-    // ── test_check_requirements_version_mismatch ─────────────────────────────
-
     #[test]
     fn test_check_requirements_version_mismatch() {
         let requirements = make_requirements(&[("php", ">=8.2", "vendor/pkg")]);
@@ -740,8 +714,6 @@ mod tests {
         assert_eq!(determine_exit_code(&results), 1);
     }
 
-    // ── test_check_requirements_missing ──────────────────────────────────────
-
     #[test]
     fn test_check_requirements_missing() {
         let requirements = make_requirements(&[("ext-foobar", "*", "vendor/pkg")]);
@@ -753,8 +725,6 @@ mod tests {
         assert_eq!(results[0].version, "n/a");
         assert_eq!(determine_exit_code(&results), 2);
     }
-
-    // ── test_check_requirements_mixed ────────────────────────────────────────
 
     #[test]
     fn test_check_requirements_mixed() {
@@ -780,8 +750,6 @@ mod tests {
         assert_eq!(determine_exit_code(&results), 2);
     }
 
-    // ── test_check_requirements_multiple_constraints ──────────────────────────
-
     #[test]
     fn test_check_requirements_multiple_constraints() {
         // Two packages both require php, one with a tighter constraint
@@ -799,8 +767,6 @@ mod tests {
         assert_eq!(failed_constraint, ">=8.2");
         assert_eq!(failed_provider, "vendor/b");
     }
-
-    // ── test_output_json_format ───────────────────────────────────────────────
 
     #[test]
     fn test_output_json_format() {
@@ -860,8 +826,6 @@ mod tests {
         assert_eq!(json_results[1]["provider"], "vendor/pkg");
     }
 
-    // ── test_lib_packages_always_missing ─────────────────────────────────────
-
     #[test]
     fn test_lib_packages_always_missing() {
         // lib-pcre present in platform with satisfying version → Success
@@ -876,8 +840,6 @@ mod tests {
             "lib-pcre should succeed when platform has it at a satisfying version"
         );
     }
-
-    // ── test_composer_api_packages_missing ───────────────────────────────────
 
     #[test]
     fn test_composer_api_packages_missing() {
@@ -904,8 +866,6 @@ mod tests {
         }
     }
 
-    // ── test_lib_package_constraint_not_satisfied ─────────────────────────────
-
     #[test]
     fn test_lib_package_constraint_not_satisfied() {
         // lib-pcre is in platform but constraint does NOT match → Failed
@@ -922,8 +882,6 @@ mod tests {
         assert_eq!(results[0].version, "10.42");
     }
 
-    // ── test_lib_package_not_in_platform ─────────────────────────────────────
-
     #[test]
     fn test_lib_package_not_in_platform() {
         // lib-pcre is NOT in platform data at all → Missing
@@ -939,8 +897,6 @@ mod tests {
         );
         assert_eq!(results[0].version, "n/a");
     }
-
-    // ── test_determine_exit_code ──────────────────────────────────────────────
 
     #[test]
     fn test_determine_exit_code_all_success() {

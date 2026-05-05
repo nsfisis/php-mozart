@@ -336,10 +336,6 @@ fn normalize_pre_release(s: &str) -> String {
     }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Constraint types
-// ─────────────────────────────────────────────────────────────────────────────
-
 /// A single atomic constraint.
 #[derive(Debug, Clone)]
 pub enum Constraint {
@@ -435,10 +431,6 @@ impl VersionConstraint {
         parse_and_group(input)
     }
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Constraint intersection helpers
-// ─────────────────────────────────────────────────────────────────────────────
 
 /// A reduced range form of a constraint branch: a half-open interval with an
 /// optional excluded version (from `!=`). `lower`/`upper` are `(version,
@@ -966,8 +958,6 @@ fn hyphen_upper_bound(raw: &str) -> Result<VersionConstraint, String> {
 mod tests {
     use super::*;
 
-    // ──────────── Version parsing ────────────
-
     #[test]
     fn test_parse_simple() {
         let v = Version::parse("1.2.3").unwrap();
@@ -1094,8 +1084,6 @@ mod tests {
         assert!(!c.matches(&other));
     }
 
-    // ──────────── Version ordering ────────────
-
     #[test]
     fn test_ordering_major() {
         let a = Version::parse("2.0.0").unwrap();
@@ -1144,8 +1132,6 @@ mod tests {
         let beta1 = Version::parse("1.0.0-beta1").unwrap();
         assert!(beta2 > beta1);
     }
-
-    // ──────────── Constraint parsing ────────────
 
     #[test]
     fn test_parse_any() {
@@ -1253,8 +1239,6 @@ mod tests {
         assert!(!c.matches(&Version::parse("0.9.0").unwrap()));
         assert!(!c.matches(&Version::parse("2.1.0").unwrap()));
     }
-
-    // ──────────── Helper ────────────
 
     fn satisfies(constraint: &str, version: &str) -> bool {
         let c = VersionConstraint::parse(constraint).unwrap();
@@ -1624,8 +1608,6 @@ mod tests {
     // 3. CONSTRAINT PARSING EDGE CASES
     // ══════════════════════════════════════════════════════════════════════════
 
-    // ── Caret ──
-
     #[test]
     fn test_caret_zero_zero_three() {
         // ^0.0.3 → >=0.0.3 <0.0.4
@@ -1673,8 +1655,6 @@ mod tests {
         assert!(!satisfies("^1.2.3", "2.0.0"));
     }
 
-    // ── Tilde ──
-
     #[test]
     fn test_tilde_single_major() {
         // ~1 → >=1.0.0 <2.0.0
@@ -1706,8 +1686,6 @@ mod tests {
         assert!(satisfies("~1.2.3", "1.2.9"));
         assert!(!satisfies("~1.2.3", "1.3.0"));
     }
-
-    // ── Wildcard ──
 
     #[test]
     fn test_wildcard_major_only() {
@@ -1752,8 +1730,6 @@ mod tests {
         let _ = VersionConstraint::parse("v1.*"); // just verify it doesn't panic
     }
 
-    // ── Hyphen ranges ──
-
     #[test]
     fn test_hyphen_range_partial_from() {
         // "1.0 - 2.0": 1.0 is a partial "from", lower = >=1.0.0
@@ -1786,8 +1762,6 @@ mod tests {
         assert!(satisfies("1.0.0-alpha1 - 1.0.0-RC1", "1.0.0-RC1"));
         assert!(!satisfies("1.0.0-alpha1 - 1.0.0-RC1", "1.0.0"));
     }
-
-    // ── Comparison operators ──
 
     #[test]
     fn test_gt_boundary() {
@@ -1834,8 +1808,6 @@ mod tests {
         assert!(satisfies(">=1.0.0", "1.0.0"));
     }
 
-    // ── AND constraints ──
-
     #[test]
     fn test_and_comma_separated() {
         // Comma-separated constraints act as AND
@@ -1866,8 +1838,6 @@ mod tests {
         assert!(!satisfies(">=1.2.3 <=1.2.3", "1.2.4"));
         assert!(!satisfies(">=1.2.3 <=1.2.3", "1.2.2"));
     }
-
-    // ── OR constraints ──
 
     #[test]
     fn test_or_double_pipe() {
@@ -1909,8 +1879,6 @@ mod tests {
         assert!(!satisfies("1.0.0 || 2.0.0 || 3.0.0", "1.0.1"));
     }
 
-    // ── Complex combined ──
-
     #[test]
     fn test_combined_and_within_or() {
         // ">=1.0 <2.0 || >=3.0 <4.0"
@@ -1949,8 +1917,6 @@ mod tests {
         assert!(!satisfies(">=5.4 <7.0", "5.3.9"));
         assert!(!satisfies(">=5.4 <7.0", "7.0.0"));
     }
-
-    // ── Edge cases ──
 
     #[test]
     fn test_constraint_empty_string_is_any() {

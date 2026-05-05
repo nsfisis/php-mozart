@@ -11,10 +11,6 @@ use std::path::Path;
 use anyhow::Result;
 use mozart_core::console_format;
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Shared command entry point
-// ─────────────────────────────────────────────────────────────────────────────
-
 /// Inputs for [`do_execute`], collected from the `depends` / `prohibits` CLI args.
 pub struct DoExecuteArgs<'a> {
     pub package: &'a str,
@@ -159,10 +155,6 @@ pub fn do_execute(
     ))
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Core types
-// ─────────────────────────────────────────────────────────────────────────────
-
 /// Normalised view of a package's dependency information.
 #[derive(Debug, Clone)]
 pub struct PackageInfo {
@@ -194,10 +186,6 @@ pub struct DependencyResult {
     /// Children found during a recursive walk (empty for flat results).
     pub children: Vec<DependencyResult>,
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Package loading
-// ─────────────────────────────────────────────────────────────────────────────
 
 /// Load all packages relevant to the dependency query.
 ///
@@ -348,10 +336,6 @@ fn load_from_installed(working_dir: &Path) -> Result<Vec<PackageInfo>> {
     Ok(packages)
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Core algorithm
-// ─────────────────────────────────────────────────────────────────────────────
-
 /// Find all packages that have a dependency relationship with the needle(s).
 ///
 /// * `packages`   — the full set of packages to search through.
@@ -375,8 +359,6 @@ pub fn get_dependents(
         get_dependents_forward(packages, needles, recursive)
     }
 }
-
-// ── Forward (depends) ─────────────────────────────────────────────────────────
 
 fn get_dependents_forward(
     packages: &[PackageInfo],
@@ -484,8 +466,6 @@ fn recurse_dependents(
     }
     results
 }
-
-// ── Inverted (prohibits) ──────────────────────────────────────────────────────
 
 fn get_prohibitors(
     packages: &[PackageInfo],
@@ -662,10 +642,6 @@ fn sample_versions_from_constraint(
         .collect()
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Output helpers
-// ─────────────────────────────────────────────────────────────────────────────
-
 /// Print results as a flat table.
 ///
 /// Columns: package name | version | link description | link constraint
@@ -774,10 +750,6 @@ fn tree_prefix(depth: usize, is_last: bool) -> String {
     format!("{indent}{branch}")
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Tests
-// ─────────────────────────────────────────────────────────────────────────────
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -804,8 +776,6 @@ mod tests {
             is_root,
         }
     }
-
-    // ── depends tests ─────────────────────────────────────────────────────────
 
     #[test]
     fn test_forward_dependency() {
@@ -872,8 +842,6 @@ mod tests {
         assert!(!results.is_empty());
     }
 
-    // ── prohibits tests ───────────────────────────────────────────────────────
-
     #[test]
     fn test_prohibits_basic() {
         // root requires A ^1.0; user asks "who prohibits A 2.0"
@@ -938,8 +906,6 @@ mod tests {
             "Nobody prohibits vendor/a 2.5 when root requires ^2.0"
         );
     }
-
-    // ── print helpers (smoke tests) ───────────────────────────────────────────
 
     #[test]
     fn test_print_table_empty() {

@@ -27,8 +27,6 @@ pub struct ArchiveArgs {
     pub ignore_filters: bool,
 }
 
-// ─── Archive config helpers ───────────────────────────────────────────────────
-
 /// Read `archive.name` and `archive.exclude` from a composer.json file.
 fn read_archive_config(
     composer_json_path: &std::path::Path,
@@ -57,8 +55,6 @@ fn read_archive_config(
     Ok((name, excludes))
 }
 
-// ─── Metadata for a resolved package ─────────────────────────────────────────
-
 struct PackageMeta {
     source_dir: PathBuf,
     package_name: String,
@@ -80,8 +76,6 @@ impl Drop for PackageMeta {
         }
     }
 }
-
-// ─── Main entry point ─────────────────────────────────────────────────────────
 
 pub async fn execute(
     args: &ArchiveArgs,
@@ -248,8 +242,6 @@ pub async fn execute(
 
     Ok(())
 }
-
-// ─── Remote package resolution ────────────────────────────────────────────────
 
 async fn resolve_remote_package(
     package_name: &str,

@@ -12,10 +12,6 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-// ─────────────────────────────────────────────────────────────────────────────
-// CacheConfig
-// ─────────────────────────────────────────────────────────────────────────────
-
 /// Configuration for the Mozart cache system.
 pub struct CacheConfig {
     /// Root cache directory (e.g. `~/.cache/mozart`).
@@ -92,10 +88,6 @@ fn dirs_cache_dir() -> PathBuf {
     }
     PathBuf::from("/tmp")
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Cache
-// ─────────────────────────────────────────────────────────────────────────────
 
 /// A single cache bucket (a directory on disk).
 #[derive(Clone)]
@@ -328,10 +320,6 @@ fn collect_files(dir: &Path, out: &mut Vec<(PathBuf, u64, u64)>) -> anyhow::Resu
     Ok(())
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Probabilistic GC trigger
-// ─────────────────────────────────────────────────────────────────────────────
-
 /// Return `true` with a probability of 1 in 50 (based on system time nanos).
 ///
 /// Used to decide whether to run GC after an install/update operation.
@@ -343,17 +331,11 @@ pub fn gc_is_necessary() -> bool {
     nanos.is_multiple_of(50)
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Tests
-// ─────────────────────────────────────────────────────────────────────────────
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::time::Duration;
     use tempfile::tempdir;
-
-    // ──────────── sanitize_key ────────────
 
     #[test]
     fn test_sanitize_key_replaces_slash() {
@@ -380,8 +362,6 @@ mod tests {
         );
     }
 
-    // ──────────── read/write roundtrip (string) ────────────
-
     #[test]
     fn test_write_read_roundtrip_string() {
         let dir = tempdir().unwrap();
@@ -391,8 +371,6 @@ mod tests {
         let result = cache.read("test-key");
         assert_eq!(result.as_deref(), Some("hello world"));
     }
-
-    // ──────────── read/write roundtrip (bytes) ────────────
 
     #[test]
     fn test_write_read_roundtrip_bytes() {
@@ -404,8 +382,6 @@ mod tests {
         let result = cache.read_bytes("bin-key");
         assert_eq!(result, Some(data));
     }
-
-    // ──────────── clear removes all entries ────────────
 
     #[test]
     fn test_clear_removes_all_entries() {
@@ -423,8 +399,6 @@ mod tests {
         assert!(cache.read("key2").is_none());
     }
 
-    // ──────────── disabled cache returns None ────────────
-
     #[test]
     fn test_disabled_cache_returns_none() {
         let dir = tempdir().unwrap();
@@ -437,8 +411,6 @@ mod tests {
         assert!(cache.read("key").is_none());
         assert!(cache.read_bytes("key").is_none());
     }
-
-    // ──────────── GC with TTL expiration ────────────
 
     #[test]
     fn test_gc_ttl_expiration() {
@@ -471,8 +443,6 @@ mod tests {
         assert!(cache.read("new-key").is_some(), "fresh file should remain");
     }
 
-    // ──────────── GC with size limit ────────────
-
     #[test]
     fn test_gc_size_limit() {
         let dir = tempdir().unwrap();
@@ -504,8 +474,6 @@ mod tests {
         );
     }
 
-    // ──────────── gc_vcs (top-level subdir TTL deletion) ────────────
-
     #[test]
     fn test_gc_vcs_removes_old_subdirs() {
         let dir = tempdir().unwrap();
@@ -530,8 +498,6 @@ mod tests {
         assert!(!old_mirror.exists(), "expired mirror should be removed");
         assert!(new_mirror.exists(), "fresh mirror should remain");
     }
-
-    // ──────────── age ────────────
 
     #[test]
     fn test_age_existing_entry() {

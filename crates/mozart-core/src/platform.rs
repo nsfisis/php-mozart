@@ -3,16 +3,12 @@
 // Provides detection of the PHP environment (version, extensions, capabilities)
 // and helpers for identifying platform package names (php, ext-*, lib-*, etc.).
 
-// ─── Data structures ─────────────────────────────────────────────────────────
-
 /// A detected platform package with its name and version.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PlatformPackage {
     pub name: String,
     pub version: String,
 }
-
-// ─── Classification ──────────────────────────────────────────────────────────
 
 /// Returns true if the package name is a Composer platform package.
 ///
@@ -43,8 +39,6 @@ pub fn is_platform_package(name: &str) -> bool {
         }
     }
 }
-
-// ─── Detection ───────────────────────────────────────────────────────────────
 
 /// Composer runtime API version that Mozart emulates.
 /// Corresponds to `Composer::RUNTIME_API_VERSION` in Composer.
@@ -343,8 +337,6 @@ pub fn detect_php_extensions() -> Vec<String> {
         .map(|l| l.trim().to_lowercase())
         .collect()
 }
-
-// ─── Tests ───────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
 mod tests {

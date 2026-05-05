@@ -20,10 +20,6 @@ use mozart_sat_resolver::{
 };
 use mozart_semver::{Version, VersionConstraint};
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Version helpers
-// ─────────────────────────────────────────────────────────────────────────────
-
 /// Strip a `@stability` suffix from a constraint string and return the
 /// cleaned constraint plus the parsed stability. Mirrors Composer's
 /// `RootPackageLoader::extractStabilityFlags` (single-constraint case):
@@ -355,10 +351,6 @@ fn strip_inline_reference(s: &str) -> String {
     s.to_string()
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// PackageName
-// ─────────────────────────────────────────────────────────────────────────────
-
 /// A normalized package name (lowercase, e.g. "monolog/monolog").
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct PackageName(pub String);
@@ -386,10 +378,6 @@ impl PackageName {
         self.0 == Self::ROOT
     }
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Platform configuration
-// ─────────────────────────────────────────────────────────────────────────────
 
 /// Platform package configuration.
 /// Maps package names to version strings (normalized, e.g. "8.1.0.0").
@@ -447,10 +435,6 @@ impl PlatformConfig {
     }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Error types
-// ─────────────────────────────────────────────────────────────────────────────
-
 /// Error returned by the public `resolve()` function.
 #[derive(Debug)]
 pub enum ResolveError {
@@ -490,10 +474,6 @@ impl fmt::Display for ResolveError {
 
 impl std::error::Error for ResolveError {}
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Stability filter
-// ─────────────────────────────────────────────────────────────────────────────
-
 /// Check if a version passes the minimum-stability filter for the given package.
 fn passes_stability_filter(
     package_name: &str,
@@ -525,10 +505,6 @@ fn should_skip_platform_dep(
         .iter()
         .any(|p| mozart_core::matches_wildcard(dep_name, p))
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Packagist → PoolPackageInput conversion
-// ─────────────────────────────────────────────────────────────────────────────
 
 /// Mirrors `Composer\Package\CompletePackage::isAbandoned`: any
 /// `abandoned: true` or `abandoned: "<replacement>"` value is truthy.
@@ -684,10 +660,6 @@ fn packagist_to_pool_inputs(
     results
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Public API types
-// ─────────────────────────────────────────────────────────────────────────────
-
 /// Input to the resolver.
 pub struct ResolveRequest {
     /// Root package name from composer.json "name" field (e.g. "laravel/laravel").
@@ -830,10 +802,6 @@ pub struct ResolvedPackage {
     /// trace lines). Real packages have `alias_of: None`.
     pub alias_of_normalized: Option<String>,
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Public resolve() function
-// ─────────────────────────────────────────────────────────────────────────────
 
 /// Run the dependency resolver.
 ///
@@ -1629,15 +1597,9 @@ pub async fn resolve(request: &ResolveRequest) -> Result<Vec<ResolvedPackage>, R
     }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Tests
-// ─────────────────────────────────────────────────────────────────────────────
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    // ──────────── Version parsing helpers ────────────
 
     fn v(major: u64, minor: u64, patch: u64, build: u64) -> Version {
         Version {
@@ -1662,8 +1624,6 @@ mod tests {
             dev_branch_name: None,
         }
     }
-
-    // ──────────── parse_normalized ────────────
 
     #[test]
     fn test_parse_normalized_stable() {
@@ -1787,8 +1747,6 @@ mod tests {
         );
     }
 
-    // ──────────── PackageName ────────────
-
     #[test]
     fn test_package_name_is_platform() {
         assert!(PackageName("php".to_string()).is_platform());
@@ -1806,8 +1764,6 @@ mod tests {
         assert!(PackageName::root().is_root());
         assert!(!PackageName("monolog/monolog".to_string()).is_root());
     }
-
-    // ──────────── Stability filter ────────────
 
     #[test]
     fn test_stability_filter() {
@@ -1914,8 +1870,6 @@ mod tests {
         assert!(!should_skip_platform_dep("monolog/monolog", false, &list));
     }
 
-    // ──────────── Branch alias tests ────────────
-
     #[test]
     fn test_parse_branch_alias_target_x_dev() {
         let ver = parse_branch_alias_target("2.x-dev").unwrap();
@@ -1943,8 +1897,6 @@ mod tests {
         assert!(parse_branch_alias_target("2.0.0").is_none());
         assert!(parse_branch_alias_target("").is_none());
     }
-
-    // ──────────── SAT solver integration tests (offline) ────────────
 
     #[test]
     fn test_sat_resolve_simple_offline() {
@@ -1996,8 +1948,6 @@ mod tests {
         assert!(result.installed.contains(&1));
         assert!(result.installed.contains(&2));
     }
-
-    // ──────────── End-to-end tests (require network, marked #[ignore]) ────────────
 
     #[tokio::test]
     #[ignore]

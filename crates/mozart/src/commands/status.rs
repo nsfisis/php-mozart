@@ -11,8 +11,6 @@ pub struct StatusArgs {
     pub verbose: bool,
 }
 
-// ─── Data structures ────────────────────────────────────────────────────────
-
 /// Information extracted from a package's dist field.
 struct DistInfo {
     dist_type: String,
@@ -43,8 +41,6 @@ struct PackageStatus {
     note: Option<String>,
     changes: Vec<FileChange>,
 }
-
-// ─── Main entry point ────────────────────────────────────────────────────────
 
 pub async fn execute(
     args: &StatusArgs,
@@ -212,8 +208,6 @@ pub async fn execute(
     Err(mozart_core::exit_code::bail_silent(1))
 }
 
-// ─── Helpers ──────────────────────────────────────────────────────────────────
-
 /// Extract dist info from an installed package entry.
 fn extract_dist_info(pkg: &mozart_registry::installed::InstalledPackageEntry) -> Option<DistInfo> {
     // Try the strongly-typed `dist` field first
@@ -371,15 +365,11 @@ fn compute_diff(
     changes
 }
 
-// ─── Tests ───────────────────────────────────────────────────────────────────
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::fs;
     use tempfile::tempdir;
-
-    // ── hash_directory ────────────────────────────────────────────────────────
 
     #[test]
     fn test_hash_directory() {
@@ -411,8 +401,6 @@ mod tests {
         assert_ne!(hashes["file.txt"], hashes3["file.txt"]);
     }
 
-    // ── compute_diff_no_changes ───────────────────────────────────────────────
-
     #[test]
     fn test_compute_diff_no_changes() {
         let mut map: IndexMap<String, String> = IndexMap::new();
@@ -422,8 +410,6 @@ mod tests {
         let changes = compute_diff(&map, &map);
         assert!(changes.is_empty());
     }
-
-    // ── compute_diff_modified ─────────────────────────────────────────────────
 
     #[test]
     fn test_compute_diff_modified() {
@@ -439,8 +425,6 @@ mod tests {
         assert_eq!(changes[0].path, "src/Foo.php");
     }
 
-    // ── compute_diff_added ────────────────────────────────────────────────────
-
     #[test]
     fn test_compute_diff_added() {
         let original: IndexMap<String, String> = IndexMap::new();
@@ -454,8 +438,6 @@ mod tests {
         assert_eq!(changes[0].path, "src/NewFile.php");
     }
 
-    // ── compute_diff_removed ──────────────────────────────────────────────────
-
     #[test]
     fn test_compute_diff_removed() {
         let mut original: IndexMap<String, String> = IndexMap::new();
@@ -468,8 +450,6 @@ mod tests {
         assert_eq!(changes[0].kind, ChangeKind::Removed);
         assert_eq!(changes[0].path, "src/OldFile.php");
     }
-
-    // ── compute_diff_mixed ────────────────────────────────────────────────────
 
     #[test]
     fn test_compute_diff_mixed() {
@@ -508,8 +488,6 @@ mod tests {
         assert_eq!(removed.len(), 1);
         assert_eq!(removed[0].path, "src/Removed.php");
     }
-
-    // ── extract_dist_info ─────────────────────────────────────────────────────
 
     #[test]
     fn test_extract_dist_info_from_dist_field() {
@@ -582,8 +560,6 @@ mod tests {
 
         assert!(extract_dist_info(&pkg).is_none());
     }
-
-    // ── resolve_install_path ──────────────────────────────────────────────────
 
     #[test]
     fn test_resolve_install_path_default() {

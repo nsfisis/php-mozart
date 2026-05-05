@@ -421,10 +421,6 @@ pub fn validate_psr0_class(class: &str, file_path: &str, base_path: &str) -> boo
     Path::new(file_path) == Path::new(&expected_file)
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Tests
-// ─────────────────────────────────────────────────────────────────────────────
-
 #[cfg(test)]
 mod tests {
     use super::*;

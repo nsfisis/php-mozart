@@ -66,8 +66,6 @@ pub struct OutdatedArgs {
     pub ignore_platform_reqs: bool,
 }
 
-// ─── Core types ────────────────────────────────────────────────────────────
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum UpdateCategory {
     UpToDate,
@@ -94,8 +92,6 @@ struct OutdatedEntry {
     category: UpdateCategory,
     is_direct: bool,
 }
-
-// ─── Main entry point ───────────────────────────────────────────────────────
 
 pub async fn execute(
     args: &OutdatedArgs,
@@ -233,8 +229,6 @@ pub async fn execute(
     Ok(())
 }
 
-// ─── Package loading ────────────────────────────────────────────────────────
-
 fn load_installed_packages(working_dir: &Path, no_dev: bool) -> anyhow::Result<Vec<PackageInfo>> {
     let vendor_dir = working_dir.join("vendor");
     let installed = mozart_registry::installed::InstalledPackages::read(&vendor_dir)?;
@@ -321,8 +315,6 @@ fn load_locked_packages(working_dir: &Path, no_dev: bool) -> anyhow::Result<Vec<
     Ok(packages)
 }
 
-// ─── Version fetching ────────────────────────────────────────────────────────
-
 async fn fetch_latest_version(
     name: &str,
     repo_cache: &mozart_registry::cache::Cache,
@@ -341,8 +333,6 @@ async fn fetch_latest_version(
         description: best.description.as_deref().unwrap_or("").to_string(),
     })
 }
-
-// ─── Classification ──────────────────────────────────────────────────────────
 
 /// Determine the update category for a package.
 ///
@@ -422,8 +412,6 @@ fn extract_patch(version_normalized: &str) -> u64 {
         .unwrap_or(0)
 }
 
-// ─── Level filtering ─────────────────────────────────────────────────────────
-
 /// Check whether a version change passes the --major-only/--minor-only/--patch-only filter.
 ///
 /// Returns true if the version change matches the requested level.
@@ -448,8 +436,6 @@ fn passes_level_filter(args: &OutdatedArgs, current: &str, latest: &str) -> bool
     // No level filter active
     true
 }
-
-// ─── Rendering ───────────────────────────────────────────────────────────────
 
 fn render_text(entries: &[OutdatedEntry], console: &mozart_core::console::Console) {
     use mozart_core::console::Verbosity;
@@ -537,8 +523,6 @@ fn render_json(
     Ok(())
 }
 
-// ─── Helpers ─────────────────────────────────────────────────────────────────
-
 /// Returns true if the given package name is a platform package (php, ext-*, etc.).
 fn is_platform_package(name: &str) -> bool {
     let lower = name.to_lowercase();
@@ -575,13 +559,9 @@ fn normalize_version_simple(version: &str) -> String {
     result
 }
 
-// ─── Tests ───────────────────────────────────────────────────────────────────
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    // ── classify_update ──────────────────────────────────────────────────────
 
     #[test]
     fn test_classify_up_to_date_equal() {
@@ -629,8 +609,6 @@ mod tests {
         let cat = classify_update("1.2.3.0", "1.2.4.0");
         assert_eq!(cat, UpdateCategory::SemverCompatible);
     }
-
-    // ── passes_level_filter ──────────────────────────────────────────────────
 
     fn make_args_with_filter(major: bool, minor: bool, patch: bool) -> OutdatedArgs {
         OutdatedArgs {
@@ -695,8 +673,6 @@ mod tests {
         assert!(!passes_level_filter(&args, "1.0.1.0", "1.0.1.0"));
     }
 
-    // ── normalize_version_simple ──────────────────────────────────────────────
-
     #[test]
     fn test_normalize_version_simple_short() {
         assert_eq!(normalize_version_simple("1.2"), "1.2.0.0");
@@ -722,8 +698,6 @@ mod tests {
         assert_eq!(normalize_version_simple("1.2.3-beta1"), "1.2.3.0-beta1");
     }
 
-    // ── extract_major/minor/patch ─────────────────────────────────────────────
-
     #[test]
     fn test_extract_major() {
         assert_eq!(extract_major("2.3.4.0"), 2);
@@ -743,8 +717,6 @@ mod tests {
         assert_eq!(extract_patch("1.2.0.0"), 0);
     }
 
-    // ── is_platform_package ───────────────────────────────────────────────────
-
     #[test]
     fn test_is_platform_package() {
         assert!(is_platform_package("php"));
@@ -754,8 +726,6 @@ mod tests {
         assert!(!is_platform_package("monolog/monolog"));
         assert!(!is_platform_package("psr/log"));
     }
-
-    // ── render_json (smoke test with no network) ──────────────────────────────
 
     fn test_console() -> mozart_core::console::Console {
         mozart_core::console::Console {

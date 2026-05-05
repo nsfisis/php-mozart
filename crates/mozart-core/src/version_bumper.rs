@@ -48,8 +48,6 @@ pub fn bump_requirement(
     bump_single(constraint_body.trim(), &installed_version, stability_flag)
 }
 
-// ─── OR constraint handling ───────────────────────────────────────────────────
-
 fn bump_or_constraint(
     constraint_body: &str,
     installed_version: &str,
@@ -89,8 +87,6 @@ fn bump_or_constraint(
     let result = append_stability_flag(&joined, stability_flag);
     Some(result)
 }
-
-// ─── Single constraint handling ───────────────────────────────────────────────
 
 fn bump_single(
     constraint: &str,
@@ -135,8 +131,6 @@ fn bump_single(
     // Other operators (exact, <, <=, >, !=, range) — leave unchanged
     None
 }
-
-// ─── Caret bump ───────────────────────────────────────────────────────────────
 
 /// `^X.Y.Z` → bump to installed version if it is greater.
 ///
@@ -199,8 +193,6 @@ fn bump_caret(rest: &str, installed_version: &str, stability_flag: Option<&str>)
     Some(result)
 }
 
-// ─── Tilde bump ───────────────────────────────────────────────────────────────
-
 /// `~X.Y.Z` (3 segments) → bump patch: `~X.Y.new_patch`
 /// `~X.Y` (2 segments) → convert to caret: `^X.Y.new_patch`
 fn bump_tilde(rest: &str, installed_version: &str, stability_flag: Option<&str>) -> Option<String> {
@@ -247,8 +239,6 @@ fn bump_tilde(rest: &str, installed_version: &str, stability_flag: Option<&str>)
     let result = append_stability_flag(&new_constraint, stability_flag);
     Some(result)
 }
-
-// ─── Wildcard bump ────────────────────────────────────────────────────────────
 
 /// `*` → `>=installed`
 /// `X.*` → `>=installed` (trimming trailing zeros)
@@ -301,8 +291,6 @@ fn bump_wildcard(
     Some(append_stability_flag(&new_constraint, stability_flag))
 }
 
-// ─── GTE bump ─────────────────────────────────────────────────────────────────
-
 /// `>=X.Y` → raise to installed version (trimming trailing zeros)
 fn bump_gte(rest: &str, installed_version: &str, stability_flag: Option<&str>) -> Option<String> {
     let constraint_segments = parse_version_segments(rest);
@@ -341,8 +329,6 @@ fn bump_gte(rest: &str, installed_version: &str, stability_flag: Option<&str>) -
     let result = append_stability_flag(&new_constraint, stability_flag);
     Some(result)
 }
-
-// ─── AND constraint bump ──────────────────────────────────────────────────
 
 /// Bump AND constraints like `>=1.0 <2.0` or `>=1.0,<2.0`.
 ///
@@ -424,8 +410,6 @@ fn split_and_parts(constraint: &str) -> (Vec<&str>, &str) {
 fn is_lower_bound(part: &str) -> bool {
     part.starts_with(">=") || part.starts_with('^') || part.starts_with('~')
 }
-
-// ─── Helpers ──────────────────────────────────────────────────────────────────
 
 /// Strip a trailing `@stability` flag from a constraint string.
 /// Returns (body, flag) where flag is the `@...` suffix (without the `@`).
@@ -518,13 +502,9 @@ fn resolve_installed_version<'a>(
         .to_string()
 }
 
-// ─── Tests ────────────────────────────────────────────────────────────────────
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    // ── Caret bumps ───────────────────────────────────────────────────────────
 
     #[test]
     fn test_caret_bump_basic() {
@@ -568,8 +548,6 @@ mod tests {
         assert_eq!(result, Some("^1.5".to_string()));
     }
 
-    // ── Tilde bumps ───────────────────────────────────────────────────────────
-
     #[test]
     fn test_tilde_three_segment_bump() {
         // ~2.0.0 + 2.0.3 → ~2.0.3
@@ -598,8 +576,6 @@ mod tests {
         assert_eq!(result, Some("^2.5".to_string()));
     }
 
-    // ── Wildcard bumps ────────────────────────────────────────────────────────
-
     #[test]
     fn test_wildcard_star() {
         // * + 1.2.3 → >=1.2.3
@@ -620,8 +596,6 @@ mod tests {
         let result = bump_requirement("2.*", "2.0.0", Some("2.0.0.0"));
         assert_eq!(result, None);
     }
-
-    // ── GTE bumps ─────────────────────────────────────────────────────────────
 
     #[test]
     fn test_gte_bump() {
@@ -644,8 +618,6 @@ mod tests {
         assert_eq!(result, Some(">=1.5.3".to_string()));
     }
 
-    // ── OR constraints ────────────────────────────────────────────────────────
-
     #[test]
     fn test_or_constraint_bumps_matching_major() {
         // ^1.2 || ^2.3 + 1.3.0 → ^1.3 || ^2.3
@@ -666,8 +638,6 @@ mod tests {
         let result = bump_requirement("^1.2 || ^2.3", "1.2.0", Some("1.2.0.0"));
         assert_eq!(result, None);
     }
-
-    // ── Dev constraints ───────────────────────────────────────────────────────
 
     #[test]
     fn test_dev_constraint_unchanged() {
@@ -690,8 +660,6 @@ mod tests {
         assert_eq!(result, Some("^1.2".to_string()));
     }
 
-    // ── Stability flags ───────────────────────────────────────────────────────
-
     #[test]
     fn test_stability_flag_preserved() {
         // ^1.0@dev + 1.2.0 → ^1.2@dev
@@ -705,8 +673,6 @@ mod tests {
         let result = bump_requirement("^1.0@beta", "1.2.1", Some("1.2.1.0"));
         assert_eq!(result, Some("^1.2.1@beta".to_string()));
     }
-
-    // ── Edge cases ────────────────────────────────────────────────────────────
 
     #[test]
     fn test_exact_constraint_no_bump() {

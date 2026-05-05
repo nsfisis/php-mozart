@@ -675,8 +675,6 @@ mod tests {
     use mozart_registry::lockfile;
     use std::collections::BTreeMap;
 
-    // ──────────── Helper constructors ────────────
-
     fn make_locked_package(name: &str, version: &str) -> lockfile::LockedPackage {
         lockfile::LockedPackage {
             name: name.to_string(),
@@ -725,8 +723,6 @@ mod tests {
     fn make_raw_package(name: &str) -> RawPackageData {
         RawPackageData::new(name.to_string())
     }
-
-    // ──────────── Unit tests ────────────
 
     /// Remove a package from `require`, verify it's gone from `RawPackageData`.
     #[test]
@@ -874,8 +870,6 @@ mod tests {
             "monolog/monolog should appear as a Remove change"
         );
     }
-
-    // ──────────── Integration tests (network, #[ignore]) ────────────
 
     #[tokio::test]
     #[ignore]

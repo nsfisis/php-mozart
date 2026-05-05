@@ -197,8 +197,6 @@ pub async fn execute(
     execute_installed(args, &working_dir, &repo_cache, console).await
 }
 
-// ─── Installed mode ────────────────────────────────────────────────────────
-
 async fn execute_installed(
     args: &ShowArgs,
     working_dir: &Path,
@@ -781,8 +779,6 @@ fn show_installed_package_detail(
     Ok(())
 }
 
-// ─── Locked mode ───────────────────────────────────────────────────────────
-
 async fn execute_locked(
     args: &ShowArgs,
     working_dir: &Path,
@@ -1239,8 +1235,6 @@ fn show_locked_package_detail(
     Ok(())
 }
 
-// ─── Self mode ─────────────────────────────────────────────────────────────
-
 fn show_self(
     args: &ShowArgs,
     working_dir: &Path,
@@ -1335,8 +1329,6 @@ fn show_self(
 
     Ok(())
 }
-
-// ─── Tree mode ─────────────────────────────────────────────────────────────
 
 fn show_tree(
     args: &ShowArgs,
@@ -1528,8 +1520,6 @@ fn is_platform_package(name: &str) -> bool {
         || lower == "composer-runtime-api"
 }
 
-// ─── Platform mode ─────────────────────────────────────────────────────────
-
 fn show_platform(
     args: &ShowArgs,
     working_dir: &Path,
@@ -1647,8 +1637,6 @@ fn show_platform(
 
     Ok(())
 }
-
-// ─── Available mode ─────────────────────────────────────────────────────────
 
 async fn show_available(
     args: &ShowArgs,
@@ -1847,8 +1835,6 @@ async fn show_available_versions_inline(
     }
 }
 
-// ─── Helper functions ──────────────────────────────────────────────────────
-
 /// Format version string for display: strip leading 'v' for text output.
 fn format_version(version: &str) -> String {
     version.strip_prefix('v').unwrap_or(version).to_string()
@@ -1955,13 +1941,9 @@ fn normalize_version_simple(version: &str) -> String {
     result
 }
 
-// ─── Tests ─────────────────────────────────────────────────────────────────
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    // ── format_license_for_show ─────────────────────────────────────────────
 
     #[test]
     fn test_format_license_for_show_osi_approved() {
@@ -2006,8 +1988,6 @@ mod tests {
         );
     }
 
-    // ── format_version ──────────────────────────────────────────────────────
-
     #[test]
     fn test_format_version_strips_v() {
         assert_eq!(format_version("v1.2.3"), "1.2.3");
@@ -2022,8 +2002,6 @@ mod tests {
     fn test_format_version_keeps_dev() {
         assert_eq!(format_version("dev-main"), "dev-main");
     }
-
-    // ── matches_wildcard ─────────────────────────────────────────────────────
 
     #[test]
     fn test_matches_wildcard_exact() {
@@ -2071,15 +2049,11 @@ mod tests {
         assert!(!matches_wildcard("psr/log", "psr/l"));
     }
 
-    // ── format_version_highlight ────────────────────────────────────────────
-
     #[test]
     fn test_format_version_highlight() {
         assert_eq!(format_version_highlight("v3.0.0"), "* 3.0.0");
         assert_eq!(format_version_highlight("3.0.0"), "* 3.0.0");
     }
-
-    // ── get_installed_description ────────────────────────────────────────────
 
     #[test]
     fn test_get_installed_description_present() {
@@ -2122,8 +2096,6 @@ mod tests {
         assert_eq!(get_installed_description(&pkg), "");
     }
 
-    // ── get_installed_keywords ───────────────────────────────────────────────
-
     #[test]
     fn test_get_installed_keywords() {
         use std::collections::BTreeMap;
@@ -2147,8 +2119,6 @@ mod tests {
         assert_eq!(get_installed_keywords(&pkg), "log, psr3, logging");
     }
 
-    // ── is_platform_package ───────────────────────────────────────────────────
-
     #[test]
     fn test_is_platform_package_php() {
         assert!(is_platform_package("php"));
@@ -2170,8 +2140,6 @@ mod tests {
         assert!(!is_platform_package("monolog/monolog"));
         assert!(!is_platform_package("psr/log"));
     }
-
-    // ── classify_update_category ─────────────────────────────────────────────
 
     #[test]
     fn test_classify_up_to_date() {
@@ -2197,8 +2165,6 @@ mod tests {
         );
     }
 
-    // ── normalize_version_simple ──────────────────────────────────────────────
-
     #[test]
     fn test_normalize_version_simple_short() {
         assert_eq!(normalize_version_simple("1.2"), "1.2.0.0");
@@ -2213,8 +2179,6 @@ mod tests {
     fn test_normalize_version_simple_v_prefix() {
         assert_eq!(normalize_version_simple("v1.2.3"), "1.2.3.0");
     }
-
-    // ── extract_major ─────────────────────────────────────────────────────────
 
     #[test]
     fn test_extract_major_basic() {

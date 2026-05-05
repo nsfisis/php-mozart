@@ -24,8 +24,6 @@ pub struct BumpArgs {
     pub dry_run: bool,
 }
 
-// ─── Main entry point ─────────────────────────────────────────────────────────
-
 pub async fn execute(
     args: &BumpArgs,
     cli: &super::Cli,
@@ -217,8 +215,6 @@ pub async fn execute(
     Ok(())
 }
 
-// ─── Helpers ──────────────────────────────────────────────────────────────────
-
 /// Build a map of lowercase package names to (pretty_version, version_normalized) from composer.lock.
 fn build_locked_versions_map(
     lock: &mozart_registry::lockfile::LockFile,
@@ -313,8 +309,6 @@ fn is_platform_package(name: &str) -> bool {
         || lower == "php-debug"
 }
 
-// ─── Tests ───────────────────────────────────────────────────────────────────
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -399,8 +393,6 @@ mod tests {
         }
     }
 
-    // ── Basic bump ─────────────────────────────────────────────────────────
-
     #[tokio::test]
     async fn test_basic_bump_modifies_composer_json() {
         let dir = tempdir().unwrap();
@@ -434,8 +426,6 @@ mod tests {
         let parsed: serde_json::Value = serde_json::from_str(&updated).unwrap();
         assert_eq!(parsed["require"]["psr/log"], "^1.1.4");
     }
-
-    // ── Dry run ────────────────────────────────────────────────────────────
 
     #[tokio::test]
     async fn test_dry_run_does_not_modify_files() {
@@ -479,8 +469,6 @@ mod tests {
         assert_eq!(parsed["require"]["psr/log"], "^1.0");
     }
 
-    // ── No changes ─────────────────────────────────────────────────────────
-
     #[tokio::test]
     async fn test_no_changes_when_already_bumped() {
         let dir = tempdir().unwrap();
@@ -515,8 +503,6 @@ mod tests {
         let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
         assert_eq!(parsed["require"]["psr/log"], "^1.1.4");
     }
-
-    // ── Dev-only flag ──────────────────────────────────────────────────────
 
     #[tokio::test]
     async fn test_dev_only_flag_only_bumps_require_dev() {
@@ -561,8 +547,6 @@ mod tests {
         assert_eq!(parsed["require-dev"]["phpunit/phpunit"], "^9.5");
     }
 
-    // ── No-dev-only flag ───────────────────────────────────────────────────
-
     #[tokio::test]
     async fn test_no_dev_only_flag_only_bumps_require() {
         let dir = tempdir().unwrap();
@@ -606,8 +590,6 @@ mod tests {
         assert_eq!(parsed["require-dev"]["phpunit/phpunit"], "^9.0");
     }
 
-    // ── Stale lock file ────────────────────────────────────────────────────
-
     #[tokio::test]
     async fn test_stale_lock_file_produces_exit_code_2() {
         let dir = tempdir().unwrap();
@@ -647,8 +629,6 @@ mod tests {
         assert_eq!(mozart_err.exit_code, ERROR_LOCK_OUTDATED);
     }
 
-    // ── Platform packages skipped ──────────────────────────────────────────
-
     #[test]
     fn test_platform_packages_are_skipped() {
         assert!(is_platform_package("php"));
@@ -658,8 +638,6 @@ mod tests {
         assert!(!is_platform_package("psr/log"));
         assert!(!is_platform_package("monolog/monolog"));
     }
-
-    // ── Lock file hash updated ─────────────────────────────────────────────
 
     #[tokio::test]
     async fn test_lock_file_hash_updated_after_bump() {
@@ -699,8 +677,6 @@ mod tests {
         );
     }
 
-    // ── strip_inline_constraint ────────────────────────────────────────────
-
     #[test]
     fn test_strip_inline_constraint_colon() {
         assert_eq!(strip_inline_constraint("vendor/pkg:^2.0"), "vendor/pkg");
@@ -721,8 +697,6 @@ mod tests {
         assert_eq!(strip_inline_constraint("vendor/pkg"), "vendor/pkg");
         assert_eq!(strip_inline_constraint("psr/log"), "psr/log");
     }
-
-    // ── glob_matches ───────────────────────────────────────────────────────
 
     #[test]
     fn test_glob_matches_exact() {
@@ -749,8 +723,6 @@ mod tests {
         assert!(glob_matches("psr/log", "psr/log"));
     }
 
-    // ── matches_filter ─────────────────────────────────────────────────────
-
     #[test]
     fn test_matches_filter_exact() {
         let filter = vec!["psr/log".to_string()];
@@ -773,8 +745,6 @@ mod tests {
         assert!(matches_filter(&filter, "monolog/monolog"));
         assert!(!matches_filter(&filter, "symfony/console"));
     }
-
-    // ── Package filter ─────────────────────────────────────────────────────
 
     #[tokio::test]
     async fn test_package_filter_only_bumps_specified_packages() {

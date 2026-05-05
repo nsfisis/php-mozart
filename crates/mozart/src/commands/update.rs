@@ -134,10 +134,6 @@ pub struct UpdateArgs {
     pub bump_after_update: Option<Option<String>>,
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Change tracking types
-// ─────────────────────────────────────────────────────────────────────────────
-
 /// The kind of change for a package during update.
 #[derive(Debug, PartialEq, Eq)]
 pub enum ChangeKind {
@@ -160,10 +156,6 @@ pub struct UpdateChange {
     pub name: String,
     pub kind: ChangeKind,
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Helper: parse minimum-stability string
-// ─────────────────────────────────────────────────────────────────────────────
 
 /// Parse a minimum-stability string from composer.json into a `Stability` enum value.
 ///
@@ -256,10 +248,6 @@ fn is_platform_package(name: &str) -> bool {
         || lower == "composer-plugin-api"
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Helper: compute changes between old and new lock
-// ─────────────────────────────────────────────────────────────────────────────
-
 /// Compare old lock vs new lock to determine installs, updates, removals, and unchanged packages.
 ///
 /// Produces one `UpdateChange` per affected package. Packages that are identical in both
@@ -335,10 +323,6 @@ pub fn compute_update_changes(
 
     changes
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Helper: apply partial update filter
-// ─────────────────────────────────────────────────────────────────────────────
 
 /// Resolve a `LockedPackage`'s normalized version, falling back to the
 /// canonical 4-segment form derived from the pretty version when the lock
@@ -439,10 +423,6 @@ pub fn apply_partial_update(
         })
         .collect()
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Wildcard expansion helpers
-// ─────────────────────────────────────────────────────────────────────────────
 
 /// Match a single package name against a glob pattern.
 ///
@@ -565,10 +545,6 @@ pub fn expand_wildcards(
 
     result
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Dependency expansion helpers
-// ─────────────────────────────────────────────────────────────────────────────
 
 /// Build a lookup map from package name (lowercase) to its LockedPackage.
 fn build_lock_map(lock: &lockfile::LockFile) -> IndexMap<String, &lockfile::LockedPackage> {
@@ -823,10 +799,6 @@ pub fn expand_packages(
     packages
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Interactive selection helper
-// ─────────────────────────────────────────────────────────────────────────────
-
 /// Interactively prompt the user to select which packages to update.
 ///
 /// For each package in `packages`, prints a y/n prompt and collects the
@@ -885,10 +857,6 @@ pub fn interactive_select_packages(
 
     selected
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Minimal-changes helper
-// ─────────────────────────────────────────────────────────────────────────────
 
 /// For `--minimal-changes` mode: when no specific packages are named, pin all
 /// packages to their current locked version UNLESS the current locked version
@@ -976,10 +944,6 @@ fn major_minor(version: &str) -> (u64, u64) {
     let minor = parts.get(1).and_then(|s| s.parse().ok()).unwrap_or(0);
     (major, minor)
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Main execute function
-// ─────────────────────────────────────────────────────────────────────────────
 
 /// CLI entry point. Builds production [`RepositorySet`] (Packagist) and
 /// [`FilesystemExecutor`] from `cli`, then dispatches to [`run`].
@@ -1876,16 +1840,10 @@ pub async fn run(
     Ok(())
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Tests
-// ─────────────────────────────────────────────────────────────────────────────
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::collections::BTreeMap;
-
-    // ──────────── Helper constructors ────────────
 
     fn make_locked_package(name: &str, version: &str) -> lockfile::LockedPackage {
         lockfile::LockedPackage {
@@ -1950,8 +1908,6 @@ mod tests {
         }
     }
 
-    // ──────────── parse_minimum_stability ────────────
-
     #[test]
     fn test_parse_minimum_stability_stable() {
         assert_eq!(parse_minimum_stability("stable"), Stability::Stable);
@@ -1988,8 +1944,6 @@ mod tests {
         assert_eq!(parse_minimum_stability("unknown"), Stability::Stable);
         assert_eq!(parse_minimum_stability(""), Stability::Stable);
     }
-
-    // ──────────── compute_update_changes ────────────
 
     #[test]
     fn test_compute_update_changes_all_new() {
@@ -2134,8 +2088,6 @@ mod tests {
         );
     }
 
-    // ──────────── apply_partial_update ────────────
-
     #[test]
     fn test_apply_partial_update_keeps_non_specified_packages() {
         // old lock has psr/log 3.0.0 and monolog 3.7.0
@@ -2216,8 +2168,6 @@ mod tests {
         assert_eq!(psr.version, "3.0.0");
     }
 
-    // ──────────── glob_matches ────────────
-
     #[test]
     fn test_glob_matches_exact() {
         assert!(glob_matches("monolog/monolog", "monolog/monolog"));
@@ -2256,8 +2206,6 @@ mod tests {
         // Pattern with 1 segment vs name with 2 segments: no match
         assert!(!glob_matches("monolog", "monolog/monolog"));
     }
-
-    // ──────────── expand_wildcards ────────────
 
     #[test]
     fn test_expand_wildcards_no_wildcard_passthrough() {
@@ -2314,8 +2262,6 @@ mod tests {
         let result = expand_wildcards(&specs, &lock, &root_requires, &test_console());
         assert_eq!(result, vec!["phpunit/phpunit"]);
     }
-
-    // ──────────── expand_with_direct_dependencies ────────────
 
     #[test]
     fn test_expand_with_direct_deps_adds_require() {
@@ -2384,8 +2330,6 @@ mod tests {
         assert_eq!(psr_count, 1, "psr/log should appear only once");
     }
 
-    // ──────────── expand_with_all_dependencies ────────────
-
     #[test]
     fn test_expand_all_deps_transitive() {
         // a -> b -> c
@@ -2430,8 +2374,6 @@ mod tests {
         assert_eq!(result.len(), 2);
     }
 
-    // ──────────── expand_packages ────────────
-
     #[test]
     fn test_expand_packages_wildcard_with_direct_deps() {
         // symfony/* expands to symfony/console; symfony/console requires psr/log
@@ -2456,8 +2398,6 @@ mod tests {
         assert!(result.contains(&"psr/log".to_string()));
     }
 
-    // ──────────── apply_minimal_changes ────────────
-
     #[test]
     fn test_apply_minimal_changes_pins_all() {
         // Resolver found psr/log 3.0.1, but old lock has 3.0.0
@@ -2472,8 +2412,6 @@ mod tests {
             "minimal-changes should pin to locked version"
         );
     }
-
-    // ──────────── Integration test (network, #[ignore]) ────────────
 
     #[tokio::test]
     #[ignore]

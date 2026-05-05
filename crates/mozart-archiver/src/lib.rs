@@ -5,8 +5,6 @@ use std::fs;
 use std::io::Write as IoWrite;
 use std::path::{Path, PathBuf};
 
-// ─── Exclude filters ─────────────────────────────────────────────────────────
-
 /// A compiled exclude pattern derived from a gitignore-style rule.
 pub struct ExcludePattern {
     regex: Regex,
@@ -132,8 +130,6 @@ fn apply_filters(
     excluded
 }
 
-// ─── GitExcludeFilter ─────────────────────────────────────────────────────────
-
 /// Parse `.gitattributes` from the source directory.
 ///
 /// Returns exclude patterns for lines containing `export-ignore` or
@@ -174,8 +170,6 @@ pub fn parse_gitattributes(source_dir: &Path) -> Vec<ExcludePattern> {
     patterns
 }
 
-// ─── ComposerExcludeFilter ────────────────────────────────────────────────────
-
 /// Convert `composer.json` `archive.exclude` rules into exclude patterns.
 pub fn parse_composer_excludes(excludes: &[String]) -> Vec<ExcludePattern> {
     excludes
@@ -184,11 +178,7 @@ pub fn parse_composer_excludes(excludes: &[String]) -> Vec<ExcludePattern> {
         .collect()
 }
 
-// ─── VCS directory names ──────────────────────────────────────────────────────
-
 const VCS_DIRS: &[&str] = &[".git", ".svn", ".hg", "CVS", ".bzr"];
-
-// ─── File collection ──────────────────────────────────────────────────────────
 
 /// Collect all archivable files from the source directory.
 ///
@@ -276,8 +266,6 @@ fn collect_recursive(
     Ok(())
 }
 
-// ─── Archive formats ──────────────────────────────────────────────────────────
-
 /// Supported archive formats.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ArchiveFormat {
@@ -309,8 +297,6 @@ impl ArchiveFormat {
         }
     }
 }
-
-// ─── Archive creation ─────────────────────────────────────────────────────────
 
 /// Create an archive of the given files.
 ///
@@ -430,8 +416,6 @@ fn create_tar_bz2(source_dir: &Path, files: &[PathBuf], target: &Path) -> anyhow
     Ok(())
 }
 
-// ─── Filename generation ──────────────────────────────────────────────────────
-
 /// Generate an archive filename (without extension) for a package.
 ///
 /// Mirrors Composer's `ArchiveManager::getPackageFilenameParts()`.
@@ -492,8 +476,6 @@ pub fn generate_archive_filename(
         .join("-")
 }
 
-// ─── Self-exclusion patterns ──────────────────────────────────────────────────
-
 /// The set of archive extensions we support.
 const ARCHIVE_EXTENSIONS: &[&str] = &["zip", "tar", "tar.gz", "tar.bz2"];
 
@@ -514,14 +496,11 @@ pub fn self_exclusion_patterns(base_name: &str, has_extra_parts: bool) -> Vec<St
         .collect()
 }
 
-// ─── Tests ────────────────────────────────────────────────────────────────────
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use tempfile::tempdir;
 
-    // ── glob_to_regex ─────────────────────────────────────────────────────────
     // Note: glob_to_regex produces a *fragment* for use inside a larger pattern.
     // We test it by embedding it in a full anchored regex.
 
@@ -566,8 +545,6 @@ mod tests {
         assert!(!re.is_match("/d.txt"));
     }
 
-    // ── parse_gitignore_pattern ───────────────────────────────────────────────
-
     #[test]
     fn test_parse_gitignore_simple() {
         let pat = parse_gitignore_pattern("docs/").unwrap();
@@ -600,8 +577,6 @@ mod tests {
         assert!(pat.regex.is_match("/app.log"));
         assert!(pat.regex.is_match("/sub/dir/foo.log"));
     }
-
-    // ── parse_gitattributes ───────────────────────────────────────────────────
 
     #[test]
     fn test_parse_gitattributes_export_ignore() {
@@ -648,8 +623,6 @@ mod tests {
         let patterns = parse_gitattributes(dir.path());
         assert!(patterns.is_empty());
     }
-
-    // ── collect_archivable_files ──────────────────────────────────────────────
 
     #[test]
     fn test_collect_files_basic() {
@@ -720,8 +693,6 @@ mod tests {
         assert!(strs.contains(&"main.php".to_string()));
         assert!(strs.contains(&"empty_dir".to_string()));
     }
-
-    // ── create_archive ────────────────────────────────────────────────────────
 
     fn make_source_tree(dir: &Path) {
         fs::write(dir.join("main.php"), b"<?php echo 'hello';").unwrap();
@@ -848,8 +819,6 @@ mod tests {
         assert_eq!(mode & 0o777, 0o755);
     }
 
-    // ── generate_archive_filename ─────────────────────────────────────────────
-
     #[test]
     fn test_filename_simple_package() {
         let name = generate_archive_filename("vendor/pkg", None, Some("1.2.3"), None, None, None);
@@ -908,8 +877,6 @@ mod tests {
             generate_archive_filename("vendor/my-pkg", None, Some("1.0/beta"), None, None, None);
         assert_eq!(name, "vendor-my-pkg-1.0-beta");
     }
-
-    // ── self_exclusion_patterns ───────────────────────────────────────────────
 
     #[test]
     fn test_self_exclusion_patterns_with_extra_parts() {

@@ -18,8 +18,6 @@ pub struct BrowseArgs {
     pub show: bool,
 }
 
-// ─── Main entry point ────────────────────────────────────────────────────────
-
 pub async fn execute(
     args: &BrowseArgs,
     cli: &super::Cli,
@@ -84,8 +82,6 @@ pub async fn execute(
 
     Ok(())
 }
-
-// ─── URL resolution ───────────────────────────────────────────────────────────
 
 enum ResolveResult {
     /// Package found and URL resolved
@@ -154,8 +150,6 @@ async fn resolve_url(
         _ => Ok(ResolveResult::NotFound),
     }
 }
-
-// ─── URL extraction ───────────────────────────────────────────────────────────
 
 fn extract_url_from_locked(
     pkg: &mozart_registry::lockfile::LockedPackage,
@@ -247,8 +241,6 @@ fn extract_url_from_packagist(
         .map(|u| u.to_string())
 }
 
-// ─── Helpers ──────────────────────────────────────────────────────────────────
-
 fn is_valid_url(url: &str) -> bool {
     match url::Url::parse(url) {
         Ok(parsed) => matches!(parsed.scheme(), "http" | "https"),
@@ -299,8 +291,6 @@ fn open_browser(url: &str, console: &mozart_core::console::Console) -> anyhow::R
     }
 }
 
-// ─── Tests ───────────────────────────────────────────────────────────────────
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -344,8 +334,6 @@ mod tests {
         }
     }
 
-    // ── is_valid_url ──────────────────────────────────────────────────────────
-
     #[test]
     fn test_is_valid_url() {
         assert!(!is_valid_url("https://"));
@@ -355,8 +343,6 @@ mod tests {
         assert!(!is_valid_url("not-a-url"));
         assert!(!is_valid_url(""));
     }
-
-    // ── extract_url_from_locked ───────────────────────────────────────────────
 
     #[test]
     fn test_extract_url_from_locked_prefers_support_source() {

@@ -5,8 +5,6 @@ use mozart_core::console_format;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
-// ─── CLI args ─────────────────────────────────────────────────────────────────
-
 #[derive(Args)]
 pub struct SelfUpdateArgs {
     /// Version to update to (e.g., "0.2.0"). Defaults to latest.
@@ -29,8 +27,6 @@ pub struct SelfUpdateArgs {
     pub no_progress: bool,
 }
 
-// ─── GitHub API types ─────────────────────────────────────────────────────────
-
 #[derive(Debug, serde::Deserialize)]
 struct GitHubRelease {
     tag_name: String,
@@ -45,13 +41,9 @@ struct GitHubAsset {
     size: u64,
 }
 
-// ─── Constants ────────────────────────────────────────────────────────────────
-
 const GITHUB_REPO: &str = "kenpfowler/mozart";
 const GITHUB_API_BASE: &str = "https://api.github.com/repos";
 const BACKUP_EXTENSION: &str = ".old";
-
-// ─── Public entry point ───────────────────────────────────────────────────────
 
 pub async fn execute(
     args: &SelfUpdateArgs,
@@ -75,8 +67,6 @@ pub async fn execute(
         update(args, &current_exe, &data_dir, console).await
     }
 }
-
-// ─── Data directory ───────────────────────────────────────────────────────────
 
 fn get_data_dir() -> anyhow::Result<PathBuf> {
     if let Ok(dir) = std::env::var("MOZART_DATA_DIR") {
@@ -123,13 +113,9 @@ fn platform_asset_name() -> anyhow::Result<String> {
     }
 }
 
-// ─── Channel helper ───────────────────────────────────────────────────────────
-
 fn effective_channel(preview: bool) -> &'static str {
     if preview { "preview" } else { "stable" }
 }
-
-// ─── Backup version helper ────────────────────────────────────────────────────
 
 fn version_from_backup(path: &Path) -> String {
     path.file_name()
@@ -139,8 +125,6 @@ fn version_from_backup(path: &Path) -> String {
         .unwrap_or("unknown")
         .to_string()
 }
-
-// ─── GitHub fetching ──────────────────────────────────────────────────────────
 
 async fn fetch_releases(include_prerelease: bool) -> anyhow::Result<Vec<GitHubRelease>> {
     let url = format!("{GITHUB_API_BASE}/{GITHUB_REPO}/releases");
@@ -216,8 +200,6 @@ fn find_asset<'a>(release: &'a GitHubRelease, asset_name: &str) -> anyhow::Resul
         })
 }
 
-// ─── Download ─────────────────────────────────────────────────────────────────
-
 async fn download_asset(
     asset: &GitHubAsset,
     dest: &Path,
@@ -272,8 +254,6 @@ async fn download_asset(
 
     Ok(())
 }
-
-// ─── Core update flow ─────────────────────────────────────────────────────────
 
 async fn update(
     args: &SelfUpdateArgs,
@@ -388,8 +368,6 @@ async fn update(
     Ok(())
 }
 
-// ─── Rollback ─────────────────────────────────────────────────────────────────
-
 fn rollback(
     current_exe: &Path,
     data_dir: &Path,
@@ -483,8 +461,6 @@ fn clean_backups(data_dir: &Path, except: Option<&Path>) -> anyhow::Result<()> {
     Ok(())
 }
 
-// ─── Tests ────────────────────────────────────────────────────────────────────
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -507,8 +483,6 @@ mod tests {
         }
     }
 
-    // ── test_platform_asset_name ──────────────────────────────────────────────
-
     #[test]
     fn test_platform_asset_name() {
         let name = platform_asset_name().expect("platform_asset_name should succeed");
@@ -528,8 +502,6 @@ mod tests {
         );
     }
 
-    // ── test_find_target_release_latest ───────────────────────────────────────
-
     #[test]
     fn test_find_target_release_latest() {
         let releases = vec![
@@ -541,8 +513,6 @@ mod tests {
         let result = find_target_release(&releases, None).expect("should find latest");
         assert_eq!(result.tag_name, "v0.3.0");
     }
-
-    // ── test_find_target_release_specific_version ─────────────────────────────
 
     #[test]
     fn test_find_target_release_specific_version() {
@@ -561,8 +531,6 @@ mod tests {
         assert_eq!(result_v.tag_name, "v0.1.0");
     }
 
-    // ── test_find_target_release_not_found ────────────────────────────────────
-
     #[test]
     fn test_find_target_release_not_found() {
         let releases = vec![
@@ -579,8 +547,6 @@ mod tests {
         );
     }
 
-    // ── test_find_target_release_empty ────────────────────────────────────────
-
     #[test]
     fn test_find_target_release_empty() {
         let releases: Vec<GitHubRelease> = vec![];
@@ -591,8 +557,6 @@ mod tests {
             "should return error for empty release list"
         );
     }
-
-    // ── test_find_asset_found ─────────────────────────────────────────────────
 
     #[test]
     fn test_find_asset_found() {
@@ -620,8 +584,6 @@ mod tests {
         );
     }
 
-    // ── test_find_asset_not_found ─────────────────────────────────────────────
-
     #[test]
     fn test_find_asset_not_found() {
         let release = make_release(
@@ -642,8 +604,6 @@ mod tests {
         );
     }
 
-    // ── test_get_data_dir_from_env ────────────────────────────────────────────
-
     #[test]
     fn test_get_data_dir_from_env() {
         let dir = tempdir().unwrap();
@@ -658,8 +618,6 @@ mod tests {
         unsafe { std::env::remove_var("MOZART_DATA_DIR") };
     }
 
-    // ── test_get_data_dir_default ─────────────────────────────────────────────
-
     #[test]
     fn test_get_data_dir_default() {
         // Ensure MOZART_DATA_DIR is not set
@@ -672,8 +630,6 @@ mod tests {
             "default data dir should end with .local/share/mozart, got: {path_str}"
         );
     }
-
-    // ── test_find_latest_backup ───────────────────────────────────────────────
 
     #[test]
     fn test_find_latest_backup() {
@@ -691,8 +647,6 @@ mod tests {
         assert_eq!(found, new_backup);
     }
 
-    // ── test_find_latest_backup_empty ─────────────────────────────────────────
-
     #[test]
     fn test_find_latest_backup_empty() {
         let dir = tempdir().unwrap();
@@ -700,8 +654,6 @@ mod tests {
         let result = find_latest_backup(dir.path());
         assert!(result.is_err(), "should return error when no backups found");
     }
-
-    // ── test_clean_backups ────────────────────────────────────────────────────
 
     #[test]
     fn test_clean_backups() {
@@ -722,8 +674,6 @@ mod tests {
         assert!(keep.exists(), "non-backup file should remain");
     }
 
-    // ── test_clean_backups_with_except ────────────────────────────────────────
-
     #[test]
     fn test_clean_backups_with_except() {
         let dir = tempdir().unwrap();
@@ -740,15 +690,11 @@ mod tests {
         assert!(backup2.exists(), "backup2 should be preserved (excepted)");
     }
 
-    // ── test_effective_channel ────────────────────────────────────────────────
-
     #[test]
     fn test_effective_channel() {
         assert_eq!(effective_channel(false), "stable");
         assert_eq!(effective_channel(true), "preview");
     }
-
-    // ── test_version_from_backup ──────────────────────────────────────────────
 
     #[test]
     fn test_version_from_backup() {

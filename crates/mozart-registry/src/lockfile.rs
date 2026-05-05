@@ -442,10 +442,6 @@ fn check_requirement_set(
     }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Lock file generation
-// ─────────────────────────────────────────────────────────────────────────────
-
 /// Input for lock file generation.
 pub struct LockFileGenerationRequest {
     /// Resolved packages from the dependency resolver.
@@ -1305,8 +1301,6 @@ mod tests {
         assert!(!lock.is_fresh(r#"{"require": {}}"#));
     }
 
-    // ──────────── Lock file generation tests ────────────
-
     fn make_packagist_version(
         version: &str,
         version_normalized: &str,
@@ -1871,8 +1865,6 @@ mod tests {
             println!("  {} {}", pkg.name, pkg.version);
         }
     }
-
-    // ──────────── get_missing_requirement_info tests ────────────
 
     fn make_locked(name: &str, version: &str) -> LockedPackage {
         LockedPackage {

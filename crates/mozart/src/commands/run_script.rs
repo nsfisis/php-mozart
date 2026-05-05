@@ -29,8 +29,6 @@ pub struct RunScriptArgs {
     pub list: bool,
 }
 
-// ─── Constants ────────────────────────────────────────────────────────────────
-
 const ALLOWED_SCRIPT_EVENTS: &[&str] = &[
     "pre-install-cmd",
     "post-install-cmd",
@@ -71,8 +69,6 @@ const ALL_SCRIPT_EVENTS: &[&str] = &[
     "pre-pool-create",
     "pre-file-download",
 ];
-
-// ─── Main entry point ────────────────────────────────────────────────────────
 
 pub async fn execute(
     args: &RunScriptArgs,
@@ -152,8 +148,6 @@ pub async fn execute(
     Ok(())
 }
 
-// ─── Script loading ───────────────────────────────────────────────────────────
-
 #[allow(clippy::type_complexity)]
 fn load_scripts(
     working_dir: &Path,
@@ -197,8 +191,6 @@ fn load_scripts(
     Ok((scripts, descriptions))
 }
 
-// ─── List scripts ─────────────────────────────────────────────────────────────
-
 fn list_scripts(
     scripts: &BTreeMap<String, Vec<String>>,
     descriptions: &BTreeMap<String, String>,
@@ -213,8 +205,6 @@ fn list_scripts(
     }
     Ok(())
 }
-
-// ─── Script execution ─────────────────────────────────────────────────────────
 
 #[allow(clippy::too_many_arguments)]
 fn run_script(
@@ -453,8 +443,6 @@ fn wait_with_timeout(
     }
 }
 
-// ─── Bin dir resolution ───────────────────────────────────────────────────────
-
 fn resolve_bin_dir(working_dir: &Path, composer: &mozart_core::composer::Composer) -> PathBuf {
     // bin-dir's `{$vendor-dir}` placeholder is already resolved by Composer::load.
     let bin_dir = composer
@@ -464,8 +452,6 @@ fn resolve_bin_dir(working_dir: &Path, composer: &mozart_core::composer::Compose
         .unwrap_or("vendor/bin");
     working_dir.join(bin_dir)
 }
-
-// ─── Classifier functions ─────────────────────────────────────────────────────
 
 fn is_php_callback(entry: &str) -> bool {
     let trimmed = entry.trim();
@@ -500,8 +486,6 @@ fn is_putenv(entry: &str) -> bool {
     entry.starts_with("@putenv ")
 }
 
-// ─── Tests ───────────────────────────────────────────────────────────────────
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -514,8 +498,6 @@ mod tests {
             decorated: false,
         }
     }
-
-    // ── Classifier tests ──────────────────────────────────────────────────────
 
     #[test]
     fn test_is_php_callback_static_method() {
@@ -565,8 +547,6 @@ mod tests {
     fn test_is_composer_prefix() {
         assert!(is_composer_prefix("@composer install"));
     }
-
-    // ── load_scripts tests ────────────────────────────────────────────────────
 
     #[test]
     fn test_load_scripts_array_form() {
@@ -641,8 +621,6 @@ mod tests {
         assert_eq!(post_entries.len(), 2);
     }
 
-    // ── list_scripts tests ────────────────────────────────────────────────────
-
     #[test]
     fn test_list_scripts_output() {
         let mut scripts = BTreeMap::new();
@@ -656,8 +634,6 @@ mod tests {
         let result = list_scripts(&scripts, &descriptions, &test_console());
         assert!(result.is_ok());
     }
-
-    // ── run_shell_command tests ───────────────────────────────────────────────
 
     #[test]
     fn test_run_shell_command_success() {

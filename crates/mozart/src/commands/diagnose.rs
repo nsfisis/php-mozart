@@ -7,8 +7,6 @@ use std::path::{Path, PathBuf};
 #[derive(Args)]
 pub struct DiagnoseArgs {}
 
-// ─── Check result ─────────────────────────────────────────────────────────────
-
 enum CheckResult {
     /// OK, with optional detail string.
     Ok(Option<String>),
@@ -21,8 +19,6 @@ enum CheckResult {
     /// Informational line (no pass/fail prefix).
     Info(String),
 }
-
-// ─── Output helpers ───────────────────────────────────────────────────────────
 
 /// Print "Checking {label}: OK/WARNING/FAIL/SKIP" and ratchet exit_code.
 ///
@@ -76,8 +72,6 @@ fn print_info_line(result: &CheckResult, console: &Console) {
         console.write_stdout(msg, Verbosity::Normal);
     }
 }
-
-// ─── Individual checks ────────────────────────────────────────────────────────
 
 /// Check 1: Mozart version info (informational).
 fn check_version() -> CheckResult {
@@ -393,8 +387,6 @@ fn check_cache_dir(cache_dir: &Path) -> CheckResult {
     }
 }
 
-// ─── Main execute function ─────────────────────────────────────────────────────
-
 pub async fn execute(
     _args: &DiagnoseArgs,
     cli: &super::Cli,
@@ -519,15 +511,11 @@ pub async fn execute(
     Ok(())
 }
 
-// ─── Tests ────────────────────────────────────────────────────────────────────
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::fs;
     use tempfile::tempdir;
-
-    // ── test_parse_git_version ────────────────────────────────────────────────
 
     #[test]
     fn test_parse_git_version() {
@@ -545,8 +533,6 @@ mod tests {
         assert_eq!(parse_git_version("3.0.0"), Some((3, 0, 0)));
     }
 
-    // ── test_check_composer_json_valid ────────────────────────────────────────
-
     #[test]
     fn test_check_composer_json_valid() {
         let dir = tempdir().unwrap();
@@ -563,8 +549,6 @@ mod tests {
         );
     }
 
-    // ── test_check_composer_json_missing ─────────────────────────────────────
-
     #[test]
     fn test_check_composer_json_missing() {
         let dir = tempdir().unwrap();
@@ -577,8 +561,6 @@ mod tests {
         );
     }
 
-    // ── test_check_composer_json_invalid_json ─────────────────────────────────
-
     #[test]
     fn test_check_composer_json_invalid_json() {
         let dir = tempdir().unwrap();
@@ -590,8 +572,6 @@ mod tests {
             "expected Fail for invalid JSON"
         );
     }
-
-    // ── test_check_composer_lock_fresh ────────────────────────────────────────
 
     #[test]
     fn test_check_composer_lock_fresh() {
@@ -627,8 +607,6 @@ mod tests {
         );
     }
 
-    // ── test_check_composer_lock_stale ────────────────────────────────────────
-
     #[test]
     fn test_check_composer_lock_stale() {
         use mozart_registry::lockfile::LockFile;
@@ -663,8 +641,6 @@ mod tests {
         );
     }
 
-    // ── test_check_composer_lock_missing ─────────────────────────────────────
-
     #[test]
     fn test_check_composer_lock_missing() {
         let dir = tempdir().unwrap();
@@ -677,8 +653,6 @@ mod tests {
         );
     }
 
-    // ── test_check_disk_space_ok ──────────────────────────────────────────────
-
     #[test]
     fn test_check_disk_space_ok() {
         let dir = tempdir().unwrap();
@@ -690,8 +664,6 @@ mod tests {
             "expected Ok or Skip for disk space check on temp directory"
         );
     }
-
-    // ── test_check_result_exit_code_ratcheting ────────────────────────────────
 
     #[test]
     fn test_check_result_exit_code_ratcheting() {
@@ -734,8 +706,6 @@ mod tests {
         assert_eq!(exit_code, 2);
     }
 
-    // ── test_check_http_proxy_none_set ───────────────────────────────────────
-
     #[test]
     fn test_check_http_proxy_none_set() {
         // Remove all proxy vars for this test
@@ -768,8 +738,6 @@ mod tests {
             ),
         }
     }
-
-    // ── network tests (ignored by default) ───────────────────────────────────
 
     #[tokio::test]
     #[ignore]

@@ -221,13 +221,9 @@ pub async fn execute(
     Ok(())
 }
 
-// ─── Tests ──────────────────────────────────────────────────────────────────
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    // ── format_count ────────────────────────────────────────────────────────
 
     #[test]
     fn test_format_count_small() {
@@ -250,8 +246,6 @@ mod tests {
         assert_eq!(format_count(1_500_000), "1.5M");
         assert_eq!(format_count(2_500_000), "2.5M");
     }
-
-    // ── SearchResponse parsing ───────────────────────────────────────────────
 
     #[test]
     fn test_parse_search_response() {
@@ -360,8 +354,6 @@ mod tests {
         );
     }
 
-    // ── only_name filter ─────────────────────────────────────────────────────
-
     #[test]
     fn test_passes_only_name_match() {
         let result = make_result("monolog/monolog");
@@ -392,8 +384,6 @@ mod tests {
         assert!(passes_only_name(&result, "monolog"));
     }
 
-    // ── only_vendor filter ───────────────────────────────────────────────────
-
     #[test]
     fn test_passes_only_vendor_match() {
         let result = make_result("monolog/monolog");
@@ -419,8 +409,6 @@ mod tests {
         let result = make_result("monolog/monolog");
         assert!(!passes_only_vendor(&result, "mono"));
     }
-
-    // ── is_abandoned ─────────────────────────────────────────────────────────
 
     #[test]
     fn test_is_abandoned_none() {
@@ -455,8 +443,6 @@ mod tests {
         result.abandoned = Some(serde_json::Value::String(String::new()));
         assert!(!is_abandoned(&result));
     }
-
-    // ── serialization ────────────────────────────────────────────────────────
 
     #[test]
     fn test_search_result_output_matches_composer_schema() {
@@ -504,8 +490,6 @@ mod tests {
         assert_eq!(parsed["abandoned"], "new/pkg");
     }
 
-    // ── only_vendor deduplication ───────────────────────────────────────────
-
     #[test]
     fn test_only_vendor_deduplicates_vendor_names() {
         let results = [
@@ -526,8 +510,6 @@ mod tests {
 
         assert_eq!(vendor_names, vec!["monolog"]);
     }
-
-    // ── helper ───────────────────────────────────────────────────────────────
 
     fn make_result(name: &str) -> SearchResult {
         SearchResult {

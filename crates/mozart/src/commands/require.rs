@@ -1035,10 +1035,6 @@ mod tests {
         // The real behavior is tested via integration tests (marked #[ignore]).
     }
 
-    // ─────────────────────────────────────────────────────────────────────────
-    // Integration tests (network, #[ignore])
-    // ─────────────────────────────────────────────────────────────────────────
-
     #[tokio::test]
     #[ignore]
     async fn test_require_full_e2e() {

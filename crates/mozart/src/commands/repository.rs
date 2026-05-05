@@ -76,8 +76,6 @@ pub async fn execute(
     }
 }
 
-// ─── list ─────────────────────────────────────────────────────────────────────
-
 fn execute_list(
     args: &RepositoryArgs,
     cli: &super::Cli,
@@ -129,8 +127,6 @@ fn execute_list(
 
     Ok(())
 }
-
-// ─── add ──────────────────────────────────────────────────────────────────────
 
 fn execute_add(args: &RepositoryArgs, cli: &super::Cli) -> anyhow::Result<()> {
     let name = args
@@ -192,8 +188,6 @@ fn execute_add(args: &RepositoryArgs, cli: &super::Cli) -> anyhow::Result<()> {
     Ok(())
 }
 
-// ─── remove ───────────────────────────────────────────────────────────────────
-
 fn execute_remove(args: &RepositoryArgs, cli: &super::Cli) -> anyhow::Result<()> {
     let name = args
         .name
@@ -228,8 +222,6 @@ fn execute_remove(args: &RepositoryArgs, cli: &super::Cli) -> anyhow::Result<()>
     Ok(())
 }
 
-// ─── set-url ──────────────────────────────────────────────────────────────────
-
 fn execute_set_url(args: &RepositoryArgs, cli: &super::Cli) -> anyhow::Result<()> {
     let name = args
         .name
@@ -260,8 +252,6 @@ fn execute_set_url(args: &RepositoryArgs, cli: &super::Cli) -> anyhow::Result<()
         None => Err(anyhow!("Repository \"{name}\" not found")),
     }
 }
-
-// ─── get-url ──────────────────────────────────────────────────────────────────
 
 fn execute_get_url(
     args: &RepositoryArgs,
@@ -296,8 +286,6 @@ fn execute_get_url(
     }
 }
 
-// ─── disable ──────────────────────────────────────────────────────────────────
-
 fn execute_disable(args: &RepositoryArgs, cli: &super::Cli) -> anyhow::Result<()> {
     let name = args.name.as_deref().unwrap_or("packagist.org");
 
@@ -317,8 +305,6 @@ fn execute_disable(args: &RepositoryArgs, cli: &super::Cli) -> anyhow::Result<()
     write_json_file(&file_path, &json)?;
     Ok(())
 }
-
-// ─── enable ───────────────────────────────────────────────────────────────────
 
 fn execute_enable(args: &RepositoryArgs, cli: &super::Cli) -> anyhow::Result<()> {
     let name = args.name.as_deref().unwrap_or("packagist.org");
@@ -345,8 +331,6 @@ fn execute_enable(args: &RepositoryArgs, cli: &super::Cli) -> anyhow::Result<()>
     write_json_file(&file_path, &json)?;
     Ok(())
 }
-
-// ─── Tests ────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
 mod tests {
@@ -375,8 +359,6 @@ mod tests {
         use clap::Parser;
         super::super::Cli::parse_from(["mozart", "repository", "list"])
     }
-
-    // ── list ────────────────────────────────────────────────────────────────
 
     #[tokio::test]
     async fn test_list_empty() {
@@ -426,8 +408,6 @@ mod tests {
         let result = execute(&args, &cli, &console).await;
         assert!(result.is_ok());
     }
-
-    // ── add ─────────────────────────────────────────────────────────────────
 
     #[tokio::test]
     async fn test_add_type_url() {
@@ -650,8 +630,6 @@ mod tests {
         assert!(result.is_err());
     }
 
-    // ── remove ──────────────────────────────────────────────────────────────
-
     #[tokio::test]
     async fn test_remove() {
         let dir = tempfile::TempDir::new().unwrap();
@@ -728,8 +706,6 @@ mod tests {
         assert!(result.is_err());
     }
 
-    // ── set-url ─────────────────────────────────────────────────────────────
-
     #[tokio::test]
     async fn test_set_url() {
         let dir = tempfile::TempDir::new().unwrap();
@@ -804,8 +780,6 @@ mod tests {
         assert_eq!(json["repositories"][0]["url"], "https://new.com");
     }
 
-    // ── get-url ─────────────────────────────────────────────────────────────
-
     #[tokio::test]
     async fn test_get_url() {
         let dir = tempfile::TempDir::new().unwrap();
@@ -838,8 +812,6 @@ mod tests {
         let result = execute(&args, &cli, &console).await;
         assert!(result.is_err());
     }
-
-    // ── disable ─────────────────────────────────────────────────────────────
 
     #[tokio::test]
     async fn test_disable_packagist() {
@@ -894,8 +866,6 @@ mod tests {
         assert!(result.is_err());
     }
 
-    // ── enable ──────────────────────────────────────────────────────────────
-
     #[tokio::test]
     async fn test_enable_packagist() {
         let dir = tempfile::TempDir::new().unwrap();
@@ -928,8 +898,6 @@ mod tests {
         let result = execute(&args, &cli, &console).await;
         assert!(result.is_err());
     }
-
-    // ── Composer associative-key format ─────────────────────────────────────
 
     #[tokio::test]
     async fn test_list_composer_format() {
@@ -1062,8 +1030,6 @@ mod tests {
         assert!(json.get("repositories").is_none());
     }
 
-    // ── normalize_repositories helper ────────────────────────────────────────
-
     #[test]
     fn test_normalize_repositories_array_passthrough() {
         use super::super::config_helpers::normalize_repositories;
@@ -1109,8 +1075,6 @@ mod tests {
         assert!(result.is_empty());
     }
 
-    // ── unknown action ──────────────────────────────────────────────────────
-
     #[tokio::test]
     async fn test_unknown_action() {
         let dir = tempfile::TempDir::new().unwrap();
@@ -1125,8 +1089,6 @@ mod tests {
         let result = execute(&args, &cli, &console).await;
         assert!(result.is_err());
     }
-
-    // ── insert_repository helper ────────────────────────────────────────────
 
     #[test]
     fn test_insert_before() {

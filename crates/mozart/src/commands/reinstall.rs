@@ -64,8 +64,6 @@ pub struct ReinstallArgs {
     pub r#type: Vec<String>,
 }
 
-// ─── Main entry point ─────────────────────────────────────────────────────────
-
 pub async fn execute(
     args: &ReinstallArgs,
     cli: &super::Cli,
@@ -306,8 +304,6 @@ pub async fn execute(
     Ok(())
 }
 
-// ─── Helpers ──────────────────────────────────────────────────────────────────
-
 /// Filter candidates by package type (case-insensitive).
 fn filter_by_type<'a>(
     candidates: &[&'a mozart_registry::installed::InstalledPackageEntry],
@@ -402,14 +398,10 @@ fn find_locked_package<'a>(
         .copied()
 }
 
-// ─── Tests ───────────────────────────────────────────────────────────────────
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::collections::BTreeMap;
-
-    // ── Helper constructors ───────────────────────────────────────────────────
 
     fn make_installed_entry(
         name: &str,
@@ -457,8 +449,6 @@ mod tests {
         }
     }
 
-    // ── glob_matches ──────────────────────────────────────────────────────────
-
     #[test]
     fn test_glob_exact_match() {
         assert!(glob_matches("monolog/monolog", "monolog/monolog"));
@@ -500,8 +490,6 @@ mod tests {
         assert!(glob_matches("monolog/monolog", "monolog/monolog"));
     }
 
-    // ── find_locked_package ───────────────────────────────────────────────────
-
     #[test]
     fn test_find_locked_package_found() {
         let pkgs = [
@@ -532,8 +520,6 @@ mod tests {
         let result = find_locked_package(&refs, "monolog/monolog");
         assert!(result.is_none());
     }
-
-    // ── filter_by_type ────────────────────────────────────────────────────────
 
     #[test]
     fn test_filter_by_type_library() {
@@ -581,8 +567,6 @@ mod tests {
         assert_eq!(result.len(), 2);
     }
 
-    // ── filter_by_names ───────────────────────────────────────────────────────
-
     #[test]
     fn test_filter_by_names_exact() {
         let e1 = make_installed_entry("psr/log", Some("library"));
@@ -625,8 +609,6 @@ mod tests {
         assert!(result.is_empty());
     }
 
-    // ── mutual exclusion validation ───────────────────────────────────────────
-
     /// Verify that the validation logic (both --type and names) is reflected in arg combinations.
     /// We can't call execute() without a full environment, but we can test the logic directly.
     #[test]
@@ -648,8 +630,6 @@ mod tests {
             "Neither packages nor type provided — should be rejected"
         );
     }
-
-    // ── dev filtering ─────────────────────────────────────────────────────────
 
     #[test]
     fn test_dev_filtering_excludes_dev_packages() {

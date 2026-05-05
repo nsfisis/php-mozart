@@ -10,8 +10,6 @@ pub struct GlobalArgs {
     pub args: Vec<String>,
 }
 
-// ─── Main entry point ────────────────────────────────────────────────────────
-
 pub async fn execute(
     args: &GlobalArgs,
     cli: &super::Cli,
@@ -50,8 +48,6 @@ pub async fn execute(
     let new_cli = super::Cli::try_parse_from(&argv)?;
     Box::pin(crate::commands::execute(&new_cli)).await
 }
-
-// ─── Helpers ─────────────────────────────────────────────────────────────────
 
 fn append_global_options(cli: &super::Cli) -> Vec<String> {
     let mut opts: Vec<String> = Vec::new();
@@ -95,8 +91,6 @@ fn append_global_options(cli: &super::Cli) -> Vec<String> {
     opts
 }
 
-// ─── Tests ────────────────────────────────────────────────────────────────────
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -106,8 +100,6 @@ mod tests {
     fn default_cli() -> Cli {
         Cli::try_parse_from(["mozart", "about"]).unwrap()
     }
-
-    // ── append_global_options tests ───────────────────────────────────────────
 
     #[test]
     fn test_append_global_options_empty() {

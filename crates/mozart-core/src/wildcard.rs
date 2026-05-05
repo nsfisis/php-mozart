@@ -33,8 +33,6 @@ pub fn matches_wildcard(name: &str, pattern: &str) -> bool {
     true
 }
 
-// ─── Tests ──────────────────────────────────────────────────────────────────
-
 #[cfg(test)]
 mod tests {
     use super::*;

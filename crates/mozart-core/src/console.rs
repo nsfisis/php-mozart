@@ -267,8 +267,6 @@ impl Console {
 mod tests {
     use super::*;
 
-    // ── Verbosity::from_flags ───────────────────────────────────────────────
-
     #[test]
     fn test_verbosity_quiet_takes_priority() {
         assert_eq!(Verbosity::from_flags(3, true), Verbosity::Quiet);
@@ -296,8 +294,6 @@ mod tests {
         assert_eq!(Verbosity::from_flags(10, false), Verbosity::Debug);
     }
 
-    // ── Verbosity ordering ──────────────────────────────────────────────────
-
     #[test]
     fn test_verbosity_ordering() {
         assert!(Verbosity::Quiet < Verbosity::Normal);
@@ -305,8 +301,6 @@ mod tests {
         assert!(Verbosity::Verbose < Verbosity::VeryVerbose);
         assert!(Verbosity::VeryVerbose < Verbosity::Debug);
     }
-
-    // ── Console::resolve_decorated ──────────────────────────────────────────
 
     #[test]
     fn test_resolve_decorated_no_ansi_wins() {
@@ -318,8 +312,6 @@ mod tests {
     fn test_resolve_decorated_ansi_forces_on() {
         assert!(Console::resolve_decorated(true, false));
     }
-
-    // ── Console query methods ───────────────────────────────────────────────
 
     fn make_console(verbosity: Verbosity) -> Console {
         Console {

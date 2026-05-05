@@ -11,8 +11,6 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-// ─── composer_home ────────────────────────────────────────────────────────────
-
 /// Return the Composer home directory, respecting `COMPOSER_HOME` and falling
 /// back to the platform default using Composer-compatible logic.
 ///
@@ -70,8 +68,6 @@ fn use_xdg() -> bool {
     std::env::vars().any(|(k, _)| k.starts_with("XDG_"))
         || std::path::Path::new("/etc/xdg").is_dir()
 }
-
-// ─── ComposerConfig ───────────────────────────────────────────────────────────
 
 /// Effective Composer config key/value pairs for a project.
 /// Keys mirror `Composer\Config`'s defaults; values are stored as raw
@@ -194,8 +190,6 @@ pub fn resolve_references(config: &mut ComposerConfig) {
         }
     }
 }
-
-// ─── Composer ────────────────────────────────────────────────────────────────
 
 /// Project-level Composer state. Currently only carries the merged
 /// `ComposerConfig`; additional accessors (root package, locker, …) can be

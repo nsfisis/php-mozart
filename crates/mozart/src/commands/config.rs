@@ -60,11 +60,7 @@ pub struct ConfigArgs {
     pub source: bool,
 }
 
-// ─── ComposerConfig ───────────────────────────────────────────────────────────
-
 pub use mozart_core::composer::{ComposerConfig, resolve_references};
-
-// ─── ConfigValueType ─────────────────────────────────────────────────────────
 
 /// Classification of config key value types for validation and normalization.
 #[derive(Debug)]
@@ -277,8 +273,6 @@ fn normalize_bool(key: &str, value: &str) -> anyhow::Result<serde_json::Value> {
     }
 }
 
-// ─── Repository helpers ───────────────────────────────────────────────────────
-
 /// Match `repo.X`, `repos.X`, `repositories.X` and return the suffix X.
 fn match_repository_key(key: &str) -> Option<&str> {
     for prefix in &["repositories.", "repos.", "repo."] {
@@ -290,8 +284,6 @@ fn match_repository_key(key: &str) -> Option<&str> {
     }
     None
 }
-
-// ─── JSON path helpers ────────────────────────────────────────────────────────
 
 /// Set a value at a dot-separated path within a JSON Value.
 /// Creates intermediate objects as needed.
@@ -337,8 +329,6 @@ fn json_remove_nested(root: &mut serde_json::Value, path: &str) -> bool {
     }
 }
 
-// ─── File I/O helpers ─────────────────────────────────────────────────────────
-
 /// Determine which JSON file to read/write.
 /// - `--global` → `$COMPOSER_HOME/config.json`
 /// - `--file <path>` → user-specified file
@@ -355,8 +345,6 @@ fn resolve_config_file_path(args: &ConfigArgs, cli: &super::Cli) -> anyhow::Resu
     }
     Ok(cli.working_dir()?.join("composer.json"))
 }
-
-// ─── Helpers ──────────────────────────────────────────────────────────────────
 
 /// Load the `config` section from a JSON file (global `config.json` or local
 /// `composer.json`).  Returns an empty map when the file is absent or has no
@@ -378,10 +366,6 @@ fn load_config_section(
         _ => Ok(BTreeMap::new()),
     }
 }
-
-// ─── Value rendering ─────────────────────────────────────────────────────────
-
-// ─── execute() ───────────────────────────────────────────────────────────────
 
 pub async fn execute(
     args: &ConfigArgs,
@@ -411,8 +395,6 @@ pub async fn execute(
     execute_read(args, cli, &config_file_path, console)
 }
 
-// ─── execute_editor() ────────────────────────────────────────────────────────
-
 fn execute_editor(args: &ConfigArgs, cli: &super::Cli) -> anyhow::Result<()> {
     let file_path = resolve_config_file_path(args, cli)?;
 
@@ -438,8 +420,6 @@ fn execute_editor(args: &ConfigArgs, cli: &super::Cli) -> anyhow::Result<()> {
     Ok(())
 }
 
-// ─── execute_write() ─────────────────────────────────────────────────────────
-
 fn execute_write(
     args: &ConfigArgs,
     _cli: &super::Cli,
@@ -462,8 +442,6 @@ fn execute_write(
     write_json_file(config_file_path, &json)?;
     Ok(())
 }
-
-// ─── execute_unset() ─────────────────────────────────────────────────────────
 
 fn execute_unset(json: &mut serde_json::Value, key: &str, args: &ConfigArgs) -> anyhow::Result<()> {
     // 1. Repository key
@@ -528,8 +506,6 @@ fn split_dotted_config_key(key: &str) -> Option<(&str, &str)> {
     }
     None
 }
-
-// ─── execute_set() ───────────────────────────────────────────────────────────
 
 fn execute_set(
     json: &mut serde_json::Value,
@@ -771,8 +747,6 @@ fn merge_json_values(
     }
 }
 
-// ─── execute_read() ──────────────────────────────────────────────────────────
-
 fn execute_read(
     args: &ConfigArgs,
     cli: &super::Cli,
@@ -892,13 +866,9 @@ fn execute_read(
     Ok(())
 }
 
-// ─── Tests ───────────────────────────────────────────────────────────────────
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    // ── defaults ───────────────────────────────────────────────────────────
 
     #[test]
     fn test_defaults_contain_expected_keys() {
@@ -958,8 +928,6 @@ mod tests {
         assert_eq!(cfg.values["autoloader-suffix"], serde_json::Value::Null);
     }
 
-    // ── merge ──────────────────────────────────────────────────────────────
-
     #[test]
     fn test_merge_overrides_existing_key() {
         let mut cfg = ComposerConfig::defaults();
@@ -995,8 +963,6 @@ mod tests {
 
         assert_eq!(cfg.values["vendor-dir"], original_vendor);
     }
-
-    // ── reference resolution ───────────────────────────────────────────────
 
     #[test]
     fn test_reference_resolution_bin_dir() {
@@ -1052,8 +1018,6 @@ mod tests {
         assert_eq!(cfg.values["process-timeout"], before);
     }
 
-    // ── single key query ───────────────────────────────────────────────────
-
     #[test]
     fn test_get_existing_key() {
         let cfg = ComposerConfig::defaults();
@@ -1067,8 +1031,6 @@ mod tests {
         let cfg = ComposerConfig::defaults();
         assert!(cfg.get("does-not-exist").is_none());
     }
-
-    // ── render_value ───────────────────────────────────────────────────────
 
     #[test]
     fn test_render_value_string() {
@@ -1101,8 +1063,6 @@ mod tests {
     fn test_render_value_empty_object() {
         assert_eq!(render_value(&serde_json::json!({})), "{}");
     }
-
-    // ── load_config_section ────────────────────────────────────────────────
 
     #[test]
     fn test_load_config_section_absent_file() {
@@ -1143,8 +1103,6 @@ mod tests {
         assert!(result.is_empty());
     }
 
-    // ── full merge pipeline ────────────────────────────────────────────────
-
     #[test]
     fn test_full_pipeline_project_overrides_are_applied() {
         use std::io::Write;
@@ -1173,8 +1131,6 @@ mod tests {
         );
     }
 
-    // ── match_repository_key ───────────────────────────────────────────────
-
     #[test]
     fn test_match_repository_key_full() {
         assert_eq!(match_repository_key("repositories.foo"), Some("foo"));
@@ -1188,8 +1144,6 @@ mod tests {
         assert_eq!(match_repository_key("repositories."), None);
         assert_eq!(match_repository_key("sort-packages"), None);
     }
-
-    // ── json_set_nested / json_remove_nested ───────────────────────────────
 
     #[test]
     fn test_json_set_nested_simple() {
@@ -1234,8 +1188,6 @@ mod tests {
         let removed = json_remove_nested(&mut root, "nonexistent");
         assert!(!removed);
     }
-
-    // ── validate_and_normalize ─────────────────────────────────────────────
 
     #[test]
     fn test_validate_bool_true() {
@@ -1313,8 +1265,6 @@ mod tests {
         assert_eq!(result.unwrap(), serde_json::Value::Null);
     }
 
-    // ── validate_and_normalize_multi ───────────────────────────────────────
-
     #[test]
     fn test_validate_multi_string_array() {
         let values = vec!["a".to_string(), "b".to_string()];
@@ -1344,8 +1294,6 @@ mod tests {
         );
         assert!(result.is_err());
     }
-
-    // ── execute_set / execute_unset round-trips ────────────────────────────
 
     fn make_empty_json() -> serde_json::Value {
         serde_json::json!({})
@@ -1480,8 +1428,6 @@ mod tests {
         assert!(result.is_err());
     }
 
-    // ── unset tests ────────────────────────────────────────────────────────
-
     #[test]
     fn test_unset_config_value() {
         let mut json = serde_json::json!({"config": {"sort-packages": true}});
@@ -1497,8 +1443,6 @@ mod tests {
         let result = execute_unset(&mut json, "unknown-key-xyz", &args);
         assert!(result.is_err());
     }
-
-    // ── package property tests ─────────────────────────────────────────────
 
     #[test]
     fn test_set_package_property_name() {
@@ -1554,8 +1498,6 @@ mod tests {
         execute_unset(&mut json, "description", &args).unwrap();
         assert!(json.get("description").is_none());
     }
-
-    // ── repository tests ───────────────────────────────────────────────────
 
     #[test]
     fn test_add_repository() {
@@ -1670,8 +1612,6 @@ mod tests {
         assert_eq!(match_repository_key("repositories.foo"), Some("foo"));
     }
 
-    // ── extra/suggest tests ────────────────────────────────────────────────
-
     #[test]
     fn test_set_extra_property() {
         let mut json = make_empty_json();
@@ -1735,8 +1675,6 @@ mod tests {
         assert!(json["extra"].get("key").is_none());
     }
 
-    // ── dotted config key tests ────────────────────────────────────────────
-
     #[test]
     fn test_set_platform_php() {
         let mut json = make_empty_json();
@@ -1790,8 +1728,6 @@ mod tests {
         );
     }
 
-    // ── global config file tests ───────────────────────────────────────────
-
     #[test]
     fn test_global_config_creates_file() {
         use tempfile::TempDir;
@@ -1831,8 +1767,6 @@ mod tests {
             serde_json::json!("custom-lib")
         );
     }
-
-    // ── read_json_file default skeleton ───────────────────────────────────
 
     #[test]
     fn test_read_json_file_missing_global() {
