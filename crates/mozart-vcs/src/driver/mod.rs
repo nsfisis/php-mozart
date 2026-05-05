@@ -34,8 +34,9 @@ pub struct DistReference {
 /// Configuration passed to VCS drivers.
 #[derive(Debug, Clone)]
 pub struct DriverConfig {
-    /// Path for caching VCS mirrors.
-    pub cache_dir: PathBuf,
+    /// Composer's `cache-vcs-dir`: root for VCS mirrors, one
+    /// subdirectory per sanitized repository URL.
+    pub cache_vcs_dir: PathBuf,
     /// GitHub OAuth token (from `GITHUB_TOKEN` or config).
     pub github_token: Option<String>,
     /// GitLab OAuth token.
@@ -53,7 +54,7 @@ pub struct DriverConfig {
 impl Default for DriverConfig {
     fn default() -> Self {
         Self {
-            cache_dir: PathBuf::from(".cache/mozart/vcs"),
+            cache_vcs_dir: default_cache_vcs_dir(),
             github_token: None,
             gitlab_token: None,
             bitbucket_oauth: None,
@@ -62,6 +63,26 @@ impl Default for DriverConfig {
             forgejo_domains: vec!["codeberg.org".to_string()],
         }
     }
+}
+
+/// Resolve the default `cache-vcs-dir`, honoring Composer's env vars.
+///
+/// Priority: `COMPOSER_CACHE_VCS_DIR` → `COMPOSER_CACHE_DIR/vcs` →
+/// `XDG_CACHE_HOME/mozart/vcs` → `$HOME/.cache/mozart/vcs`.
+fn default_cache_vcs_dir() -> PathBuf {
+    if let Ok(p) = std::env::var("COMPOSER_CACHE_VCS_DIR") {
+        return PathBuf::from(p);
+    }
+    let base = if let Ok(p) = std::env::var("COMPOSER_CACHE_DIR") {
+        PathBuf::from(p)
+    } else if let Ok(xdg) = std::env::var("XDG_CACHE_HOME") {
+        PathBuf::from(xdg).join("mozart")
+    } else if let Ok(home) = std::env::var("HOME") {
+        PathBuf::from(home).join(".cache").join("mozart")
+    } else {
+        PathBuf::from("/tmp").join("mozart")
+    };
+    base.join("vcs")
 }
 
 /// Type of VCS driver.

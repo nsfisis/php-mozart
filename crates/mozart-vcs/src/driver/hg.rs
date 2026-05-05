@@ -51,8 +51,8 @@ impl HgDriver {
 
 impl VcsDriver for HgDriver {
     async fn initialize(&mut self) -> Result<()> {
-        let cache_dir = self.config.cache_dir.join("hg");
-        std::fs::create_dir_all(&cache_dir)?;
+        let cache_dir = &self.config.cache_vcs_dir;
+        std::fs::create_dir_all(cache_dir)?;
         let repo_dir = cache_dir.join(crate::util::git::GitUtil::sanitize_url(&self.url));
 
         if repo_dir.join(".hg").is_dir() {

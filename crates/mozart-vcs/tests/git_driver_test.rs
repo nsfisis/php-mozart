@@ -77,7 +77,7 @@ async fn test_git_driver_local_repo() {
     create_test_repo(repo_dir.path());
 
     let config = DriverConfig {
-        cache_dir: cache_dir.path().to_path_buf(),
+        cache_vcs_dir: cache_dir.path().to_path_buf(),
         ..DriverConfig::default()
     };
 
@@ -237,7 +237,7 @@ async fn test_vcs_repository_scan() {
     create_test_repo(repo_dir.path());
 
     let config = DriverConfig {
-        cache_dir: cache_dir.path().to_path_buf(),
+        cache_vcs_dir: cache_dir.path().to_path_buf(),
         ..DriverConfig::default()
     };
 

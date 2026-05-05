@@ -27,7 +27,7 @@ impl GitDriver {
     pub fn new(url: &str, config: DriverConfig) -> Self {
         let is_local = Self::is_local_path(url);
         let process = ProcessExecutor::new();
-        let git_util = GitUtil::new(process, config.cache_dir.join("git"));
+        let git_util = GitUtil::new(process, config.cache_vcs_dir.clone());
         Self {
             url: url.to_string(),
             repo_dir: if is_local {
