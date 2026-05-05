@@ -10,6 +10,46 @@ use std::collections::BTreeMap;
 
 use crate::composer::composer_home;
 
+/// Parse a size string like "300MiB", "1GB", "512k", or a plain integer string
+/// into a byte count.  Mirrors Composer's `Config::get('cache-files-maxsize')`.
+fn parse_size_bytes(s: &str) -> Option<u64> {
+    let s = s.trim();
+    let i = s.find(|c: char| c.is_ascii_alphabetic()).unwrap_or(s.len());
+    let num: f64 = s[..i].trim().parse().ok()?;
+    let multiplier: f64 = match s[i..].trim().chars().next().map(|c| c.to_ascii_lowercase()) {
+        Some('g') => 1024.0 * 1024.0 * 1024.0,
+        Some('m') => 1024.0 * 1024.0,
+        Some('k') => 1024.0,
+        None => 1.0,
+        Some(_) => return None,
+    };
+    Some((num * multiplier).max(0.0) as u64)
+}
+
+fn deserialize_size_bytes<'de, D: serde::Deserializer<'de>>(d: D) -> Result<u64, D::Error> {
+    use serde::de::{Error, Visitor};
+    struct V;
+    impl<'de> Visitor<'de> for V {
+        type Value = u64;
+        fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+            f.write_str("a non-negative integer or a size string like \"300MiB\"")
+        }
+        fn visit_u64<E: Error>(self, v: u64) -> Result<u64, E> {
+            Ok(v)
+        }
+        fn visit_i64<E: Error>(self, v: i64) -> Result<u64, E> {
+            Ok(v.max(0) as u64)
+        }
+        fn visit_f64<E: Error>(self, v: f64) -> Result<u64, E> {
+            Ok(v.max(0.0) as u64)
+        }
+        fn visit_str<E: Error>(self, v: &str) -> Result<u64, E> {
+            parse_size_bytes(v).ok_or_else(|| E::custom(format!("invalid size: {v}")))
+        }
+    }
+    d.deserialize_any(V)
+}
+
 /// Effective Composer configuration for a project.
 ///
 /// Known properties are typed fields; anything else lands in `extra`.
@@ -31,7 +71,8 @@ pub struct Config {
     pub cache_repo_dir: String,
     pub cache_vcs_dir: String,
     pub cache_files_ttl: u64,
-    pub cache_files_maxsize: String,
+    #[serde(deserialize_with = "deserialize_size_bytes")]
+    pub cache_files_maxsize: u64,
     pub cache_read_only: bool,
     pub prepend_autoloader: bool,
     pub autoloader_suffix: Option<String>,
@@ -74,7 +115,7 @@ impl Default for Config {
             cache_repo_dir: "{$cache-dir}/repo".to_string(),
             cache_vcs_dir: "{$cache-dir}/vcs".to_string(),
             cache_files_ttl: 15_552_000,
-            cache_files_maxsize: "300MiB".to_string(),
+            cache_files_maxsize: 300 * 1024 * 1024,
             cache_read_only: false,
             prepend_autoloader: true,
             autoloader_suffix: None,

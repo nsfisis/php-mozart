@@ -30,8 +30,6 @@ pub struct CacheConfig {
     pub cache_files_maxsize: u64,
     /// Whether the cache is read-only (no writes).
     pub read_only: bool,
-    /// Whether caching is entirely disabled.
-    pub no_cache: bool,
 }
 
 impl CacheConfig {
@@ -45,6 +43,10 @@ impl CacheConfig {
 ///
 /// Respects `$COMPOSER_CACHE_DIR` for the base directory, and
 /// `$COMPOSER_NO_CACHE` / `COMPOSER_CACHE_READ_ONLY` env vars.
+///
+/// When no-cache mode is active (via `cli_no_cache` or `$COMPOSER_NO_CACHE`),
+/// all cache directories are set to a null device, mirroring Composer's
+/// `Application::doRun()` which calls `putenv('COMPOSER_CACHE_DIR', '/dev/null')`.
 pub fn build_cache_config(cli_no_cache: bool) -> CacheConfig {
     let no_cache = std::env::var("COMPOSER_NO_CACHE").is_ok() || cli_no_cache;
 
@@ -52,10 +54,20 @@ pub fn build_cache_config(cli_no_cache: bool) -> CacheConfig {
         .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
         .unwrap_or(false);
 
-    let cache_dir = if let Ok(dir) = std::env::var("COMPOSER_CACHE_DIR") {
+    let cache_dir = if no_cache {
+        // Mirrors Composer: --no-cache redirects all cache paths to a null device so
+        // that Cache::is_usable() returns false and caching is transparently disabled.
+        #[cfg(windows)]
+        {
+            PathBuf::from("nul")
+        }
+        #[cfg(not(windows))]
+        {
+            PathBuf::from("/dev/null")
+        }
+    } else if let Ok(dir) = std::env::var("COMPOSER_CACHE_DIR") {
         PathBuf::from(dir)
     } else {
-        // Use XDG cache dir or fallback
         dirs_cache_dir().join("mozart")
     };
 
@@ -74,7 +86,6 @@ pub fn build_cache_config(cli_no_cache: bool) -> CacheConfig {
         cache_files_maxsize: CacheConfig::DEFAULT_FILES_MAXSIZE,
         cache_dir,
         read_only,
-        no_cache,
     }
 }
 
@@ -94,27 +105,61 @@ fn dirs_cache_dir() -> PathBuf {
 pub struct Cache {
     root: PathBuf,
     enabled: bool,
+    readonly: bool,
 }
 
 impl Cache {
     /// Create a new cache rooted at `root`.
     ///
-    /// Creates the directory if it doesn't exist and caching is enabled.
-    pub fn new(root: PathBuf, enabled: bool) -> Self {
-        if enabled {
-            let _ = fs::create_dir_all(&root);
+    /// Mirrors Composer's `Cache::__construct` + `Cache::isEnabled()`:
+    /// - If the path is a null device (`/dev/null`, `nul`, etc.), the cache is disabled.
+    /// - If `readonly` is true, the cache is always enabled (no writability check).
+    /// - Otherwise, tries to create the directory and checks that it is writable;
+    ///   disables the cache with a warning if not.
+    pub fn new(root: PathBuf, readonly: bool) -> Self {
+        let enabled = if !Self::is_usable(&root) {
+            false
+        } else if readonly {
+            true
+        } else {
+            if fs::create_dir_all(&root).is_err() {
+                false
+            } else {
+                fs::metadata(&root)
+                    .map(|m| !m.permissions().readonly())
+                    .unwrap_or(false)
+            }
+        };
+        Self {
+            root,
+            enabled,
+            readonly,
         }
-        Self { root, enabled }
+    }
+
+    /// Returns `false` for null-device paths that should never be used as a real cache.
+    ///
+    /// Mirrors Composer's `Cache::isUsable()`.
+    fn is_usable(path: &Path) -> bool {
+        let s = path.to_string_lossy();
+        if cfg!(windows) {
+            // On Windows, "nul" and "$null" (any case) are null devices.
+            !s.split(['/', '\\'])
+                .any(|c| c.eq_ignore_ascii_case("nul") || c == "$null")
+        } else {
+            // On Unix, /dev/null and any path under it are unusable.
+            s != "/dev/null" && !s.starts_with("/dev/null/")
+        }
     }
 
     /// Shorthand: create the repo cache from a `CacheConfig`.
     pub fn repo(config: &CacheConfig) -> Self {
-        Self::new(config.cache_repo_dir.clone(), !config.no_cache)
+        Self::new(config.cache_repo_dir.clone(), config.read_only)
     }
 
     /// Shorthand: create the files cache from a `CacheConfig`.
     pub fn files(config: &CacheConfig) -> Self {
-        Self::new(config.cache_files_dir.clone(), !config.no_cache)
+        Self::new(config.cache_files_dir.clone(), config.read_only)
     }
 
     /// Whether caching is enabled for this bucket.
@@ -148,7 +193,7 @@ impl Cache {
 
     /// Write a string entry atomically (write to temp file, then rename).
     pub fn write(&self, key: &str, contents: &str) -> anyhow::Result<()> {
-        if !self.enabled {
+        if !self.enabled || self.readonly {
             return Ok(());
         }
         self.write_bytes(key, contents.as_bytes())
@@ -164,7 +209,7 @@ impl Cache {
 
     /// Write a binary entry atomically (write to temp file, then rename).
     pub fn write_bytes(&self, key: &str, data: &[u8]) -> anyhow::Result<()> {
-        if !self.enabled {
+        if !self.enabled || self.readonly {
             return Ok(());
         }
         let dest = self.path_for(key);
@@ -181,6 +226,9 @@ impl Cache {
 
     /// Delete all cached entries in this bucket.
     pub fn clear(&self) -> anyhow::Result<()> {
+        if !self.enabled || self.readonly {
+            return Ok(());
+        }
         if !self.root.exists() {
             return Ok(());
         }
@@ -202,7 +250,7 @@ impl Cache {
     /// 2. If total remaining size > `max_size_bytes`, deletes the oldest files
     ///    (by mtime) until the total is under the limit.
     pub fn gc(&self, ttl_seconds: u64, max_size_bytes: u64) -> anyhow::Result<()> {
-        if !self.enabled || !self.root.exists() {
+        if !self.enabled || self.readonly || !self.root.exists() {
             return Ok(());
         }
 
@@ -365,7 +413,7 @@ mod tests {
     #[test]
     fn test_write_read_roundtrip_string() {
         let dir = tempdir().unwrap();
-        let cache = Cache::new(dir.path().to_path_buf(), true);
+        let cache = Cache::new(dir.path().to_path_buf(), false);
 
         cache.write("test-key", "hello world").unwrap();
         let result = cache.read("test-key");
@@ -375,7 +423,7 @@ mod tests {
     #[test]
     fn test_write_read_roundtrip_bytes() {
         let dir = tempdir().unwrap();
-        let cache = Cache::new(dir.path().to_path_buf(), true);
+        let cache = Cache::new(dir.path().to_path_buf(), false);
 
         let data = vec![0u8, 1, 2, 3, 255];
         cache.write_bytes("bin-key", &data).unwrap();
@@ -386,7 +434,7 @@ mod tests {
     #[test]
     fn test_clear_removes_all_entries() {
         let dir = tempdir().unwrap();
-        let cache = Cache::new(dir.path().to_path_buf(), true);
+        let cache = Cache::new(dir.path().to_path_buf(), false);
 
         cache.write("key1", "value1").unwrap();
         cache.write("key2", "value2").unwrap();
@@ -401,8 +449,8 @@ mod tests {
 
     #[test]
     fn test_disabled_cache_returns_none() {
-        let dir = tempdir().unwrap();
-        let cache = Cache::new(dir.path().to_path_buf(), false);
+        // Point cache at /dev/null — is_usable() returns false → cache disabled.
+        let cache = Cache::new(PathBuf::from("/dev/null/files"), false);
 
         // Write should silently succeed (no-op)
         cache.write("key", "value").unwrap();
@@ -415,7 +463,7 @@ mod tests {
     #[test]
     fn test_gc_ttl_expiration() {
         let dir = tempdir().unwrap();
-        let cache = Cache::new(dir.path().to_path_buf(), true);
+        let cache = Cache::new(dir.path().to_path_buf(), false);
 
         // Write a file, then manually set its mtime to the past
         cache.write("old-key", "old content").unwrap();
@@ -446,7 +494,7 @@ mod tests {
     #[test]
     fn test_gc_size_limit() {
         let dir = tempdir().unwrap();
-        let cache = Cache::new(dir.path().to_path_buf(), true);
+        let cache = Cache::new(dir.path().to_path_buf(), false);
 
         // Write two files; the first one should be older
         cache.write("old-file", "aaaaaaaaaa").unwrap(); // 10 bytes
@@ -477,7 +525,7 @@ mod tests {
     #[test]
     fn test_gc_vcs_removes_old_subdirs() {
         let dir = tempdir().unwrap();
-        let cache = Cache::new(dir.path().to_path_buf(), true);
+        let cache = Cache::new(dir.path().to_path_buf(), false);
 
         let old_mirror = dir.path().join("old-mirror");
         let new_mirror = dir.path().join("new-mirror");
@@ -502,7 +550,7 @@ mod tests {
     #[test]
     fn test_age_existing_entry() {
         let dir = tempdir().unwrap();
-        let cache = Cache::new(dir.path().to_path_buf(), true);
+        let cache = Cache::new(dir.path().to_path_buf(), false);
 
         cache.write("fresh-key", "content").unwrap();
         let age = cache.age("fresh-key");
@@ -515,14 +563,13 @@ mod tests {
     #[test]
     fn test_age_missing_entry() {
         let dir = tempdir().unwrap();
-        let cache = Cache::new(dir.path().to_path_buf(), true);
+        let cache = Cache::new(dir.path().to_path_buf(), false);
         assert!(cache.age("nonexistent-key").is_none());
     }
 
     #[test]
     fn test_age_disabled_cache() {
-        let dir = tempdir().unwrap();
-        let cache = Cache::new(dir.path().to_path_buf(), false);
+        let cache = Cache::new(PathBuf::from("/dev/null/files"), false);
         assert!(cache.age("any-key").is_none());
     }
 }

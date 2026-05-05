@@ -76,6 +76,19 @@ async fn main() {
         return;
     };
 
+    if cli.no_cache {
+        println!("Disabling cache usage");
+        // SAFETY: single-threaded at this point; no other threads have started yet.
+        #[cfg(windows)]
+        unsafe {
+            std::env::set_var("COMPOSER_CACHE_DIR", "nul");
+        }
+        #[cfg(not(windows))]
+        unsafe {
+            std::env::set_var("COMPOSER_CACHE_DIR", "/dev/null");
+        }
+    }
+
     init_tracing(cli.profile, cli.verbose, cli.quiet);
     match commands::execute(&cli).await {
         Ok(()) => {}

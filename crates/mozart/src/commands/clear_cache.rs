@@ -1,5 +1,8 @@
+use std::{borrow::Cow, path::Path};
+
 use clap::Args;
-use mozart_registry::cache::{Cache, build_cache_config};
+use mozart_core::{composer::Composer, factory::create_config};
+use mozart_registry::cache::Cache;
 
 #[derive(Args)]
 pub struct ClearCacheArgs {
@@ -13,21 +16,28 @@ pub async fn execute(
     cli: &super::Cli,
     console: &mozart_core::console::Console,
 ) -> anyhow::Result<()> {
-    let config = build_cache_config(cli.no_cache);
+    let composer = Composer::try_load(cli.working_dir()?)?;
+    let config = if let Some(composer) = &composer {
+        Cow::Borrowed(composer.config())
+    } else {
+        Cow::Owned(create_config()?)
+    };
 
-    // Build the list of (key, path) pairs to process.
-    // cache-dir is only included in full clear mode, not GC mode.
-    let mut cache_paths = vec![
+    let cache_paths = [
         ("cache-vcs-dir", &config.cache_vcs_dir),
         ("cache-repo-dir", &config.cache_repo_dir),
         ("cache-files-dir", &config.cache_files_dir),
+        ("cache-dir", &config.cache_dir),
     ];
-    if !args.gc {
-        cache_paths.push(("cache-dir", &config.cache_dir));
-    }
 
-    for (key, path) in &cache_paths {
-        // Non-existent directory: skip with informational message
+    for (key, path) in cache_paths {
+        // only individual dirs get garbage collected
+        if key == "cache-dir" && args.gc {
+            continue;
+        }
+
+        let path = Path::new(path);
+
         if !path.exists() {
             console.info(&format!(
                 "Cache directory does not exist ({key}): {}",
@@ -36,8 +46,8 @@ pub async fn execute(
             continue;
         }
 
-        // Read-only guard: skip with informational message
-        if config.read_only {
+        let cache = Cache::new(path.to_owned(), config.cache_read_only);
+        if !cache.is_enabled() {
             console.info(&format!("Cache is not enabled ({key}): {}", path.display()));
             continue;
         }
@@ -47,48 +57,15 @@ pub async fn execute(
                 "Garbage-collecting cache ({key}): {}",
                 path.display()
             ));
-            let cache = Cache::new((*path).clone(), !config.no_cache);
-            let result = match *key {
-                "cache-files-dir" => cache.gc(config.cache_files_ttl, config.cache_files_maxsize),
-                "cache-vcs-dir" => cache.gc_vcs(config.cache_ttl),
-                // cache-repo-dir: 1 GB cap (matches Composer)
-                _ => cache.gc(config.cache_ttl, 1024 * 1024 * 1024),
+            match key {
+                "cache-files-dir" => cache.gc(config.cache_files_ttl, config.cache_files_maxsize)?,
+                "cache-repo-dir" => cache.gc(config.cache_files_ttl, 1024 * 1024 * 1024 /* 1GB, this should almost never clear anything that is not outdated */)?,
+                "cache-vcs-dir" => cache.gc_vcs(config.cache_files_ttl)?,
+                _ => unreachable!(),
             };
-            if let Err(e) = result {
-                console.error(&format!("Error during GC of {key}: {e}"));
-            }
         } else {
             console.info(&format!("Clearing cache ({key}): {}", path.display()));
-            if *key == "cache-dir" {
-                // Clear anything at the root that isn't covered by sub-caches
-                let result = (|| -> anyhow::Result<()> {
-                    for entry in std::fs::read_dir(path)? {
-                        let entry = entry?;
-                        let entry_path = entry.path();
-                        // Skip repo/files/vcs subdirs (cleared by their own iterations)
-                        if entry_path == config.cache_files_dir
-                            || entry_path == config.cache_repo_dir
-                            || entry_path == config.cache_vcs_dir
-                        {
-                            continue;
-                        }
-                        if entry_path.is_file() {
-                            std::fs::remove_file(&entry_path)?;
-                        } else if entry_path.is_dir() {
-                            std::fs::remove_dir_all(&entry_path)?;
-                        }
-                    }
-                    Ok(())
-                })();
-                if let Err(e) = result {
-                    console.error(&format!("Error clearing {key}: {e}"));
-                }
-            } else {
-                let cache = Cache::new((*path).clone(), !config.no_cache);
-                if let Err(e) = cache.clear() {
-                    console.error(&format!("Error clearing {key}: {e}"));
-                }
-            }
+            cache.clear()?;
         }
     }
 
