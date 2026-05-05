@@ -63,124 +63,7 @@ pub struct ConfigArgs {
 
 // ─── ComposerConfig ───────────────────────────────────────────────────────────
 
-/// Holds the effective configuration key-value pairs for a project.
-/// Keys mirror Composer's `Config.php` defaults.
-pub struct ComposerConfig {
-    pub values: BTreeMap<String, serde_json::Value>,
-}
-
-impl ComposerConfig {
-    /// Build a `ComposerConfig` starting from the built-in defaults.
-    pub fn defaults() -> Self {
-        let mut m: BTreeMap<String, serde_json::Value> = BTreeMap::new();
-
-        m.insert("process-timeout".to_string(), serde_json::json!(300));
-        m.insert("use-include-path".to_string(), serde_json::json!(false));
-        m.insert("preferred-install".to_string(), serde_json::json!("dist"));
-        m.insert("notify-on-install".to_string(), serde_json::json!(true));
-        m.insert(
-            "github-protocols".to_string(),
-            serde_json::json!(["https", "ssh", "git"]),
-        );
-        m.insert("vendor-dir".to_string(), serde_json::json!("vendor"));
-        m.insert(
-            "bin-dir".to_string(),
-            serde_json::json!("{$vendor-dir}/bin"),
-        );
-        m.insert("bin-compat".to_string(), serde_json::json!("auto"));
-        m.insert("cache-dir".to_string(), serde_json::json!("{$home}/cache"));
-        m.insert(
-            "cache-files-dir".to_string(),
-            serde_json::json!("{$cache-dir}/files"),
-        );
-        m.insert(
-            "cache-repo-dir".to_string(),
-            serde_json::json!("{$cache-dir}/repo"),
-        );
-        m.insert(
-            "cache-vcs-dir".to_string(),
-            serde_json::json!("{$cache-dir}/vcs"),
-        );
-        m.insert("cache-files-ttl".to_string(), serde_json::json!(15_552_000));
-        m.insert(
-            "cache-files-maxsize".to_string(),
-            serde_json::json!("300MiB"),
-        );
-        m.insert("cache-read-only".to_string(), serde_json::json!(false));
-        m.insert("prepend-autoloader".to_string(), serde_json::json!(true));
-        m.insert("autoloader-suffix".to_string(), serde_json::Value::Null);
-        m.insert("optimize-autoloader".to_string(), serde_json::json!(false));
-        m.insert("sort-packages".to_string(), serde_json::json!(false));
-        m.insert(
-            "classmap-authoritative".to_string(),
-            serde_json::json!(false),
-        );
-        m.insert("apcu-autoloader".to_string(), serde_json::json!(false));
-        m.insert("platform".to_string(), serde_json::json!({}));
-        m.insert("platform-check".to_string(), serde_json::json!("php-only"));
-        m.insert("lock".to_string(), serde_json::json!(true));
-        m.insert("discard-changes".to_string(), serde_json::json!(false));
-        m.insert("archive-format".to_string(), serde_json::json!("tar"));
-        m.insert("archive-dir".to_string(), serde_json::json!("."));
-        m.insert("htaccess-protect".to_string(), serde_json::json!(true));
-        m.insert("secure-http".to_string(), serde_json::json!(true));
-        m.insert("allow-plugins".to_string(), serde_json::json!({}));
-
-        Self { values: m }
-    }
-
-    /// Merge `overrides` on top of the current values.
-    pub fn merge(&mut self, overrides: &BTreeMap<String, serde_json::Value>) {
-        for (k, v) in overrides {
-            self.values.insert(k.clone(), v.clone());
-        }
-    }
-
-    /// Resolve `{$vendor-dir}`, `{$home}`, `{$cache-dir}` placeholders inside
-    /// string values.  Only one pass is performed (no recursive expansion).
-    pub fn resolve_references(&mut self) {
-        // Snapshot the values we need for substitution before mutating.
-        let vendor_dir = self
-            .values
-            .get("vendor-dir")
-            .and_then(|v| v.as_str())
-            .unwrap_or("vendor")
-            .to_string();
-
-        let home = composer_home().to_string_lossy().into_owned();
-
-        let cache_dir = self
-            .values
-            .get("cache-dir")
-            .and_then(|v| v.as_str())
-            .unwrap_or("{$home}/cache")
-            .replace("{$home}", &home);
-
-        let replacements: &[(&str, &str)] = &[
-            ("{$vendor-dir}", &vendor_dir),
-            ("{$home}", &home),
-            ("{$cache-dir}", &cache_dir),
-        ];
-
-        let keys: Vec<String> = self.values.keys().cloned().collect();
-        for key in keys {
-            if let Some(serde_json::Value::String(s)) = self.values.get(&key).cloned() {
-                let mut resolved = s.clone();
-                for (placeholder, replacement) in replacements {
-                    resolved = resolved.replace(placeholder, replacement);
-                }
-                if resolved != s {
-                    self.values.insert(key, serde_json::Value::String(resolved));
-                }
-            }
-        }
-    }
-
-    /// Return the effective value for a single key, or `None` if absent.
-    pub fn get(&self, key: &str) -> Option<&serde_json::Value> {
-        self.values.get(key)
-    }
-}
+pub use mozart_core::composer::{ComposerConfig, resolve_references};
 
 // ─── ConfigValueType ─────────────────────────────────────────────────────────
 
@@ -911,7 +794,7 @@ fn execute_read(
         config.merge(&overrides);
     }
 
-    config.resolve_references();
+    resolve_references(&mut config);
 
     // If --absolute is requested, resolve *-dir values to absolute paths.
     if args.absolute {
@@ -1120,7 +1003,7 @@ mod tests {
     fn test_reference_resolution_bin_dir() {
         let mut cfg = ComposerConfig::defaults();
         // bin-dir default is "{$vendor-dir}/bin"; vendor-dir default is "vendor"
-        cfg.resolve_references();
+        resolve_references(&mut cfg);
 
         assert_eq!(cfg.values["bin-dir"], serde_json::json!("vendor/bin"));
     }
@@ -1132,7 +1015,7 @@ mod tests {
         // Override vendor-dir before resolving
         cfg.values
             .insert("vendor-dir".to_string(), serde_json::json!("lib"));
-        cfg.resolve_references();
+        resolve_references(&mut cfg);
 
         assert_eq!(cfg.values["bin-dir"], serde_json::json!("lib/bin"));
     }
@@ -1145,7 +1028,7 @@ mod tests {
             "cache-dir".to_string(),
             serde_json::json!("/home/user/.cache/composer"),
         );
-        cfg.resolve_references();
+        resolve_references(&mut cfg);
 
         assert_eq!(
             cfg.values["cache-files-dir"],
@@ -1165,7 +1048,7 @@ mod tests {
     fn test_reference_resolution_no_change_for_non_string() {
         let mut cfg = ComposerConfig::defaults();
         let before = cfg.values["process-timeout"].clone();
-        cfg.resolve_references();
+        resolve_references(&mut cfg);
         // Numeric values should be untouched.
         assert_eq!(cfg.values["process-timeout"], before);
     }
@@ -1280,7 +1163,7 @@ mod tests {
         let overrides = load_config_section(&composer_json).unwrap();
         let mut cfg = ComposerConfig::defaults();
         cfg.merge(&overrides);
-        cfg.resolve_references();
+        resolve_references(&mut cfg);
 
         assert_eq!(cfg.values["vendor-dir"], serde_json::json!("custom_vendor"));
         assert_eq!(cfg.values["sort-packages"], serde_json::json!(true));

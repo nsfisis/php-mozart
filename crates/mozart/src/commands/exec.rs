@@ -1,4 +1,5 @@
 use clap::Args;
+use mozart_core::composer::Composer;
 use mozart_core::console_format;
 use std::path::{Path, PathBuf};
 
@@ -29,7 +30,9 @@ pub async fn execute(
         None => std::env::current_dir()?,
     };
 
-    let bin_dir = resolve_bin_dir(&working_dir);
+    // ExecCommand uses requireComposer in Composer; composer.json must exist.
+    let composer = Composer::require(&working_dir)?;
+    let bin_dir = resolve_bin_dir(&working_dir, &composer);
 
     if args.list || args.binary.is_none() {
         let binaries = get_binaries(&working_dir, &bin_dir);
@@ -119,20 +122,14 @@ pub async fn execute(
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-fn resolve_bin_dir(working_dir: &Path) -> PathBuf {
-    let composer_json_path = working_dir.join("composer.json");
-    if let Ok(content) = std::fs::read_to_string(&composer_json_path)
-        && let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&content)
-    {
-        let vendor_dir = parsed["config"]["vendor-dir"].as_str().unwrap_or("vendor");
-        let bin_dir = parsed["config"]["bin-dir"].as_str().unwrap_or_default();
-        if !bin_dir.is_empty() {
-            let resolved = bin_dir.replace("{$vendor-dir}", vendor_dir);
-            return working_dir.join(resolved);
-        }
-        return working_dir.join(vendor_dir).join("bin");
-    }
-    working_dir.join("vendor/bin")
+fn resolve_bin_dir(working_dir: &Path, composer: &Composer) -> PathBuf {
+    // bin-dir's `{$vendor-dir}` placeholder is already resolved by Composer::load.
+    let bin_dir = composer
+        .config()
+        .get("bin-dir")
+        .and_then(|v| v.as_str())
+        .unwrap_or("vendor/bin");
+    working_dir.join(bin_dir)
 }
 
 /// Returns a vec of (name, is_local) tuples for all available binaries.
@@ -208,7 +205,8 @@ mod tests {
         let composer_json = dir.path().join("composer.json");
         fs::write(&composer_json, r#"{"name": "test/pkg", "require": {}}"#).unwrap();
 
-        let result = resolve_bin_dir(dir.path());
+        let composer = Composer::require(dir.path()).unwrap();
+        let result = resolve_bin_dir(dir.path(), &composer);
         assert_eq!(result, dir.path().join("vendor/bin"));
     }
 
@@ -222,7 +220,8 @@ mod tests {
         )
         .unwrap();
 
-        let result = resolve_bin_dir(dir.path());
+        let composer = Composer::require(dir.path()).unwrap();
+        let result = resolve_bin_dir(dir.path(), &composer);
         assert_eq!(result, dir.path().join("libs/bin"));
     }
 
@@ -236,7 +235,8 @@ mod tests {
         )
         .unwrap();
 
-        let result = resolve_bin_dir(dir.path());
+        let composer = Composer::require(dir.path()).unwrap();
+        let result = resolve_bin_dir(dir.path(), &composer);
         assert_eq!(result, dir.path().join("scripts"));
     }
 
@@ -250,7 +250,8 @@ mod tests {
         )
         .unwrap();
 
-        let result = resolve_bin_dir(dir.path());
+        let composer = Composer::require(dir.path()).unwrap();
+        let result = resolve_bin_dir(dir.path(), &composer);
         assert_eq!(result, dir.path().join("packages/commands"));
     }
 
@@ -366,7 +367,8 @@ mod tests {
         )
         .unwrap();
 
-        let bin_dir = resolve_bin_dir(dir.path());
+        let composer = Composer::require(dir.path()).unwrap();
+        let bin_dir = resolve_bin_dir(dir.path(), &composer);
 
         // No binaries exist — looking up a name should find nothing
         let candidate = bin_dir.join("nonexistent-binary");

@@ -84,6 +84,9 @@ pub async fn execute(
         None => std::env::current_dir()?,
     };
 
+    // RunScriptCommand uses requireComposer in Composer; composer.json must exist.
+    let composer = mozart_core::composer::Composer::require(&working_dir)?;
+
     let (scripts, descriptions) = load_scripts(&working_dir)?;
 
     if args.list {
@@ -114,21 +117,12 @@ pub async fn execute(
     let timeout = match args.timeout {
         Some(0) => None,
         Some(secs) => Some(Duration::from_secs(secs)),
-        None => {
-            let composer_json_path = working_dir.join("composer.json");
-            if let Ok(content) = std::fs::read_to_string(&composer_json_path)
-                && let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&content)
-                && let Some(secs) = parsed["config"]["process-timeout"].as_u64()
-            {
-                if secs == 0 {
-                    None
-                } else {
-                    Some(Duration::from_secs(secs))
-                }
-            } else {
-                Some(Duration::from_secs(300))
-            }
-        }
+        None => composer
+            .config()
+            .get("process-timeout")
+            .and_then(|v| v.as_u64())
+            .filter(|s| *s != 0)
+            .map(Duration::from_secs),
     };
 
     let dev_mode = !args.no_dev;
@@ -138,7 +132,7 @@ pub async fn execute(
         std::env::set_var("COMPOSER_DEV_MODE", if dev_mode { "1" } else { "0" });
     }
 
-    let bin_dir = resolve_bin_dir(&working_dir);
+    let bin_dir = resolve_bin_dir(&working_dir, &composer);
 
     let mut event_stack: Vec<String> = Vec::new();
     let exit_code = run_script(
@@ -464,20 +458,14 @@ fn wait_with_timeout(
 
 // ─── Bin dir resolution ───────────────────────────────────────────────────────
 
-fn resolve_bin_dir(working_dir: &Path) -> PathBuf {
-    let composer_json_path = working_dir.join("composer.json");
-    if let Ok(content) = std::fs::read_to_string(&composer_json_path)
-        && let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&content)
-    {
-        let vendor_dir = parsed["config"]["vendor-dir"].as_str().unwrap_or("vendor");
-        let bin_dir = parsed["config"]["bin-dir"].as_str().unwrap_or_default();
-        if !bin_dir.is_empty() {
-            let resolved = bin_dir.replace("{$vendor-dir}", vendor_dir);
-            return working_dir.join(resolved);
-        }
-        return working_dir.join(vendor_dir).join("bin");
-    }
-    working_dir.join("vendor/bin")
+fn resolve_bin_dir(working_dir: &Path, composer: &mozart_core::composer::Composer) -> PathBuf {
+    // bin-dir's `{$vendor-dir}` placeholder is already resolved by Composer::load.
+    let bin_dir = composer
+        .config()
+        .get("bin-dir")
+        .and_then(|v| v.as_str())
+        .unwrap_or("vendor/bin");
+    working_dir.join(bin_dir)
 }
 
 // ─── Classifier functions ─────────────────────────────────────────────────────

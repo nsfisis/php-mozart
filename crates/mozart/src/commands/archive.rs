@@ -104,24 +104,26 @@ pub async fn execute(
         None => std::env::current_dir()?,
     };
 
-    // 2. Load config for format/dir defaults from composer.json's "config" section
+    // 2. Load Composer state for format/dir defaults. Composer's
+    //    `archive` command falls back to `Factory::createConfig()` when no
+    //    composer.json is present, so we mirror that by treating a missing
+    //    file as "use defaults" (Composer::try_load returns None).
+    let composer = mozart_core::composer::Composer::try_load(&working_dir)?;
     let composer_json_path = working_dir.join("composer.json");
-    let (config_archive_format, config_archive_dir) = if composer_json_path.exists() {
-        let content = std::fs::read_to_string(&composer_json_path)?;
-        let value: serde_json::Value = serde_json::from_str(&content)?;
-        let fmt = value
-            .get("config")
-            .and_then(|c| c.get("archive-format"))
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string());
-        let dir = value
-            .get("config")
-            .and_then(|c| c.get("archive-dir"))
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string());
-        (fmt, dir)
-    } else {
-        (None, None)
+    let (config_archive_format, config_archive_dir) = match composer.as_ref() {
+        Some(c) => {
+            let cfg = c.config();
+            let fmt = cfg
+                .get("archive-format")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
+            let dir = cfg
+                .get("archive-dir")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
+            (fmt, dir)
+        }
+        None => (None, None),
     };
 
     // 3. Determine format: args -> config -> default "tar"
