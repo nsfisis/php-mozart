@@ -5,6 +5,7 @@
 //! ~/.cache/mozart/          (or $COMPOSER_CACHE_DIR)
 //!   files/                  dist archives (key: vendor~package~reference.ext)
 //!   repo/                   API responses (key: provider-vendor~package.json)
+//!   vcs/                    VCS mirrors (one subdir per sanitized URL)
 //! ```
 
 use std::fs;
@@ -23,6 +24,8 @@ pub struct CacheConfig {
     pub cache_files_dir: PathBuf,
     /// Directory for API responses.
     pub cache_repo_dir: PathBuf,
+    /// Directory for VCS mirrors (one subdirectory per sanitized URL).
+    pub cache_vcs_dir: PathBuf,
     /// TTL in seconds for repo entries (default: 15,552,000 = 6 months).
     pub cache_ttl: u64,
     /// TTL in seconds for files entries (falls back to `cache_ttl`).
@@ -62,10 +65,14 @@ pub fn build_cache_config(cli_no_cache: bool) -> CacheConfig {
 
     let cache_files_dir = cache_dir.join("files");
     let cache_repo_dir = cache_dir.join("repo");
+    let cache_vcs_dir = std::env::var("COMPOSER_CACHE_VCS_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| cache_dir.join("vcs"));
 
     CacheConfig {
         cache_files_dir,
         cache_repo_dir,
+        cache_vcs_dir,
         cache_ttl: CacheConfig::DEFAULT_TTL,
         cache_files_ttl: CacheConfig::DEFAULT_TTL,
         cache_files_maxsize: CacheConfig::DEFAULT_FILES_MAXSIZE,
@@ -240,6 +247,42 @@ impl Cache {
                 if fs::remove_file(path).is_ok() {
                     current_size = current_size.saturating_sub(*size);
                 }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Run garbage collection on a VCS cache bucket.
+    ///
+    /// Each top-level subdirectory is one bare mirror keyed by sanitized URL.
+    /// Deletes entire subdirectories whose mtime is older than `ttl_seconds`.
+    /// Mirrors Composer's `Cache::gcVcsCache`.
+    pub fn gc_vcs(&self, ttl_seconds: u64) -> anyhow::Result<()> {
+        if !self.enabled || !self.root.exists() {
+            return Ok(());
+        }
+
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+
+        for entry in fs::read_dir(&self.root)? {
+            let entry = entry?;
+            let path = entry.path();
+            let metadata = entry.metadata()?;
+            if !metadata.is_dir() {
+                continue;
+            }
+            let mtime = metadata
+                .modified()
+                .ok()
+                .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+                .map(|d| d.as_secs())
+                .unwrap_or(0);
+            if now.saturating_sub(mtime) > ttl_seconds {
+                let _ = fs::remove_dir_all(&path);
             }
         }
 
@@ -459,6 +502,33 @@ mod tests {
             cache.read("old-file").is_none() || cache.read("new-file").is_none(),
             "at least one file should be removed to enforce size limit"
         );
+    }
+
+    // ──────────── gc_vcs (top-level subdir TTL deletion) ────────────
+
+    #[test]
+    fn test_gc_vcs_removes_old_subdirs() {
+        let dir = tempdir().unwrap();
+        let cache = Cache::new(dir.path().to_path_buf(), true);
+
+        let old_mirror = dir.path().join("old-mirror");
+        let new_mirror = dir.path().join("new-mirror");
+        fs::create_dir_all(&old_mirror).unwrap();
+        fs::write(old_mirror.join("HEAD"), "ref: refs/heads/main\n").unwrap();
+        fs::create_dir_all(&new_mirror).unwrap();
+        fs::write(new_mirror.join("HEAD"), "ref: refs/heads/main\n").unwrap();
+
+        let two_hours_ago = SystemTime::now() - Duration::from_secs(7200);
+        filetime::set_file_mtime(
+            &old_mirror,
+            filetime::FileTime::from_system_time(two_hours_ago),
+        )
+        .unwrap();
+
+        cache.gc_vcs(3600).unwrap();
+
+        assert!(!old_mirror.exists(), "expired mirror should be removed");
+        assert!(new_mirror.exists(), "fresh mirror should remain");
     }
 
     // ──────────── age ────────────

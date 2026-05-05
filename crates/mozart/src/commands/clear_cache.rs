@@ -18,6 +18,7 @@ pub async fn execute(
     // Build the list of (key, path) pairs to process.
     // cache-dir is only included in full clear mode, not GC mode.
     let mut cache_paths: Vec<(&str, &std::path::PathBuf)> = vec![
+        ("cache-vcs-dir", &config.cache_vcs_dir),
         ("cache-repo-dir", &config.cache_repo_dir),
         ("cache-files-dir", &config.cache_files_dir),
     ];
@@ -47,11 +48,11 @@ pub async fn execute(
                 path.display()
             ));
             let cache = Cache::new((*path).clone(), !config.no_cache);
-            let result = if *key == "cache-files-dir" {
-                cache.gc(config.cache_files_ttl, config.cache_files_maxsize)
-            } else {
+            let result = match *key {
+                "cache-files-dir" => cache.gc(config.cache_files_ttl, config.cache_files_maxsize),
+                "cache-vcs-dir" => cache.gc_vcs(config.cache_ttl),
                 // cache-repo-dir: 1 GB cap (matches Composer)
-                cache.gc(config.cache_ttl, 1024 * 1024 * 1024)
+                _ => cache.gc(config.cache_ttl, 1024 * 1024 * 1024),
             };
             if let Err(e) = result {
                 console.error(&format!("Error during GC of {key}: {e}"));
@@ -64,9 +65,10 @@ pub async fn execute(
                     for entry in std::fs::read_dir(path)? {
                         let entry = entry?;
                         let entry_path = entry.path();
-                        // Skip repo/files subdirs (cleared by their own iterations)
+                        // Skip repo/files/vcs subdirs (cleared by their own iterations)
                         if entry_path == config.cache_files_dir
                             || entry_path == config.cache_repo_dir
+                            || entry_path == config.cache_vcs_dir
                         {
                             continue;
                         }
