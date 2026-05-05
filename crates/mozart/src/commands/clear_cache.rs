@@ -1,7 +1,9 @@
 use std::{borrow::Cow, path::Path};
 
 use clap::Args;
-use mozart_core::{composer::Composer, factory::create_config};
+use mozart_core::composer::Composer;
+use mozart_core::factory::create_config;
+use mozart_core::{console_format, console_writeln_error};
 use mozart_registry::cache::Cache;
 
 #[derive(Args)]
@@ -39,24 +41,36 @@ pub async fn execute(
         let path = Path::new(path);
 
         if !path.exists() {
-            console.info(&format!(
-                "Cache directory does not exist ({key}): {}",
-                path.display()
-            ));
+            console_writeln_error!(
+                console,
+                &console_format!(
+                    "<info>Cache directory does not exist ({key}): {}</info>",
+                    path.display(),
+                ),
+            );
             continue;
         }
 
         let cache = Cache::new(path.to_owned(), config.cache_read_only);
         if !cache.is_enabled() {
-            console.info(&format!("Cache is not enabled ({key}): {}", path.display()));
+            console_writeln_error!(
+                console,
+                &console_format!(
+                    "<info>Cache is not enabled ({key}): {}</info>",
+                    path.display(),
+                ),
+            );
             continue;
         }
 
         if args.gc {
-            console.info(&format!(
-                "Garbage-collecting cache ({key}): {}",
-                path.display()
-            ));
+            console_writeln_error!(
+                console,
+                &console_format!(
+                    "<info>Garbage-collecting cache ({key}): {}</info>",
+                    path.display(),
+                ),
+            );
             match key {
                 "cache-files-dir" => cache.gc(config.cache_files_ttl, config.cache_files_maxsize)?,
                 "cache-repo-dir" => cache.gc(config.cache_files_ttl, 1024 * 1024 * 1024 /* 1GB, this should almost never clear anything that is not outdated */)?,
@@ -64,15 +78,24 @@ pub async fn execute(
                 _ => unreachable!(),
             };
         } else {
-            console.info(&format!("Clearing cache ({key}): {}", path.display()));
+            console_writeln_error!(
+                console,
+                &console_format!("<info>Clearing cache ({key}): {}</info>", path.display()),
+            );
             cache.clear()?;
         }
     }
 
     if args.gc {
-        console.info("All caches garbage-collected.");
+        console_writeln_error!(
+            console,
+            &console_format!("<info>All caches garbage-collected.</info>"),
+        );
     } else {
-        console.info("All caches cleared.");
+        console_writeln_error!(
+            console,
+            &console_format!("<info>All caches cleared.</info>"),
+        );
     }
 
     Ok(())
