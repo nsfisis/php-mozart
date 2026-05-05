@@ -6,9 +6,161 @@
 
 use indexmap::IndexSet;
 use std::collections::BTreeMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use anyhow::Result;
+use mozart_core::console_format;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Shared command entry point
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Inputs for [`do_execute`], collected from the `depends` / `prohibits` CLI args.
+pub struct DoExecuteArgs<'a> {
+    pub package: &'a str,
+    /// Version constraint string (only set for `prohibits`).
+    pub version: Option<&'a str>,
+    pub recursive: bool,
+    pub tree: bool,
+    pub locked: bool,
+    /// `true` for `prohibits` (why-not), `false` for `depends` (why).
+    pub inverted: bool,
+}
+
+/// Shared implementation for `depends` (why) and `prohibits` (why-not).
+///
+/// Mirrors `BaseDependencyCommand::doExecute` in Composer: a single function
+/// driven by `inverted` to switch between "who depends on X?" and
+/// "who prevents X version V from being installed?".
+pub fn do_execute(
+    cli: &super::Cli,
+    console: &mozart_core::console::Console,
+    args: DoExecuteArgs<'_>,
+) -> Result<()> {
+    let DoExecuteArgs {
+        package,
+        version,
+        recursive,
+        tree,
+        locked,
+        inverted,
+    } = args;
+
+    let working_dir = match &cli.working_dir {
+        Some(dir) => PathBuf::from(dir),
+        None => std::env::current_dir()?,
+    };
+
+    let packages = load_packages(&working_dir, locked)?;
+
+    if packages.is_empty() {
+        console.write_error(
+            "No dependencies installed. Try running mozart install or update, or use --locked.",
+        );
+        return Err(mozart_core::exit_code::bail_silent(
+            mozart_core::exit_code::GENERAL_ERROR,
+        ));
+    }
+
+    let target = package.to_lowercase();
+
+    let target_known = packages.iter().any(|p| p.name.to_lowercase() == target);
+    if !target_known {
+        if !inverted && mozart_core::platform::is_platform_package(&target) {
+            anyhow::bail!(
+                "Could not find platform package \"{}\". Is PHP available?",
+                package
+            );
+        }
+        anyhow::bail!("Could not find package \"{}\" in your project", package);
+    }
+
+    let constraint = match version {
+        Some(v) => Some(
+            mozart_semver::VersionConstraint::parse(v)
+                .map_err(|e| anyhow::anyhow!("Invalid version constraint '{}': {}", v, e))?,
+        ),
+        None => None,
+    };
+
+    let recursive = tree || recursive;
+    let needles = vec![target];
+
+    let results = get_dependents(
+        &packages,
+        &needles,
+        constraint.as_ref(),
+        inverted,
+        recursive,
+    )?;
+
+    if results.is_empty() {
+        if inverted {
+            console.write_stdout(
+                &console_format!(
+                    "<info>{} {} can be installed.</info>",
+                    package,
+                    version.unwrap_or("")
+                ),
+                mozart_core::console::Verbosity::Normal,
+            );
+            return Ok(());
+        }
+        console.info(&format!(
+            "There is no installed package depending on \"{}\"",
+            package
+        ));
+        return Err(mozart_core::exit_code::bail_silent(
+            mozart_core::exit_code::GENERAL_ERROR,
+        ));
+    }
+
+    if tree {
+        print_tree(&results, 0, console);
+    } else {
+        print_table(&results, console);
+    }
+
+    if !inverted {
+        return Ok(());
+    }
+
+    // Resolution hint: pick the right composer command based on whether the
+    // package sits in root's `require`, `require-dev`, or neither.
+    let needle_lower = package.to_lowercase();
+    let composer_command = packages
+        .iter()
+        .find(|p| p.is_root)
+        .map(|root| {
+            if root
+                .require
+                .keys()
+                .any(|k| k.to_lowercase() == needle_lower)
+            {
+                "require"
+            } else if root
+                .require_dev
+                .keys()
+                .any(|k| k.to_lowercase() == needle_lower)
+            {
+                "require --dev"
+            } else {
+                "update"
+            }
+        })
+        .unwrap_or("update");
+
+    console.info(&format!(
+        "Not finding what you were looking for? Try calling `composer {} \"{}:{}\" --dry-run` to get another view on the problem.",
+        composer_command,
+        package,
+        version.unwrap_or("")
+    ));
+
+    Err(mozart_core::exit_code::bail_silent(
+        mozart_core::exit_code::GENERAL_ERROR,
+    ))
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Core types
