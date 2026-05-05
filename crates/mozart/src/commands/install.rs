@@ -987,13 +987,10 @@ fn warn_platform_requirements(
             if is_platform_package(req_name) {
                 let lower = req_name.to_lowercase();
                 if !ignored_set.contains(&lower) {
-                    console.info(&format!(
-                        "{}",
-                        console::warning(&format!(
-                            "Platform requirement {req_name} {req_constraint} (required by {}) \
-                             has not been verified. Platform detection is not yet fully implemented.",
-                            pkg.name
-                        ))
+                    console.info(&console_format!(
+                        "<warning>Platform requirement {req_name} {req_constraint} (required by {}) \
+                         has not been verified. Platform detection is not yet fully implemented.</warning>",
+                        pkg.name
                     ));
                 }
             }

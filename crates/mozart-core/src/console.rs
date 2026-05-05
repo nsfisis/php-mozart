@@ -3,36 +3,42 @@ use dialoguer::{Confirm, Input};
 use std::io::IsTerminal;
 
 // ---------------------------------------------------------------------------
-// Tag-style color helpers (module-level free functions, unchanged API)
+// Tag-style color helpers — called only by `console_format!`
 // ---------------------------------------------------------------------------
 
-/// `<info>` — green foreground
-pub fn info(message: &str) -> ColoredString {
+/// `<info>` — green foreground.
+/// Do not call directly; use the `console_format!` macro instead.
+pub fn __format_info_message(message: &str) -> ColoredString {
     message.green()
 }
 
-/// `<comment>` — yellow foreground
-pub fn comment(message: &str) -> ColoredString {
+/// `<comment>` — yellow foreground.
+/// Do not call directly; use the `console_format!` macro instead.
+pub fn __format_comment_message(message: &str) -> ColoredString {
     message.yellow()
 }
 
-/// `<error>` — white on red
-pub fn error(message: &str) -> ColoredString {
+/// `<error>` — white on red.
+/// Do not call directly; use the `console_format!` macro instead.
+pub fn __format_error_message(message: &str) -> ColoredString {
     message.white().on_red()
 }
 
-/// `<question>` — black on cyan
-pub fn question(message: &str) -> ColoredString {
+/// `<question>` — black on cyan.
+/// Do not call directly; use the `console_format!` macro instead.
+pub fn __format_question_message(message: &str) -> ColoredString {
     message.black().on_cyan()
 }
 
-/// `<highlight>` — red foreground (Composer extension)
-pub fn highlight(message: &str) -> ColoredString {
+/// `<highlight>` — red foreground (Composer extension).
+/// Do not call directly; use the `console_format!` macro instead.
+pub fn __format_highlight_message(message: &str) -> ColoredString {
     message.red()
 }
 
-/// `<warning>` — black on yellow (Composer extension)
-pub fn warning(message: &str) -> ColoredString {
+/// `<warning>` — black on yellow (Composer extension).
+/// Do not call directly; use the `console_format!` macro instead.
+pub fn __format_warning_message(message: &str) -> ColoredString {
     message.black().on_yellow()
 }
 
@@ -148,7 +154,7 @@ impl Console {
 
     /// Write an error to stderr. Always shown, even in quiet mode.
     pub fn write_error(&self, msg: &str) {
-        eprintln!("{}", error(msg));
+        eprintln!("{}", __format_error_message(msg));
     }
 
     // Convenience verbosity-level shortcuts:

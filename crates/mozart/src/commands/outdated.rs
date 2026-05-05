@@ -1,5 +1,6 @@
 use clap::Args;
 use indexmap::IndexSet;
+use mozart_core::console_format;
 use mozart_core::console_writeln;
 use mozart_core::matches_wildcard;
 use std::cmp::Ordering;
@@ -442,7 +443,7 @@ fn render_text(entries: &[OutdatedEntry], console: &mozart_core::console::Consol
     if entries.is_empty() {
         console_writeln!(
             console,
-            &mozart_core::console::info("All packages are up to date.").to_string(),
+            &console_format!("<info>All packages are up to date.</info>"),
         );
         return;
     }
@@ -467,16 +468,16 @@ fn render_text(entries: &[OutdatedEntry], console: &mozart_core::console::Consol
 
         let (name_str, lat_str) = match entry.category {
             UpdateCategory::UpToDate => (
-                mozart_core::console::info(&name_col).to_string(),
-                mozart_core::console::info(&lat_col).to_string(),
+                console_format!("<info>{name_col}</info>"),
+                console_format!("<info>{lat_col}</info>"),
             ),
             UpdateCategory::SemverCompatible => (
-                mozart_core::console::highlight(&name_col).to_string(),
-                mozart_core::console::highlight(&lat_col).to_string(),
+                console_format!("<highlight>{name_col}</highlight>"),
+                console_format!("<highlight>{lat_col}</highlight>"),
             ),
             UpdateCategory::SemverIncompatible => (
-                mozart_core::console::comment(&name_col).to_string(),
-                mozart_core::console::comment(&lat_col).to_string(),
+                console_format!("<comment>{name_col}</comment>"),
+                console_format!("<comment>{lat_col}</comment>"),
             ),
         };
 
@@ -485,7 +486,7 @@ fn render_text(entries: &[OutdatedEntry], console: &mozart_core::console::Consol
             &format!(
                 "{} {} {} {}",
                 name_str,
-                mozart_core::console::comment(&cur_col),
+                console_format!("<comment>{cur_col}</comment>"),
                 lat_str,
                 entry.description
             ),

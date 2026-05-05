@@ -1,4 +1,5 @@
 use clap::Args;
+use mozart_core::console_format;
 
 #[derive(Args)]
 pub struct DumpAutoloadArgs {
@@ -67,11 +68,8 @@ pub async fn execute(
             let install_path = vendor_composer_dir.join(rel);
             if !install_path.exists() {
                 missing_dependencies = true;
-                console.info(&format!(
-                    "{}",
-                    mozart_core::console::warning(
-                        "Not all dependencies are installed. Make sure to run a \"composer install\" to install missing dependencies"
-                    )
+                console.info(&console_format!(
+                    "<warning>Not all dependencies are installed. Make sure to run a \"composer install\" to install missing dependencies</warning>"
                 ));
                 break;
             }

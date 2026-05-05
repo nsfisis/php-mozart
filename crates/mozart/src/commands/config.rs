@@ -787,13 +787,10 @@ fn execute_read(
 
     match &args.setting_key {
         None => {
-            console.error(&format!(
-                "{}",
-                mozart_core::console::error(
-                    "No command specified. Use --list to show all config values, \
-                         or provide a setting key."
-                )
-            ));
+            console.error(
+                "No command specified. Use --list to show all config values, \
+                     or provide a setting key.",
+            );
             return Err(mozart_core::exit_code::bail_silent(
                 mozart_core::exit_code::GENERAL_ERROR,
             ));

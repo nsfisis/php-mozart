@@ -135,7 +135,7 @@ fn generate_single(segment: &Segment, args: &Punctuated<Expr, syn::Token![,]>) -
             }
         }
         Segment::Tagged { tag, content } => {
-            let func = quote::format_ident!("{}", tag);
+            let func = quote::format_ident!("__format_{}_message", tag);
             if has_placeholders(content) {
                 let lit = proc_macro2::Literal::string(content);
                 quote! {

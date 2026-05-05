@@ -650,7 +650,7 @@ pub fn print_table(results: &[DependencyResult], console: &mozart_core::console:
     if results.is_empty() {
         console_writeln!(
             console,
-            &format!("{}", mozart_core::console::info("No relationships found.")),
+            &console_format!("<info>No relationships found.</info>"),
         );
         return;
     }
@@ -685,10 +685,10 @@ pub fn print_table(results: &[DependencyResult], console: &mozart_core::console:
             console,
             &format!(
                 "{:<name_w$}  {:<ver_w$}  {:<desc_w$}  {}",
-                mozart_core::console::info(&r.package_name),
-                mozart_core::console::comment(&r.package_version),
+                console_format!("<info>{}</info>", r.package_name),
+                console_format!("<comment>{}</comment>", r.package_version),
                 r.link_description,
-                mozart_core::console::comment(&r.link_constraint),
+                console_format!("<comment>{}</comment>", r.link_constraint),
                 name_w = name_w,
                 ver_w = ver_w,
                 desc_w = desc_w,
@@ -714,7 +714,7 @@ pub fn print_tree(
     if results.is_empty() && depth == 0 {
         console_writeln!(
             console,
-            &format!("{}", mozart_core::console::info("No relationships found.")),
+            &console_format!("<info>No relationships found.</info>"),
         );
         return;
     }
@@ -729,10 +729,10 @@ pub fn print_tree(
             &format!(
                 "{}{:<}  {}  {}  {}",
                 prefix,
-                mozart_core::console::info(&r.package_name),
-                mozart_core::console::comment(&r.package_version),
+                console_format!("<info>{}</info>", r.package_name),
+                console_format!("<comment>{}</comment>", r.package_version),
                 r.link_description,
-                mozart_core::console::comment(&r.link_constraint),
+                console_format!("<comment>{}</comment>", r.link_constraint),
             ),
         );
 

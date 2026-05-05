@@ -1,6 +1,5 @@
 use clap::Args;
 use indexmap::{IndexMap, IndexSet};
-use mozart_core::console;
 use mozart_core::console_format;
 use mozart_core::package::{self, Stability};
 use mozart_registry::lockfile;
@@ -536,10 +535,10 @@ pub fn expand_wildcards(
             }
         }
         if !matched {
-            console.info(&console::warning(&format!(
-                "Package '{}' listed for update is not in the lock file. Specifier will be ignored.",
+            console.info(&console_format!(
+                "<warning>Package '{}' listed for update is not in the lock file. Specifier will be ignored.</warning>",
                 spec
-            )));
+            ));
         }
     }
 
@@ -814,8 +813,8 @@ pub fn interactive_select_packages(
 
     let stdin = io::stdin();
     if !stdin.is_terminal() {
-        console.info(&console::warning(
-            "Interactive mode requires a TTY. Running non-interactively with all packages.",
+        console.info(&console_format!(
+            "<warning>Interactive mode requires a TTY. Running non-interactively with all packages.</warning>"
         ));
         return packages;
     }

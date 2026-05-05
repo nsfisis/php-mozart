@@ -774,18 +774,18 @@ fn output_result(
         console.info(&console_format!(
             "<info>{name} is valid for simple usage with Composer but has</info>"
         ));
-        console.info(&mozart_core::console::info(
-            "strict errors that make it unable to be published as a package",
+        console.info(&console_format!(
+            "<info>strict errors that make it unable to be published as a package</info>"
         ));
-        console.info(&mozart_core::console::warning(
-            "See https://getcomposer.org/doc/04-schema.md for details on the schema",
+        console.info(&console_format!(
+            "<warning>See https://getcomposer.org/doc/04-schema.md for details on the schema</warning>"
         ));
     } else if result.has_warnings() {
         console.info(&console_format!(
             "<info>{name} is valid, but with a few warnings</info>"
         ));
-        console.info(&mozart_core::console::warning(
-            "See https://getcomposer.org/doc/04-schema.md for details on the schema",
+        console.info(&console_format!(
+            "<warning>See https://getcomposer.org/doc/04-schema.md for details on the schema</warning>"
         ));
     } else if !lock_errors.is_empty() {
         let kind = if check_lock { "errors" } else { "warnings" };
@@ -836,16 +836,12 @@ fn output_result(
 
     // Print errors
     for msg in &all_errors {
-        if msg.starts_with('#') {
-            console.error(&mozart_core::console::error(msg));
-        } else {
-            console.error(msg);
-        }
+        console.error(msg);
     }
 
     for msg in &all_warnings {
         if msg.starts_with('#') {
-            console.info(&mozart_core::console::warning(msg));
+            console.info(&console_format!("<warning>{msg}</warning>"));
         } else {
             console.info(msg);
         }

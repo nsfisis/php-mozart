@@ -1,4 +1,5 @@
 use clap::Args;
+use mozart_core::console_format;
 use mozart_core::console_writeln;
 use mozart_core::console_writeln_error;
 use mozart_registry::packagist::SecurityAdvisory;
@@ -376,9 +377,8 @@ fn detect_abandoned(packages: &[PackageEntry]) -> Vec<AbandonedPackage> {
 
 fn render_table(result: &AuditResult, console: &mozart_core::console::Console) {
     if result.total_advisory_count == 0 && result.abandoned.is_empty() {
-        console.info(&format!(
-            "{}",
-            mozart_core::console::info("No security vulnerability advisories found.")
+        console.info(&console_format!(
+            "<info>No security vulnerability advisories found.</info>"
         ));
         return;
     }
@@ -393,10 +393,7 @@ fn render_table(result: &AuditResult, console: &mozart_core::console::Console) {
             "Found {} security vulnerability {} affecting {} package(s):",
             result.total_advisory_count, advisory_word, result.affected_package_count
         );
-        console_writeln_error!(
-            console,
-            &format!("{}", mozart_core::console::highlight(&header)),
-        );
+        console_writeln_error!(console, &console_format!("<highlight>{header}</highlight>"),);
         console_writeln_error!(console, "");
 
         for advisories in result.advisories.values() {
@@ -450,10 +447,7 @@ fn render_table(result: &AuditResult, console: &mozart_core::console::Console) {
 
     if !result.abandoned.is_empty() {
         let header = format!("Found {} abandoned package(s):", result.abandoned.len());
-        console_writeln_error!(
-            console,
-            &format!("{}", mozart_core::console::highlight(&header)),
-        );
+        console_writeln_error!(console, &console_format!("<highlight>{header}</highlight>"),);
         console_writeln_error!(console, "");
 
         let name_width = 20usize;

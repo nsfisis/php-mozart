@@ -1,5 +1,6 @@
 use clap::Args;
 use mozart_core::console::Console;
+use mozart_core::console_format;
 use mozart_core::console_writeln;
 use mozart_core::console_writeln_error;
 use std::collections::BTreeMap;
@@ -143,12 +144,9 @@ fn collect_requirements(
             // Fall through to lock file with a warning
             console_writeln_error!(
                 console,
-                &format!(
-                    "{}",
-                    mozart_core::console::warning(&format!(
-                        "No vendor dir present, checking {}platform requirements from the lock file",
-                        dev_text
-                    ))
+                &console_format!(
+                    "<warning>No vendor dir present, checking {}platform requirements from the lock file</warning>",
+                    dev_text
                 ),
             );
             if !lock_path.exists() {
@@ -168,12 +166,9 @@ fn collect_requirements(
         // Fallback: read from lock file
         console_writeln_error!(
             console,
-            &format!(
-                "{}",
-                mozart_core::console::warning(&format!(
-                    "No vendor dir present, checking {}platform requirements from the lock file",
-                    dev_text
-                ))
+            &console_format!(
+                "<warning>No vendor dir present, checking {}platform requirements from the lock file</warning>",
+                dev_text
             ),
         );
         collect_from_lock(&lock_path, args.no_dev, &mut requirements)?;
@@ -365,11 +360,8 @@ fn render_text(results: &[CheckResult], console: &Console) {
             CheckStatus::Success => {
                 console_writeln!(
                     console,
-                    &format!(
-                        "{}  {}  {}",
-                        mozart_core::console::info(&padded_name),
-                        mozart_core::console::comment(&padded_version),
-                        mozart_core::console::info("success"),
+                    &console_format!(
+                        "<info>{padded_name}</info>  <comment>{padded_version}</comment>  <info>success</info>"
                     ),
                 );
             }
@@ -381,11 +373,8 @@ fn render_text(results: &[CheckResult], console: &Console) {
                     .unwrap_or(("", ""));
                 console_writeln!(
                     console,
-                    &format!(
-                        "{}  {}  {} requires {} ({})",
-                        mozart_core::console::comment(&padded_name),
-                        mozart_core::console::comment(&padded_version),
-                        mozart_core::console::error("failed"),
+                    &console_format!(
+                        "<comment>{padded_name}</comment>  <comment>{padded_version}</comment>  <error>failed</error> requires {} ({})",
                         provider,
                         constraint,
                     ),
@@ -399,11 +388,8 @@ fn render_text(results: &[CheckResult], console: &Console) {
                     .unwrap_or(("*", ""));
                 console_writeln!(
                     console,
-                    &format!(
-                        "{}  {}  {} requires {} ({})",
-                        mozart_core::console::comment(&padded_name),
-                        mozart_core::console::comment(&padded_version),
-                        mozart_core::console::error("missing"),
+                    &console_format!(
+                        "<comment>{padded_name}</comment>  <comment>{padded_version}</comment>  <error>missing</error> requires {} ({})",
                         provider,
                         constraint,
                     ),

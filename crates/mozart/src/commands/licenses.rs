@@ -1,6 +1,7 @@
 use clap::Args;
 use indexmap::IndexSet;
 use mozart_core::console::Console;
+use mozart_core::console_format;
 use mozart_core::console_writeln;
 use serde::Serialize;
 use std::path::Path;
@@ -198,18 +199,15 @@ fn render_text(
     };
     console_writeln!(
         console,
-        &format!("Name: {}", mozart_core::console::comment(root_name)),
+        &console_format!("Name: <comment>{root_name}</comment>"),
     );
     console_writeln!(
         console,
-        &format!("Version: {}", mozart_core::console::comment(root_version)),
+        &console_format!("Version: <comment>{root_version}</comment>"),
     );
     console_writeln!(
         console,
-        &format!(
-            "Licenses: {}",
-            mozart_core::console::comment(&license_display)
-        ),
+        &console_format!("Licenses: <comment>{license_display}</comment>"),
     );
     console_writeln!(console, "Dependencies:");
     console_writeln!(console, "");
