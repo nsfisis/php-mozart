@@ -5,11 +5,7 @@ use sha1::{Digest, Sha1};
 use std::path::{Path, PathBuf};
 
 #[derive(Args)]
-pub struct StatusArgs {
-    /// Show a list of files for each modified package (implied by -v)
-    #[arg(short, long)]
-    pub verbose: bool,
-}
+pub struct StatusArgs {}
 
 /// Information extracted from a package's dist field.
 struct DistInfo {
@@ -43,7 +39,7 @@ struct PackageStatus {
 }
 
 pub async fn execute(
-    args: &StatusArgs,
+    _args: &StatusArgs,
     cli: &super::Cli,
     console: &mozart_core::console::Console,
 ) -> anyhow::Result<()> {
@@ -60,7 +56,7 @@ pub async fn execute(
     let cache_config = mozart_registry::cache::build_cache_config(cli.no_cache);
     let files_cache = mozart_registry::cache::Cache::files(&cache_config);
 
-    let show_files = args.verbose || cli.verbose > 0;
+    let show_files = cli.verbose > 0;
 
     let mut modified_packages: Vec<PackageStatus> = Vec::new();
 
