@@ -1133,7 +1133,9 @@ dependencies = [
  "indexmap",
  "md5",
  "mozart-class-map-generator",
+ "mozart-core",
  "mozart-registry",
+ "regex",
  "serde_json",
  "tempfile",
 ]

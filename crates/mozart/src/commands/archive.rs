@@ -1,4 +1,5 @@
 use clap::Args;
+use mozart_core::composer::Composer;
 use mozart_core::console_writeln;
 use std::path::PathBuf;
 
@@ -99,7 +100,7 @@ pub async fn execute(
     //    `archive` command falls back to `Factory::createConfig()` when no
     //    composer.json is present, so we mirror that by treating a missing
     //    file as "use defaults" (Composer::try_load returns None).
-    let composer = mozart_core::composer::Composer::try_load(&working_dir)?;
+    let composer = Composer::try_load(&working_dir)?;
     let composer_json_path = working_dir.join("composer.json");
     let (config_archive_format, config_archive_dir) = match composer.as_ref() {
         Some(c) => {

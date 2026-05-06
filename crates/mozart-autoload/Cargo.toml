@@ -5,10 +5,12 @@ edition.workspace = true
 
 [dependencies]
 mozart-class-map-generator.workspace = true
+mozart-core.workspace = true
 mozart-registry.workspace = true
 anyhow.workspace = true
 indexmap.workspace = true
 md5.workspace = true
+regex.workspace = true
 serde_json.workspace = true
 
 [dev-dependencies]

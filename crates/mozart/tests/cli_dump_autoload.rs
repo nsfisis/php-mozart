@@ -1,7 +1,5 @@
 mod common;
 
-use predicates::str::contains;
-
 #[test]
 fn test_dump_autoload_dry_run() {
     let project = common::copy_fixture_to_temp("minimal");
@@ -11,8 +9,7 @@ fn test_dump_autoload_dry_run() {
         .arg("--working-dir")
         .arg(project.path())
         .assert()
-        .success()
-        .stderr(contains("Dry run"));
+        .success();
 }
 
 #[test]

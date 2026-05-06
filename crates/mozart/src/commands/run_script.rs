@@ -1,4 +1,5 @@
 use clap::Args;
+use mozart_core::composer::Composer;
 use mozart_core::console_writeln;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -79,7 +80,7 @@ pub async fn execute(
     let working_dir = cli.working_dir()?;
 
     // RunScriptCommand uses requireComposer in Composer; composer.json must exist.
-    let composer = mozart_core::composer::Composer::require(&working_dir)?;
+    let composer = Composer::require(&working_dir)?;
 
     let (scripts, descriptions) = load_scripts(&working_dir)?;
 
@@ -444,7 +445,7 @@ fn wait_with_timeout(
     }
 }
 
-fn resolve_bin_dir(working_dir: &Path, composer: &mozart_core::composer::Composer) -> PathBuf {
+fn resolve_bin_dir(working_dir: &Path, composer: &Composer) -> PathBuf {
     // bin-dir's `{$vendor-dir}` placeholder is already resolved by Composer::load.
     working_dir.join(&composer.config().bin_dir)
 }

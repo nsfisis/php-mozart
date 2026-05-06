@@ -1,5 +1,7 @@
 use clap::Args;
-use mozart_core::console_format;
+use mozart_autoload::AutoloadGeneratorExt;
+use mozart_core::composer::{AutoloadDumpOptions, Composer, PlatformRequirementFilter};
+use mozart_core::{console_format, console_writeln};
 
 #[derive(Args)]
 pub struct DumpAutoloadArgs {
@@ -54,35 +56,36 @@ pub async fn execute(
     console: &mozart_core::console::Console,
 ) -> anyhow::Result<()> {
     let working_dir = cli.working_dir()?;
-    let composer = mozart_core::composer::Composer::require(&working_dir)?;
+    let composer = Composer::require(&working_dir)?;
 
-    let composer_config = composer.config();
-
-    let vendor_dir = working_dir.join("vendor");
-
-    let installed = mozart_registry::installed::InstalledPackages::read(&vendor_dir)?;
-    let vendor_composer_dir = vendor_dir.join("composer");
-    let mut missing_dependencies = false;
-    for pkg in &installed.packages {
-        if let Some(rel) = &pkg.install_path {
-            let install_path = vendor_composer_dir.join(rel);
-            if !install_path.exists() {
-                missing_dependencies = true;
-                console.info(&console_format!(
-                    "<warning>Not all dependencies are installed. Make sure to run a \"composer install\" to install missing dependencies</warning>"
-                ));
+    let missing_dependencies = {
+        let installation_manager = composer.installation_manager();
+        let local_repo = composer.repository_manager().local_repository();
+        let mut missing = false;
+        for local_pkg in local_repo.canonical_packages() {
+            if let Some(install_path) = installation_manager.get_install_path(local_pkg)
+                && !install_path.exists()
+            {
+                missing = true;
+                console_writeln!(
+                    console,
+                    &console_format!(
+                        r#"<warning>Not all dependencies are installed. Make sure to run a "composer install" to install missing dependencies</warning>"#
+                    ),
+                );
                 break;
             }
         }
-    }
+        missing
+    };
 
-    let optimize = args.optimize || composer_config.optimize_autoloader;
-    let classmap_authoritative =
-        args.classmap_authoritative || composer_config.classmap_authoritative;
+    let optimize = args.optimize || composer.config().optimize_autoloader;
+    let class_map_authoritative =
+        args.classmap_authoritative || composer.config().classmap_authoritative;
     let apcu_prefix = args.apcu_prefix.clone();
-    let apcu = apcu_prefix.is_some() || args.apcu || composer_config.apcu_autoloader;
+    let apcu = apcu_prefix.is_some() || args.apcu || composer.config().apcu_autoloader;
 
-    let do_optimize = optimize || classmap_authoritative;
+    let do_optimize = optimize || class_map_authoritative;
     if args.strict_psr && !do_optimize {
         anyhow::bail!(
             "--strict-psr mode only works with optimized autoloader, use --optimize or --classmap-authoritative."
@@ -94,65 +97,102 @@ pub async fn execute(
         );
     }
 
-    if classmap_authoritative {
-        console.info("Generating optimized autoload files (authoritative)");
-    } else if optimize {
-        console.info("Generating optimized autoload files");
-    } else {
-        console.info("Generating autoload files");
-    }
+    console_writeln!(
+        console,
+        &console_format!(
+            "<info>{}</info>",
+            if class_map_authoritative {
+                "Generating optimized autoload files (authoritative)"
+            } else if optimize {
+                "Generating optimized autoload files"
+            } else {
+                "Generating autoload files"
+            }
+        ),
+    );
 
+    let dev_mode = if args.dev {
+        Some(true)
+    } else if args.no_dev {
+        Some(false)
+    } else {
+        None
+    };
     if args.dev && args.no_dev {
         anyhow::bail!("You can not use both --no-dev and --dev as they conflict with each other.");
     }
-
-    let suffix = mozart_autoload::autoload::determine_suffix(&working_dir, &vendor_dir)?;
-
-    if args.dry_run {
-        console.info("Dry run: would generate autoload files");
-        return Ok(());
-    }
-
-    let autoload_config = mozart_autoload::autoload::AutoloadConfig {
-        project_dir: working_dir,
-        vendor_dir,
-        dev_mode: !args.no_dev,
-        suffix,
-        classmap_authoritative,
-        optimize,
+    let options = AutoloadDumpOptions {
+        dev_mode,
+        class_map_authoritative,
         apcu,
         apcu_prefix,
-        strict_psr: args.strict_psr,
-        strict_ambiguous: args.strict_ambiguous,
-        platform_check: mozart_autoload::autoload::PlatformCheckMode::Full,
-        ignore_platform_reqs: args.ignore_platform_reqs,
+        run_scripts: true,
+        dry_run: args.dry_run,
+        platform_requirement_filter: get_platform_requirement_filter(args)?,
     };
 
-    let result = mozart_autoload::autoload::generate(&autoload_config)?;
+    let class_map = composer.autoload_generator().dump(
+        &options,
+        composer.config(),
+        composer.repository_manager().local_repository(),
+        composer.package(),
+        composer.installation_manager(),
+        "composer",
+        optimize,
+        None,
+        composer.locker(),
+        args.strict_ambiguous,
+    )?;
+    let number_of_classes = class_map.count();
 
-    if classmap_authoritative {
-        console.info(&format!(
-            "Generated optimized autoload files (authoritative) containing {} classes",
-            result.class_count
-        ));
+    if class_map_authoritative {
+        console_writeln!(
+            console,
+            &console_format!(
+                "<info>Generated optimized autoload files (authoritative) containing {number_of_classes} classes</info>",
+            ),
+        );
     } else if optimize {
-        console.info(&format!(
-            "Generated optimized autoload files containing {} classes",
-            result.class_count
-        ));
+        console_writeln!(
+            console,
+            &console_format!(
+                "<info>Generated optimized autoload files containing {number_of_classes} classes</info>",
+            ),
+        );
     } else {
-        console.info("Generated autoload files");
+        console_writeln!(
+            console,
+            &console_format!("<info>Generated autoload files</info>"),
+        );
     }
 
-    if missing_dependencies {
+    if missing_dependencies || args.strict_psr && class_map.has_psr_violations() {
         return Err(mozart_core::exit_code::bail_silent(
             mozart_core::exit_code::GENERAL_ERROR,
         ));
     }
 
-    if args.strict_ambiguous && result.has_ambiguous_classes {
+    if args.strict_ambiguous && class_map.has_ambiguous_classes(false) {
         return Err(mozart_core::exit_code::bail_silent(2));
     }
 
     Ok(())
+}
+
+/// Mirror of `BaseCommand::getPlatformRequirementFilter` for the
+/// `dump-autoload` command. Priority:
+/// 1. `--ignore-platform-reqs` → ignore every platform requirement
+/// 2. `--ignore-platform-req <name>...` (non-empty) → ignore the listed
+///    names (with `*` glob support)
+/// 3. neither → ignore nothing
+fn get_platform_requirement_filter(
+    args: &DumpAutoloadArgs,
+) -> anyhow::Result<PlatformRequirementFilter> {
+    if args.ignore_platform_reqs {
+        return Ok(PlatformRequirementFilter::ignore_all());
+    }
+    if !args.ignore_platform_req.is_empty() {
+        return PlatformRequirementFilter::from_list(&args.ignore_platform_req);
+    }
+    Ok(PlatformRequirementFilter::ignore_nothing())
 }
