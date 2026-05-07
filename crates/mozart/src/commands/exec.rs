@@ -25,37 +25,36 @@ pub async fn execute(
 ) -> anyhow::Result<()> {
     let working_dir = cli.working_dir()?;
 
-    // ExecCommand uses requireComposer in Composer; composer.json must exist.
     let composer = Composer::require(&working_dir)?;
     let bin_dir = resolve_bin_dir(&working_dir, &composer);
 
     if args.list || args.binary.is_none() {
-        let binaries = get_binaries(&working_dir, &bin_dir);
-        if binaries.is_empty() {
+        let bins = get_binaries(&composer, &bin_dir);
+        if bins.is_empty() {
             anyhow::bail!(
                 "No binaries found in composer.json or in bin-dir ({})",
-                bin_dir.display()
+                bin_dir.display(),
             );
         }
         console_writeln!(
             console,
             &console_format!("<comment>Available binaries:</comment>"),
         );
-        for (name, is_local) in &binaries {
+        for (bin, is_local) in &bins {
             if *is_local {
-                console_writeln!(console, &console_format!("<info>- {} (local)</info>", name),);
+                console_writeln!(console, &console_format!("<info>- {bin} (local)</info>"));
             } else {
-                console_writeln!(console, &console_format!("<info>- {}</info>", name),);
+                console_writeln!(console, &console_format!("<info>- {bin}</info>"));
             }
         }
         return Ok(());
     }
 
-    let binary_name = args.binary.as_deref().unwrap();
+    let binary = args.binary.as_deref().unwrap();
 
     // Resolve binary path: check bin_dir first, then root package bin entries
     let bin_path = {
-        let candidate = bin_dir.join(binary_name);
+        let candidate = bin_dir.join(binary);
         if candidate.exists() {
             Some(candidate)
         } else {
@@ -68,7 +67,7 @@ pub async fn execute(
                         .file_name()
                         .and_then(|n| n.to_str())
                         .unwrap_or(&entry);
-                    if stem == binary_name && p.exists() {
+                    if stem == binary && p.exists() {
                         Some(p)
                     } else {
                         None
@@ -83,7 +82,7 @@ pub async fn execute(
     let bin_path = bin_path.ok_or_else(|| {
         anyhow::anyhow!(
             "Binary \"{}\" not found. Use --list to see available binaries.",
-            binary_name
+            binary
         )
     })?;
 
@@ -110,65 +109,44 @@ pub async fn execute(
 }
 
 fn resolve_bin_dir(working_dir: &Path, composer: &Composer) -> PathBuf {
-    // bin-dir's `{$vendor-dir}` placeholder is already resolved by Composer::load.
     working_dir.join(&composer.config().bin_dir)
 }
 
 /// Returns a vec of (name, is_local) tuples for all available binaries.
-/// Vendor binaries come first (is_local=false), then root package binaries
-/// not already present (is_local=true). Result is sorted alphabetically.
-fn get_binaries(working_dir: &Path, bin_dir: &Path) -> Vec<(String, bool)> {
-    let mut binaries: Vec<(String, bool)> = Vec::new();
-
-    // Collect from bin_dir (vendor binaries)
-    if let Ok(entries) = std::fs::read_dir(bin_dir) {
-        let mut vendor_names: Vec<String> = entries
+/// Vendor binaries come first (is_local=false), then root package binaries.
+fn get_binaries(composer: &Composer, bin_dir: &Path) -> Vec<(String, bool)> {
+    let bins: Vec<(String, bool)> = if let Ok(entries) = std::fs::read_dir(bin_dir) {
+        let mut bins: Vec<(String, bool)> = entries
             .filter_map(|e| e.ok())
-            .filter_map(|e| {
-                let path = e.path();
-                if path.is_file() {
-                    let name = path.file_name()?.to_str()?.to_string();
-                    // Skip .bat files if a same-stem non-.bat file exists
-                    if name.ends_with(".bat") {
-                        let stem = &name[..name.len() - 4];
-                        if bin_dir.join(stem).exists() {
-                            return None;
-                        }
-                    }
-                    Some(name)
-                } else {
-                    None
-                }
-            })
+            .filter_map(|e| Some(e.path().file_name()?.to_string_lossy().into_owned()))
+            .map(|e| (e, false))
             .collect();
-        vendor_names.sort();
-        for name in vendor_names {
-            binaries.push((name, false));
+        bins.sort();
+        bins
+    } else {
+        Vec::new()
+    };
+
+    let local_bins: Vec<(String, bool)> = composer
+        .package()
+        .bin
+        .iter()
+        .filter_map(|e| Some(PathBuf::from(e).file_name()?.to_string_lossy().into_owned()))
+        .map(|e| (e, true))
+        .collect();
+
+    let mut binaries = Vec::new();
+    let mut previous_bin: Option<&String> = None;
+    for (name, is_local) in bins.iter().chain(&local_bins) {
+        if let Some(prev) = previous_bin
+            && *name == format!("{prev}.bat")
+        {
+            continue;
         }
+        previous_bin = Some(name);
+        binaries.push((name.clone(), *is_local));
     }
 
-    // Collect from root composer.json bin entries
-    let composer_json_path = working_dir.join("composer.json");
-    if let Ok(root) = mozart_core::package::read_from_file(&composer_json_path) {
-        let existing: indexmap::IndexSet<&str> = binaries.iter().map(|(n, _)| n.as_str()).collect();
-        let mut local: Vec<String> = root
-            .bin
-            .iter()
-            .filter_map(|entry| {
-                Path::new(entry)
-                    .file_name()
-                    .and_then(|n| n.to_str())
-                    .map(|s| s.to_string())
-            })
-            .filter(|name| !existing.contains(name.as_str()))
-            .collect();
-        local.sort();
-        for name in local {
-            binaries.push((name, true));
-        }
-    }
-
-    binaries.sort_by(|a, b| a.0.cmp(&b.0));
     binaries
 }
 
@@ -248,7 +226,8 @@ mod tests {
         )
         .unwrap();
 
-        let binaries = get_binaries(dir.path(), &bin_dir);
+        let composer = Composer::require(dir.path()).unwrap();
+        let binaries = get_binaries(&composer, &bin_dir);
         let names: Vec<&str> = binaries.iter().map(|(n, _)| n.as_str()).collect();
         assert!(names.contains(&"phpunit"));
         assert!(names.contains(&"phpstan"));
@@ -273,7 +252,8 @@ mod tests {
         )
         .unwrap();
 
-        let binaries = get_binaries(dir.path(), &bin_dir);
+        let composer = Composer::require(dir.path()).unwrap();
+        let binaries = get_binaries(&composer, &bin_dir);
         let names: Vec<&str> = binaries.iter().map(|(n, _)| n.as_str()).collect();
         assert!(names.contains(&"phpunit"));
         assert!(!names.contains(&"phpunit.bat"));
@@ -291,7 +271,8 @@ mod tests {
         )
         .unwrap();
 
-        let binaries = get_binaries(dir.path(), &bin_dir);
+        let composer = Composer::require(dir.path()).unwrap();
+        let binaries = get_binaries(&composer, &bin_dir);
         let names: Vec<&str> = binaries.iter().map(|(n, _)| n.as_str()).collect();
         assert!(names.contains(&"my-tool"));
         assert!(names.contains(&"helper"));
@@ -313,7 +294,8 @@ mod tests {
         )
         .unwrap();
 
-        let binaries = get_binaries(dir.path(), &bin_dir);
+        let composer = Composer::require(dir.path()).unwrap();
+        let binaries = get_binaries(&composer, &bin_dir);
         assert!(binaries.is_empty());
     }
 
@@ -327,7 +309,8 @@ mod tests {
         .unwrap();
 
         let bin_dir = dir.path().join("vendor/bin");
-        let binaries = get_binaries(dir.path(), &bin_dir);
+        let composer = Composer::require(dir.path()).unwrap();
+        let binaries = get_binaries(&composer, &bin_dir);
         assert!(
             binaries.is_empty(),
             "Expected no binaries to trigger error path"
