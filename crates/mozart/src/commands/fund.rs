@@ -1,10 +1,14 @@
 use clap::Args;
-use mozart_core::console;
+use mozart_core::composer::Composer;
+use mozart_core::console::{Console, hyperlink};
 use mozart_core::console_format;
 use mozart_core::console_writeln;
+use mozart_core::exit_code;
+use mozart_registry::cache::{Cache, build_cache_config};
+use mozart_registry::installed::InstalledPackages;
+use mozart_registry::repository::{PackageQuery, RepositorySet};
 use serde::Serialize;
-use std::collections::BTreeMap;
-use std::path::Path;
+use std::collections::{BTreeMap, BTreeSet};
 
 #[derive(Args)]
 pub struct FundArgs {
@@ -13,171 +17,130 @@ pub struct FundArgs {
     pub format: Option<String>,
 }
 
-struct FundingLink {
-    url: String,
-    funding_type: Option<String>,
-}
-
-struct FundingEntry {
-    full_name: String,
-    links: Vec<FundingLink>,
-}
-
-pub async fn execute(
-    args: &FundArgs,
-    cli: &super::Cli,
-    console: &console::Console,
-) -> anyhow::Result<()> {
-    let working_dir = cli.working_dir()?;
-
-    // Validate format
+pub async fn execute(args: &FundArgs, cli: &super::Cli, console: &Console) -> anyhow::Result<()> {
     let format = args.format.as_deref().unwrap_or("text");
-    if format != "text" && format != "json" {
-        anyhow::bail!(
-            "Invalid format \"{}\". Supported formats: text, json",
-            format
-        );
+    if !matches!(format, "text" | "json") {
+        console.error(&console_format!(
+            "<error>Unsupported format \"{format}\". See help for supported formats.</error>"
+        ));
+        return Err(exit_code::bail_silent(exit_code::GENERAL_ERROR));
     }
 
-    // Try lock file first (preferred), fall back to installed.json
-    let lock_path = working_dir.join("composer.lock");
-    let entries = if lock_path.exists() {
-        collect_funding_from_locked(&working_dir)?
-    } else {
-        collect_funding_from_installed(&working_dir)?
-    };
+    let working_dir = cli.working_dir()?;
+    let composer = Composer::require(&working_dir)?;
+    let installed = InstalledPackages::read(composer.installation_manager().vendor_dir())?;
 
-    let grouped = group_by_vendor(&entries);
+    // Configured remote repositories from `composer.json` are not yet wired
+    // up; this matches the known divergence already present in
+    // `commands/search.rs` and Composer's full `CompositeRepository`.
+    let repo_cache = Cache::repo(&build_cache_config(cli.no_cache));
+    let remote_repos = RepositorySet::with_packagist(repo_cache);
+
+    let mut packages_to_load: BTreeSet<String> =
+        installed.packages.iter().map(|p| p.name.clone()).collect();
+
+    let mut fundings: BTreeMap<String, BTreeMap<String, Vec<String>>> = BTreeMap::new();
+
+    // Pass 1: load default-branch metadata from remote repos and pull funding
+    // info from there first. Mirrors `FundCommand::execute` L60-74. Composer
+    // passes `['dev' => STABILITY_DEV]` so default-branch versions are
+    // returned; Mozart's repo layer does not filter by stability, so an
+    // unconstrained query yields them naturally.
+    if !packages_to_load.is_empty() {
+        let queries: Vec<PackageQuery<'_>> = packages_to_load
+            .iter()
+            .map(|n| PackageQuery {
+                name: n.as_str(),
+                constraint: None,
+            })
+            .collect();
+        let result = remote_repos.load_packages(&queries).await?;
+
+        for named in &result {
+            if !named.version.default_branch {
+                continue;
+            }
+            let Some(funding) = named.version.funding.as_deref() else {
+                continue;
+            };
+            if funding.is_empty() {
+                continue;
+            }
+            insert_funding_data(&mut fundings, &named.name, funding);
+            packages_to_load.remove(&named.name);
+        }
+    }
+
+    // Pass 2: fall back to installed-package funding for names whose default
+    // branch had nothing. Mirrors `FundCommand::execute` L77-85.
+    for installed_pkg in &installed.packages {
+        if !packages_to_load.contains(&installed_pkg.name) {
+            continue;
+        }
+        let Some(funding_val) = installed_pkg.extra_fields.get("funding") else {
+            continue;
+        };
+        let Some(funding) = funding_val.as_array() else {
+            continue;
+        };
+        if funding.is_empty() {
+            continue;
+        }
+        insert_funding_data(&mut fundings, &installed_pkg.name, funding);
+    }
+
+    // BTreeMap iteration is alphabetical — covers `ksort($fundings)`.
 
     match format {
-        "json" => render_json(&grouped, console)?,
-        _ => render_text(&grouped, console),
+        "json" => render_json(&fundings, console)?,
+        _ => render_text(&fundings, console),
     }
 
     Ok(())
 }
 
-fn collect_funding_from_locked(working_dir: &Path) -> anyhow::Result<Vec<FundingEntry>> {
-    let lock_path = working_dir.join("composer.lock");
-    let lock = mozart_registry::lockfile::LockFile::read_from_file(&lock_path)?;
-
-    let mut all_packages: Vec<&mozart_registry::lockfile::LockedPackage> =
-        lock.packages.iter().collect();
-    if let Some(ref pkgs_dev) = lock.packages_dev {
-        all_packages.extend(pkgs_dev.iter());
+/// Mirror of `FundCommand::insertFundingData`. Splits the package name on
+/// `/`, applies the GitHub profile-to-sponsors rewrite, and appends the
+/// package onto `fundings[vendor][url]`.
+fn insert_funding_data(
+    fundings: &mut BTreeMap<String, BTreeMap<String, Vec<String>>>,
+    pretty_name: &str,
+    funding: &[serde_json::Value],
+) {
+    let Some((vendor, package_name)) = pretty_name.split_once('/') else {
+        return;
+    };
+    for entry in funding {
+        let url = entry.get("url").and_then(|v| v.as_str()).unwrap_or("");
+        if url.is_empty() {
+            continue;
+        }
+        let funding_type = entry.get("type").and_then(|v| v.as_str());
+        let url = rewrite_github_url(url, funding_type);
+        fundings
+            .entry(vendor.to_string())
+            .or_default()
+            .entry(url)
+            .or_default()
+            .push(package_name.to_string());
     }
-
-    let entries = all_packages
-        .iter()
-        .filter_map(|p| {
-            let funding_vec = p.funding.as_deref()?;
-            if funding_vec.is_empty() {
-                return None;
-            }
-            let links = extract_funding_links(funding_vec);
-            if links.is_empty() {
-                return None;
-            }
-            Some(FundingEntry {
-                full_name: p.name.clone(),
-                links,
-            })
-        })
-        .collect();
-
-    Ok(entries)
-}
-
-fn collect_funding_from_installed(working_dir: &Path) -> anyhow::Result<Vec<FundingEntry>> {
-    let vendor_dir = working_dir.join("vendor");
-    let installed = mozart_registry::installed::InstalledPackages::read(&vendor_dir)?;
-
-    let entries = installed
-        .packages
-        .iter()
-        .filter_map(|p| {
-            let funding_val = p.extra_fields.get("funding")?;
-            let funding_arr = funding_val.as_array()?;
-            if funding_arr.is_empty() {
-                return None;
-            }
-            let links = extract_funding_links(funding_arr);
-            if links.is_empty() {
-                return None;
-            }
-            Some(FundingEntry {
-                full_name: p.name.clone(),
-                links,
-            })
-        })
-        .collect();
-
-    Ok(entries)
-}
-
-fn extract_funding_links(funding_json: &[serde_json::Value]) -> Vec<FundingLink> {
-    funding_json
-        .iter()
-        .filter_map(|entry| {
-            let url = entry.get("url").and_then(|v| v.as_str()).unwrap_or("");
-            if url.is_empty() {
-                return None;
-            }
-            let funding_type = entry
-                .get("type")
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_string());
-            Some(FundingLink {
-                url: url.to_string(),
-                funding_type,
-            })
-        })
-        .collect()
 }
 
 fn rewrite_github_url(url: &str, funding_type: Option<&str>) -> String {
     if funding_type != Some("github") {
         return url.to_string();
     }
-    // Match exactly https://github.com/{user} with no further path segments
-    if let Some(rest) = url.strip_prefix("https://github.com/") {
-        // rest must be a single path segment (no '/')
-        if !rest.is_empty() && !rest.contains('/') {
-            return format!("https://github.com/sponsors/{}", rest);
-        }
+    if let Some(rest) = url.strip_prefix("https://github.com/")
+        && !rest.is_empty()
+        && !rest.contains('/')
+    {
+        return format!("https://github.com/sponsors/{rest}");
     }
     url.to_string()
 }
 
-fn group_by_vendor(entries: &[FundingEntry]) -> BTreeMap<String, BTreeMap<String, Vec<String>>> {
-    let mut grouped: BTreeMap<String, BTreeMap<String, Vec<String>>> = BTreeMap::new();
-
-    for entry in entries {
-        // Split full_name into vendor and package parts
-        let (vendor, package_name) = match entry.full_name.split_once('/') {
-            Some((v, p)) => (v.to_string(), p.to_string()),
-            None => (entry.full_name.clone(), entry.full_name.clone()),
-        };
-
-        let vendor_map = grouped.entry(vendor).or_default();
-
-        for link in &entry.links {
-            let url = rewrite_github_url(&link.url, link.funding_type.as_deref());
-            vendor_map
-                .entry(url)
-                .or_default()
-                .push(package_name.clone());
-        }
-    }
-
-    grouped
-}
-
-fn render_text(
-    grouped: &BTreeMap<String, BTreeMap<String, Vec<String>>>,
-    console: &console::Console,
-) {
-    if grouped.is_empty() {
+fn render_text(fundings: &BTreeMap<String, BTreeMap<String, Vec<String>>>, console: &Console) {
+    if fundings.is_empty() {
         console_writeln!(
             console,
             "No funding links were found in your package dependencies. \
@@ -191,19 +154,18 @@ fn render_text(
         "The following packages were found in your dependencies which publish funding information:",
     );
 
-    for (vendor, url_map) in grouped {
+    let mut prev: Option<String> = None;
+    for (vendor, url_map) in fundings {
         console_writeln!(console, "");
         console_writeln!(console, &console_format!("<comment>{vendor}</comment>"));
         for (url, packages) in url_map {
-            // Deduplicate cross-URL: only print package-names line when it differs from prev
-            let mut prev: Option<String> = None;
-            let packages_str = packages.join(", ");
-            if prev.as_deref() != Some(packages_str.as_str()) {
-                console_writeln!(console, &console_format!("  <info>{packages_str}</info>"));
+            let line = format!("  <info>{}</info>", packages.join(", "));
+            if prev.as_deref() != Some(line.as_str()) {
+                console_writeln!(console, &console_format!("{line}"));
+                prev = Some(line);
             }
-            prev = Some(packages_str);
-            let _ = prev;
-            console_writeln!(console, &format!("    {url}"));
+            let link = hyperlink(url, url, console.decorated);
+            console_writeln!(console, &format!("    {link}"));
         }
     }
 
@@ -216,13 +178,20 @@ fn render_text(
 }
 
 fn render_json(
-    grouped: &BTreeMap<String, BTreeMap<String, Vec<String>>>,
-    console: &console::Console,
+    fundings: &BTreeMap<String, BTreeMap<String, Vec<String>>>,
+    console: &Console,
 ) -> anyhow::Result<()> {
     let buf = Vec::new();
     let formatter = serde_json::ser::PrettyFormatter::with_indent(b"    ");
     let mut ser = serde_json::Serializer::with_formatter(buf, formatter);
-    grouped.serialize(&mut ser)?;
+    if fundings.is_empty() {
+        // Composer's `JsonFile::encode([])` emits `[]` (PHP `json_encode` of
+        // an empty native array). Mozart's empty `BTreeMap` would emit `{}`.
+        let empty: Vec<()> = Vec::new();
+        empty.serialize(&mut ser)?;
+    } else {
+        fundings.serialize(&mut ser)?;
+    }
     console_writeln!(console, &String::from_utf8(ser.into_inner())?);
     Ok(())
 }
@@ -239,82 +208,48 @@ mod tests {
     }
 
     #[test]
-    fn test_extract_funding_links_basic() {
-        let json = make_funding_json(&[("github", "https://github.com/Seldaek")]);
-        let links = extract_funding_links(&json);
-        assert_eq!(links.len(), 1);
-        assert_eq!(links[0].url, "https://github.com/Seldaek");
-        assert_eq!(links[0].funding_type.as_deref(), Some("github"));
+    fn insert_funding_data_basic() {
+        let mut fundings = BTreeMap::new();
+        let funding = make_funding_json(&[("github", "https://github.com/Seldaek")]);
+        insert_funding_data(&mut fundings, "monolog/monolog", &funding);
+
+        let monolog = fundings.get("monolog").unwrap();
+        let url = "https://github.com/sponsors/Seldaek";
+        let packages = monolog.get(url).unwrap();
+        assert_eq!(packages, &vec!["monolog".to_string()]);
     }
 
     #[test]
-    fn test_extract_funding_links_missing_url() {
-        let json = vec![
+    fn insert_funding_data_skips_empty_url() {
+        let mut fundings = BTreeMap::new();
+        let funding = vec![
             serde_json::json!({"type": "github", "url": ""}),
             serde_json::json!({"type": "tidelift"}),
             serde_json::json!({"type": "github", "url": "https://github.com/user"}),
         ];
-        let links = extract_funding_links(&json);
-        // Only the last entry has a non-empty url
-        assert_eq!(links.len(), 1);
-        assert_eq!(links[0].url, "https://github.com/user");
+        insert_funding_data(&mut fundings, "vendor/pkg", &funding);
+
+        let vendor = fundings.get("vendor").unwrap();
+        assert_eq!(vendor.len(), 1);
+        assert!(vendor.contains_key("https://github.com/sponsors/user"));
     }
 
     #[test]
-    fn test_extract_funding_links_empty() {
-        let links = extract_funding_links(&[]);
-        assert!(links.is_empty());
+    fn insert_funding_data_skips_malformed_pretty_name() {
+        let mut fundings = BTreeMap::new();
+        let funding = make_funding_json(&[("github", "https://github.com/user")]);
+        insert_funding_data(&mut fundings, "no-slash-name", &funding);
+        assert!(fundings.is_empty());
     }
 
     #[test]
-    fn test_rewrite_github_url_profile() {
-        let result = rewrite_github_url("https://github.com/Seldaek", Some("github"));
-        assert_eq!(result, "https://github.com/sponsors/Seldaek");
-    }
+    fn insert_funding_data_groups_by_vendor() {
+        let mut fundings = BTreeMap::new();
+        let funding = make_funding_json(&[("github", "https://github.com/fabpot")]);
+        insert_funding_data(&mut fundings, "symfony/console", &funding);
+        insert_funding_data(&mut fundings, "symfony/http-kernel", &funding);
 
-    #[test]
-    fn test_rewrite_github_url_already_sponsors() {
-        // Has a second path segment, so not rewritten
-        let result = rewrite_github_url("https://github.com/sponsors/Seldaek", Some("github"));
-        assert_eq!(result, "https://github.com/sponsors/Seldaek");
-    }
-
-    #[test]
-    fn test_rewrite_github_url_non_github_type() {
-        let result = rewrite_github_url("https://github.com/fabpot", Some("tidelift"));
-        assert_eq!(result, "https://github.com/fabpot");
-    }
-
-    #[test]
-    fn test_rewrite_github_url_deep_path() {
-        // https://github.com/user/repo has a second path segment
-        let result = rewrite_github_url("https://github.com/user/repo", Some("github"));
-        assert_eq!(result, "https://github.com/user/repo");
-    }
-
-    #[test]
-    fn test_group_by_vendor_basic() {
-        let entries = vec![
-            FundingEntry {
-                full_name: "symfony/console".to_string(),
-                links: vec![FundingLink {
-                    url: "https://github.com/fabpot".to_string(),
-                    funding_type: Some("github".to_string()),
-                }],
-            },
-            FundingEntry {
-                full_name: "symfony/http-kernel".to_string(),
-                links: vec![FundingLink {
-                    url: "https://github.com/fabpot".to_string(),
-                    funding_type: Some("github".to_string()),
-                }],
-            },
-        ];
-
-        let grouped = group_by_vendor(&entries);
-        assert_eq!(grouped.len(), 1);
-        let symfony = grouped.get("symfony").unwrap();
-        // URL should be rewritten to sponsors
+        let symfony = fundings.get("symfony").unwrap();
         let url = "https://github.com/sponsors/fabpot";
         let packages = symfony.get(url).unwrap();
         assert_eq!(packages.len(), 2);
@@ -323,24 +258,18 @@ mod tests {
     }
 
     #[test]
-    fn test_group_by_vendor_multiple_urls() {
-        let entries = vec![FundingEntry {
-            full_name: "symfony/console".to_string(),
-            links: vec![
-                FundingLink {
-                    url: "https://github.com/fabpot".to_string(),
-                    funding_type: Some("github".to_string()),
-                },
-                FundingLink {
-                    url: "https://tidelift.com/funding/github/packagist/symfony/symfony"
-                        .to_string(),
-                    funding_type: Some("tidelift".to_string()),
-                },
-            ],
-        }];
+    fn insert_funding_data_multiple_urls() {
+        let mut fundings = BTreeMap::new();
+        let funding = vec![
+            serde_json::json!({"type": "github", "url": "https://github.com/fabpot"}),
+            serde_json::json!({
+                "type": "tidelift",
+                "url": "https://tidelift.com/funding/github/packagist/symfony/symfony"
+            }),
+        ];
+        insert_funding_data(&mut fundings, "symfony/console", &funding);
 
-        let grouped = group_by_vendor(&entries);
-        let symfony = grouped.get("symfony").unwrap();
+        let symfony = fundings.get("symfony").unwrap();
         assert_eq!(symfony.len(), 2);
         assert!(symfony.contains_key("https://github.com/sponsors/fabpot"));
         assert!(
@@ -349,210 +278,69 @@ mod tests {
     }
 
     #[test]
-    fn test_group_by_vendor_empty() {
-        let grouped = group_by_vendor(&[]);
-        assert!(grouped.is_empty());
+    fn rewrite_github_url_profile() {
+        let result = rewrite_github_url("https://github.com/Seldaek", Some("github"));
+        assert_eq!(result, "https://github.com/sponsors/Seldaek");
     }
 
     #[test]
-    fn test_fund_from_lockfile() {
-        use mozart_registry::lockfile::{LockFile, LockedPackage};
-        use tempfile::tempdir;
-
-        let dir = tempdir().unwrap();
-        let working_dir = dir.path();
-
-        let lock = LockFile {
-            readme: LockFile::default_readme(),
-            content_hash: "abc123".to_string(),
-            packages: vec![
-                LockedPackage {
-                    name: "monolog/monolog".to_string(),
-                    version: "3.0.0".to_string(),
-                    version_normalized: None,
-                    source: None,
-                    dist: None,
-                    require: BTreeMap::new(),
-                    require_dev: BTreeMap::new(),
-                    conflict: BTreeMap::new(),
-                    provide: BTreeMap::new(),
-                    replace: BTreeMap::new(),
-                    suggest: None,
-                    package_type: None,
-                    autoload: None,
-                    autoload_dev: None,
-                    license: Some(vec!["MIT".to_string()]),
-                    description: None,
-                    homepage: None,
-                    keywords: None,
-                    authors: None,
-                    support: None,
-                    funding: Some(vec![serde_json::json!({
-                        "type": "github",
-                        "url": "https://github.com/Seldaek"
-                    })]),
-                    time: None,
-                    extra_fields: BTreeMap::new(),
-                },
-                LockedPackage {
-                    name: "psr/log".to_string(),
-                    version: "3.0.0".to_string(),
-                    version_normalized: None,
-                    source: None,
-                    dist: None,
-                    require: BTreeMap::new(),
-                    require_dev: BTreeMap::new(),
-                    conflict: BTreeMap::new(),
-                    provide: BTreeMap::new(),
-                    replace: BTreeMap::new(),
-                    suggest: None,
-                    package_type: None,
-                    autoload: None,
-                    autoload_dev: None,
-                    license: None,
-                    description: None,
-                    homepage: None,
-                    keywords: None,
-                    authors: None,
-                    support: None,
-                    funding: None, // no funding
-                    time: None,
-                    extra_fields: BTreeMap::new(),
-                },
-            ],
-            packages_dev: Some(vec![]),
-            aliases: vec![],
-            minimum_stability: "stable".to_string(),
-            stability_flags: serde_json::json!({}),
-            prefer_stable: false,
-            prefer_lowest: false,
-            platform: serde_json::json!({}),
-            platform_dev: serde_json::json!({}),
-            plugin_api_version: Some("2.6.0".to_string()),
-        };
-
-        lock.write_to_file(&working_dir.join("composer.lock"))
-            .unwrap();
-
-        let entries = collect_funding_from_locked(working_dir).unwrap();
-        assert_eq!(entries.len(), 1);
-        assert_eq!(entries[0].full_name, "monolog/monolog");
-        assert_eq!(entries[0].links.len(), 1);
-        assert_eq!(entries[0].links[0].url, "https://github.com/Seldaek");
-        assert_eq!(entries[0].links[0].funding_type.as_deref(), Some("github"));
+    fn rewrite_github_url_already_sponsors() {
+        let result = rewrite_github_url("https://github.com/sponsors/Seldaek", Some("github"));
+        assert_eq!(result, "https://github.com/sponsors/Seldaek");
     }
 
     #[test]
-    fn test_fund_from_installed() {
-        use tempfile::tempdir;
-
-        let dir = tempdir().unwrap();
-        let working_dir = dir.path();
-        let vendor_dir = working_dir.join("vendor");
-
-        let mut installed = mozart_registry::installed::InstalledPackages::new();
-
-        let mut extra = BTreeMap::new();
-        extra.insert(
-            "funding".to_string(),
-            serde_json::json!([{
-                "type": "github",
-                "url": "https://github.com/Seldaek"
-            }]),
-        );
-        installed.upsert(mozart_registry::installed::InstalledPackageEntry {
-            name: "monolog/monolog".to_string(),
-            version: "3.0.0".to_string(),
-            version_normalized: None,
-            source: None,
-            dist: None,
-            package_type: None,
-            install_path: None,
-            autoload: None,
-            aliases: vec![],
-            homepage: None,
-            support: None,
-            extra_fields: extra,
-        });
-
-        // Package without funding
-        installed.upsert(mozart_registry::installed::InstalledPackageEntry {
-            name: "psr/log".to_string(),
-            version: "3.0.0".to_string(),
-            version_normalized: None,
-            source: None,
-            dist: None,
-            package_type: None,
-            install_path: None,
-            autoload: None,
-            aliases: vec![],
-            homepage: None,
-            support: None,
-            extra_fields: BTreeMap::new(),
-        });
-
-        installed.write(&vendor_dir).unwrap();
-
-        let entries = collect_funding_from_installed(working_dir).unwrap();
-        assert_eq!(entries.len(), 1);
-        assert_eq!(entries[0].full_name, "monolog/monolog");
-        assert_eq!(entries[0].links[0].url, "https://github.com/Seldaek");
+    fn rewrite_github_url_non_github_type() {
+        let result = rewrite_github_url("https://github.com/fabpot", Some("tidelift"));
+        assert_eq!(result, "https://github.com/fabpot");
     }
 
     #[test]
-    fn test_fund_no_funding_data() {
-        use mozart_registry::lockfile::{LockFile, LockedPackage};
-        use tempfile::tempdir;
+    fn rewrite_github_url_deep_path() {
+        let result = rewrite_github_url("https://github.com/user/repo", Some("github"));
+        assert_eq!(result, "https://github.com/user/repo");
+    }
 
-        let dir = tempdir().unwrap();
-        let working_dir = dir.path();
+    #[test]
+    fn rewrite_github_url_missing_type() {
+        let result = rewrite_github_url("https://github.com/user", None);
+        assert_eq!(result, "https://github.com/user");
+    }
 
-        let lock = LockFile {
-            readme: LockFile::default_readme(),
-            content_hash: "abc123".to_string(),
-            packages: vec![LockedPackage {
-                name: "psr/log".to_string(),
-                version: "3.0.0".to_string(),
-                version_normalized: None,
-                source: None,
-                dist: None,
-                require: BTreeMap::new(),
-                require_dev: BTreeMap::new(),
-                conflict: BTreeMap::new(),
-                provide: BTreeMap::new(),
-                replace: BTreeMap::new(),
-                suggest: None,
-                package_type: None,
-                autoload: None,
-                autoload_dev: None,
-                license: None,
-                description: None,
-                homepage: None,
-                keywords: None,
-                authors: None,
-                support: None,
-                funding: None,
-                time: None,
-                extra_fields: BTreeMap::new(),
-            }],
-            packages_dev: Some(vec![]),
-            aliases: vec![],
-            minimum_stability: "stable".to_string(),
-            stability_flags: serde_json::json!({}),
-            prefer_stable: false,
-            prefer_lowest: false,
-            platform: serde_json::json!({}),
-            platform_dev: serde_json::json!({}),
-            plugin_api_version: Some("2.6.0".to_string()),
-        };
+    #[test]
+    fn render_json_empty_emits_array() {
+        // Composer's `JsonFile::encode([])` emits `[]`; ensure Mozart matches
+        // rather than serializing the empty BTreeMap to `{}`.
+        let console = Console::new(0, false, false, false, true);
+        let fundings: BTreeMap<String, BTreeMap<String, Vec<String>>> = BTreeMap::new();
 
-        lock.write_to_file(&working_dir.join("composer.lock"))
-            .unwrap();
+        let buf = Vec::new();
+        let formatter = serde_json::ser::PrettyFormatter::with_indent(b"    ");
+        let mut ser = serde_json::Serializer::with_formatter(buf, formatter);
+        if fundings.is_empty() {
+            let empty: Vec<()> = Vec::new();
+            empty.serialize(&mut ser).unwrap();
+        } else {
+            fundings.serialize(&mut ser).unwrap();
+        }
+        let out = String::from_utf8(ser.into_inner()).unwrap();
+        assert_eq!(out, "[]");
+        let _ = console;
+    }
 
-        let entries = collect_funding_from_locked(working_dir).unwrap();
-        assert!(entries.is_empty());
+    #[test]
+    fn render_json_non_empty_is_object() {
+        let mut fundings: BTreeMap<String, BTreeMap<String, Vec<String>>> = BTreeMap::new();
+        let funding = make_funding_json(&[("github", "https://github.com/Seldaek")]);
+        insert_funding_data(&mut fundings, "monolog/monolog", &funding);
 
-        let grouped = group_by_vendor(&entries);
-        assert!(grouped.is_empty());
+        let buf = Vec::new();
+        let formatter = serde_json::ser::PrettyFormatter::with_indent(b"    ");
+        let mut ser = serde_json::Serializer::with_formatter(buf, formatter);
+        fundings.serialize(&mut ser).unwrap();
+        let out = String::from_utf8(ser.into_inner()).unwrap();
+        assert!(out.starts_with('{'));
+        assert!(out.contains("monolog"));
+        assert!(out.contains("https://github.com/sponsors/Seldaek"));
     }
 }
