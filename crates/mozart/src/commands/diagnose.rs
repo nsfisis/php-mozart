@@ -1,8 +1,11 @@
 use clap::Args;
 use colored::Colorize;
 use mozart_core::MOZART_VERSION;
+use mozart_core::composer::Composer;
 use mozart_core::console::Console;
 use mozart_core::console_writeln;
+use mozart_core::factory::create_config;
+use std::borrow::Cow;
 use std::path::{Path, PathBuf};
 
 #[derive(Args)]
@@ -391,19 +394,13 @@ pub async fn execute(
 
     let mut exit_code: i32 = 0;
 
-    // Determine cache directory (same logic as build_cache_config)
-    let cache_dir = if let Ok(dir) = std::env::var("COMPOSER_CACHE_DIR") {
-        PathBuf::from(dir)
+    let composer = Composer::try_load(&working_dir)?;
+    let config = if let Some(composer) = &composer {
+        Cow::Borrowed(composer.config())
     } else {
-        let base = if let Ok(xdg) = std::env::var("XDG_CACHE_HOME") {
-            PathBuf::from(xdg)
-        } else if let Ok(home) = std::env::var("HOME") {
-            PathBuf::from(home).join(".cache")
-        } else {
-            PathBuf::from("/tmp")
-        };
-        base.join("mozart")
+        Cow::Owned(create_config()?)
     };
+    let cache_dir = PathBuf::from(&config.cache_dir);
 
     // 1. Mozart version info
     print_info_line(&check_version(), console);

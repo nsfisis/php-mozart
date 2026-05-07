@@ -1,6 +1,8 @@
 use clap::Args;
 use mozart_core::composer::Composer;
 use mozart_core::console_writeln;
+use mozart_core::factory::create_config;
+use std::borrow::Cow;
 use std::path::PathBuf;
 
 #[derive(Args)]
@@ -96,29 +98,14 @@ pub async fn execute(
     // 1. Determine working directory
     let working_dir = cli.working_dir()?;
 
-    // 2. Load Composer state for format/dir defaults. Composer's
-    //    `archive` command falls back to `Factory::createConfig()` when no
-    //    composer.json is present, so we mirror that by treating a missing
-    //    file as "use defaults" (Composer::try_load returns None).
     let composer = Composer::try_load(&working_dir)?;
-    let composer_json_path = working_dir.join("composer.json");
-    let (config_archive_format, config_archive_dir) = match composer.as_ref() {
-        Some(c) => {
-            let cfg = c.config();
-            (
-                Some(cfg.archive_format.clone()),
-                Some(cfg.archive_dir.clone()),
-            )
-        }
-        None => (None, None),
+    let config = if let Some(composer) = &composer {
+        Cow::Borrowed(composer.config())
+    } else {
+        Cow::Owned(create_config()?)
     };
 
-    // 3. Determine format: args -> config -> default "tar"
-    let format_str = args
-        .format
-        .as_deref()
-        .or(config_archive_format.as_deref())
-        .unwrap_or("tar");
+    let format_str = args.format.as_deref().unwrap_or(&config.archive_format);
     let format = ArchiveFormat::parse(format_str).ok_or_else(|| {
         anyhow::anyhow!(
             "Unsupported archive format \"{}\". Supported formats: tar, tar.gz, tar.bz2, zip",
@@ -126,12 +113,7 @@ pub async fn execute(
         )
     })?;
 
-    // 4. Determine output directory: args -> config -> default "."
-    let output_dir_str = args
-        .dir
-        .as_deref()
-        .or(config_archive_dir.as_deref())
-        .unwrap_or(".");
+    let output_dir_str = args.dir.as_deref().unwrap_or(&config.archive_dir);
     let output_dir = if std::path::Path::new(output_dir_str).is_absolute() {
         PathBuf::from(output_dir_str)
     } else {
@@ -152,6 +134,7 @@ pub async fn execute(
         )
         .await?
     } else {
+        let composer_json_path = working_dir.join("composer.json");
         // Root package mode
         if !composer_json_path.exists() {
             anyhow::bail!("No composer.json found in {}", working_dir.display());
