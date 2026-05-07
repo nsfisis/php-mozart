@@ -43,6 +43,30 @@ pub fn __format_warning_message(message: &str) -> ColoredString {
 }
 
 // ---------------------------------------------------------------------------
+// Terminal hyperlinks (OSC 8)
+// ---------------------------------------------------------------------------
+
+/// Wrap `text` in an OSC 8 terminal hyperlink escape sequence pointing at `url`.
+///
+/// Mirrors Composer's `<href=URL>text</>` formatter tag, which Symfony Console
+/// renders to the same OSC 8 sequence. Mozart's tag formatter is a
+/// compile-time proc-macro that doesn't accept runtime attributes, so this
+/// helper is the runtime path.
+///
+/// When `decorated` is `false`, returns `text` unchanged (matching Symfony's
+/// behavior of suppressing hyperlinks on non-decorated outputs).
+///
+/// Control characters in `url` (`\x00`–`\x1f`, `\x7f`) are stripped to prevent
+/// terminating the escape sequence early.
+pub fn hyperlink(url: &str, text: &str, decorated: bool) -> String {
+    if !decorated {
+        return text.to_string();
+    }
+    let safe_url: String = url.chars().filter(|c| !c.is_control()).collect();
+    format!("\x1b]8;;{safe_url}\x1b\\{text}\x1b]8;;\x1b\\")
+}
+
+// ---------------------------------------------------------------------------
 // Verbosity
 // ---------------------------------------------------------------------------
 
@@ -412,5 +436,28 @@ mod tests {
     fn test_is_debug() {
         assert!(!make_console(Verbosity::VeryVerbose).is_debug());
         assert!(make_console(Verbosity::Debug).is_debug());
+    }
+
+    #[test]
+    fn test_hyperlink_decorated() {
+        let out = hyperlink("https://example.com", "click", true);
+        assert!(out.contains("https://example.com"));
+        assert!(out.contains("click"));
+        assert!(out.starts_with("\x1b]8;;"));
+        assert!(out.ends_with("\x1b]8;;\x1b\\"));
+    }
+
+    #[test]
+    fn test_hyperlink_undecorated_returns_plain_text() {
+        let out = hyperlink("https://example.com", "click", false);
+        assert_eq!(out, "click");
+    }
+
+    #[test]
+    fn test_hyperlink_strips_control_chars_from_url() {
+        let out = hyperlink("https://example.com/\x00\x07path", "click", true);
+        assert!(out.contains("https://example.com/path"));
+        assert!(!out.contains('\x00'));
+        assert!(!out.contains('\x07'));
     }
 }

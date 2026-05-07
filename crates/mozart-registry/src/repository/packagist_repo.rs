@@ -5,9 +5,10 @@
 //! direct call. Construction takes ownership of the [`Cache`] handle so
 //! callers no longer thread it through `ResolveRequest` / `LockFileGenerationRequest`.
 
-use super::{LoadResult, NamedPackagistVersion, PackageQuery, Repository};
+use super::{LoadResult, NamedPackagistVersion, PackageQuery, Repository, SearchMode};
 use crate::cache::Cache;
 use crate::packagist;
+use crate::packagist::SearchResult;
 
 pub struct PackagistRepository {
     id: String,
@@ -53,5 +54,68 @@ impl Repository for PackagistRepository {
             }
         }
         Ok(result)
+    }
+
+    async fn search(
+        &self,
+        query: &str,
+        mode: SearchMode,
+        package_type: Option<&str>,
+    ) -> anyhow::Result<Vec<SearchResult>> {
+        match mode {
+            SearchMode::Fulltext => {
+                let (results, _total) = packagist::search_packages(query, package_type).await?;
+                Ok(results)
+            }
+            SearchMode::Name => {
+                let pattern = build_name_regex(query)?;
+                let names = packagist::fetch_package_names(package_type, &self.cache).await?;
+                Ok(names
+                    .into_iter()
+                    .filter(|name| pattern.is_match(name))
+                    .map(empty_search_result)
+                    .collect())
+            }
+            SearchMode::Vendor => {
+                let pattern = build_name_regex(query)?;
+                let vendors = packagist::fetch_vendor_names(&self.cache).await?;
+                Ok(vendors
+                    .into_iter()
+                    .filter(|name| pattern.is_match(name))
+                    .map(empty_search_result)
+                    .collect())
+            }
+        }
+    }
+}
+
+/// Build the case-insensitive `(?:t1|t2|...)` regex from whitespace-split
+/// tokens, mirroring Composer's `'{(?:'.implode('|', $matches).')}i'`.
+///
+/// Tokens are joined as-is — callers are expected to have already escaped
+/// regex metacharacters (`SearchCommand` calls `preg_quote`; Mozart calls
+/// `regex::escape` before reaching this point).
+fn build_name_regex(query: &str) -> anyhow::Result<regex::Regex> {
+    let tokens: Vec<&str> = query.split_whitespace().collect();
+    let body = if tokens.is_empty() {
+        String::new()
+    } else {
+        tokens.join("|")
+    };
+    Ok(regex::Regex::new(&format!("(?i)(?:{body})"))?)
+}
+
+/// Build a [`SearchResult`] with only `name` populated, mirroring the shape
+/// Composer returns for `SEARCH_NAME` / `SEARCH_VENDOR` modes
+/// (`['name' => $name]`, all other fields `null`).
+fn empty_search_result(name: String) -> SearchResult {
+    SearchResult {
+        name,
+        description: String::new(),
+        url: String::new(),
+        repository: None,
+        downloads: 0,
+        favers: 0,
+        abandoned: None,
     }
 }

@@ -10,11 +10,28 @@
 //! the live Packagist HTTP repo, [`inline_package_repo`] for `type: package`
 //! entries embedded in `composer.json`, and [`vcs_repo`] for VCS repositories.
 
-use crate::packagist::PackagistVersion;
+use crate::packagist::{PackagistVersion, SearchResult};
 
 pub mod inline_package_repo;
 pub mod packagist_repo;
 pub mod vcs_repo;
+
+/// Search modes for [`Repository::search`].
+///
+/// Mirrors Composer's `RepositoryInterface::SEARCH_FULLTEXT|SEARCH_NAME|SEARCH_VENDOR`
+/// constants (`composer/src/Composer/Repository/RepositoryInterface.php`).
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+pub enum SearchMode {
+    /// Full-text search over name, description, and keywords (Packagist's
+    /// `search.json` API).
+    Fulltext,
+    /// Match the regex against package names. Tokens are split on whitespace
+    /// and joined as `(?:t1|t2|...)`; callers must pre-quote regex metachars.
+    Name,
+    /// Match the regex against vendor names. Result rows have only `name`
+    /// populated (the vendor part).
+    Vendor,
+}
 
 /// One name-keyed lookup against a repository.
 ///
@@ -65,6 +82,22 @@ pub trait Repository: Send + Sync {
 
     /// Look up every version of every queried name this repo knows about.
     async fn load_packages(&self, queries: &[PackageQuery<'_>]) -> anyhow::Result<LoadResult>;
+
+    /// Search this repository.
+    ///
+    /// The default returns an empty result so repositories that don't
+    /// participate in search (e.g. inline / VCS repos that only resolve
+    /// known names) can opt out. Mirrors Composer's
+    /// `RepositoryInterface::search` whose default behavior on
+    /// `ArrayRepository` walks the in-memory list.
+    async fn search(
+        &self,
+        _query: &str,
+        _mode: SearchMode,
+        _package_type: Option<&str>,
+    ) -> anyhow::Result<Vec<SearchResult>> {
+        Ok(Vec::new())
+    }
 }
 
 /// Ordered list of repositories. Mirrors `Composer\Repository\RepositoryManager`.
@@ -139,5 +172,23 @@ impl RepositorySet {
         }
 
         Ok(packages)
+    }
+
+    /// Fan-out search across every repository, concatenating results in
+    /// priority order. Mirrors Composer's
+    /// `CompositeRepository::search` which `array_merge`s per-repo results
+    /// without de-duplication.
+    pub async fn search(
+        &self,
+        query: &str,
+        mode: SearchMode,
+        package_type: Option<&str>,
+    ) -> anyhow::Result<Vec<SearchResult>> {
+        let mut all = Vec::new();
+        for repo in &self.repos {
+            let mut hits = repo.search(query, mode, package_type).await?;
+            all.append(&mut hits);
+        }
+        Ok(all)
     }
 }

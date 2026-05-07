@@ -1,7 +1,9 @@
 use clap::Args;
+use mozart_core::console::{Console, hyperlink};
 use mozart_core::console_format;
 use mozart_core::console_writeln;
 use mozart_registry::packagist::SearchResult;
+use mozart_registry::repository::{RepositorySet, SearchMode};
 use serde::Serialize;
 
 /// JSON output structure matching Composer's search result schema.
@@ -50,29 +52,6 @@ pub struct SearchArgs {
     pub format: Option<String>,
 }
 
-/// Format a large count as a human-readable string (e.g. 1500 -> "1.5K", 2500000 -> "2.5M").
-#[allow(dead_code)]
-fn format_count(n: u64) -> String {
-    if n >= 1_000_000 {
-        let m = n as f64 / 1_000_000.0;
-        // Show one decimal place only when needed
-        if (m - m.floor()).abs() < 0.05 {
-            format!("{}M", m.floor() as u64)
-        } else {
-            format!("{:.1}M", m)
-        }
-    } else if n >= 1_000 {
-        let k = n as f64 / 1_000.0;
-        if (k - k.floor()).abs() < 0.05 {
-            format!("{}K", k.floor() as u64)
-        } else {
-            format!("{:.1}K", k)
-        }
-    } else {
-        n.to_string()
-    }
-}
-
 /// Returns true if the search result represents an abandoned package.
 ///
 /// The `abandoned` field from the Packagist API can be:
@@ -89,32 +68,10 @@ fn is_abandoned(result: &SearchResult) -> bool {
     }
 }
 
-/// Returns true if the result passes the `--only-name` filter: the package name must contain
-/// the query string (case-insensitive).
-fn passes_only_name(result: &SearchResult, query: &str) -> bool {
-    result.name.to_lowercase().contains(&query.to_lowercase())
-}
-
-/// Returns true if the result passes the `--only-vendor` filter: the vendor portion of the
-/// package name (before the `/`) must equal the query (case-insensitive).
-fn passes_only_vendor(result: &SearchResult, query: &str) -> bool {
-    let vendor = result.name.split('/').next().unwrap_or("");
-    vendor.eq_ignore_ascii_case(query)
-}
-
-pub async fn execute(
-    args: &SearchArgs,
-    _cli: &super::Cli,
-    console: &mozart_core::console::Console,
-) -> anyhow::Result<()> {
-    if args.only_name && args.only_vendor {
-        anyhow::bail!("--only-name and --only-vendor cannot be used together");
-    }
-
-    let query = args.tokens.join(" ");
-
+pub async fn execute(args: &SearchArgs, cli: &super::Cli, console: &Console) -> anyhow::Result<()> {
+    // 1. Format check first — matches Composer's `SearchCommand::execute`
+    //    L61-66 ordering.
     let format = args.format.as_deref().unwrap_or("text");
-
     if !matches!(format, "text" | "json") {
         console.error(&console_format!(
             "<error>Unsupported format \"{format}\". See help for supported formats.</error>"
@@ -124,125 +81,121 @@ pub async fn execute(
         ));
     }
 
-    let (all_results, _total) =
-        mozart_registry::packagist::search_packages(&query, args.r#type.as_deref()).await?;
-
-    // Apply client-side filters
-    let mut results: Vec<&SearchResult> = all_results.iter().collect();
-
-    if args.only_name {
-        results.retain(|r| passes_only_name(r, &query));
+    // 2. Mutex check on the two scoping flags. Composer's
+    //    `RepositoryFactory::generateRepositoryManager` precedes this with
+    //    `tryComposer`; we skip until configured-repos support lands.
+    if args.only_name && args.only_vendor {
+        anyhow::bail!("--only-name and --only-vendor cannot be used together");
     }
 
-    if args.only_vendor {
-        results.retain(|r| passes_only_vendor(r, &query));
+    // 3. Mode resolution. Composer checks `--only-vendor` before `--only-name`
+    //    (`SearchCommand::execute` L78-86), so vendor wins if both are set —
+    //    but the mutex check above already guards that.
+    let mode = if args.only_vendor {
+        SearchMode::Vendor
+    } else if args.only_name {
+        SearchMode::Name
+    } else {
+        SearchMode::Fulltext
+    };
 
-        // Deduplicate to unique vendor names (Composer returns vendor-only names
-        // for SEARCH_VENDOR mode).
-        let mut seen = indexmap::IndexSet::new();
-        let mut vendor_names: Vec<String> = Vec::new();
-        for r in &results {
-            let vendor = r.name.split('/').next().unwrap_or("").to_string();
-            if seen.insert(vendor.clone()) {
-                vendor_names.push(vendor);
-            }
-        }
-
-        match format {
-            "json" => {
-                let json = serde_json::to_string_pretty(&vendor_names)?;
-                console_writeln!(console, &json);
-            }
-            _ => {
-                if vendor_names.is_empty() {
-                    console.info(&console_format!(
-                        "<warning>No packages found for \"{query}\"</warning>"
-                    ));
-                } else {
-                    for vendor in &vendor_names {
-                        console_writeln!(console, &console_format!("<info>{vendor}</info>"),);
-                    }
-                }
-            }
-        }
-        return Ok(());
+    // 4. Build the query string. Composer joins tokens with a single space
+    //    and `preg_quote`s the result for non-fulltext modes so that user
+    //    input like `c++` is matched literally rather than as regex
+    //    metacharacters.
+    let mut query = args.tokens.join(" ");
+    if !matches!(mode, SearchMode::Fulltext) {
+        query = regex::escape(&query);
     }
 
-    // Output
+    // 5. Build the repository set. Configured remote repositories from
+    //    `composer.json` are not yet wired up; this is a known divergence
+    //    from Composer's full `CompositeRepository`.
+    let cache_config = mozart_registry::cache::build_cache_config(cli.no_cache);
+    let repo_cache = mozart_registry::cache::Cache::repo(&cache_config);
+    let repos = RepositorySet::with_packagist(repo_cache);
+
+    // 6. Dispatch.
+    let results = repos.search(&query, mode, args.r#type.as_deref()).await?;
+
+    // 7. Render. Empty results emit nothing in text mode (matches Composer)
+    //    and `[]` in JSON mode.
     match format {
-        "json" => {
-            let output: Vec<SearchResultOutput> = results
-                .iter()
-                .map(|r| SearchResultOutput::from(*r))
-                .collect();
-            let json = serde_json::to_string_pretty(&output)?;
-            console_writeln!(console, &json);
-        }
-        _ => {
-            if results.is_empty() {
-                console.info(&console_format!(
-                    "<warning>No packages found for \"{query}\"</warning>"
-                ));
-                return Ok(());
-            }
-
-            let width = terminal_size::terminal_size()
-                .map(|(w, _)| w.0 as usize)
-                .unwrap_or(80);
-            let name_width = results.iter().map(|r| r.name.len()).max().unwrap_or(0) + 1;
-
-            for result in &results {
-                let warning = if is_abandoned(result) {
-                    "! Abandoned ! "
-                } else {
-                    ""
-                };
-
-                let remaining = width.saturating_sub(name_width + warning.len());
-                let description = result.description.as_str();
-                let desc_display = if description.len() > remaining && remaining > 3 {
-                    format!("{}...", &description[..remaining.saturating_sub(3)])
-                } else {
-                    description.to_string()
-                };
-
-                let padding = " ".repeat(name_width.saturating_sub(result.name.len()));
-                console_writeln!(
-                    console,
-                    &format!("{}{}{}{}", result.name, padding, warning, desc_display),
-                );
-            }
-        }
+        "json" => render_json(&results, console)?,
+        _ => render_text(&results, console),
     }
 
     Ok(())
 }
 
+/// Render results as JSON with 4-space indent, matching Composer's
+/// `JsonFile::encode` output (`JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES |
+/// JSON_UNESCAPED_UNICODE`). `serde_json` does not escape forward slashes
+/// or non-ASCII Unicode by default, so the encoder configuration alone
+/// covers the latter two flags.
+fn render_json(results: &[SearchResult], console: &Console) -> anyhow::Result<()> {
+    let output: Vec<SearchResultOutput> = results.iter().map(SearchResultOutput::from).collect();
+    let buf = Vec::new();
+    let formatter = serde_json::ser::PrettyFormatter::with_indent(b"    ");
+    let mut ser = serde_json::Serializer::with_formatter(buf, formatter);
+    output.serialize(&mut ser)?;
+    console_writeln!(console, &String::from_utf8(ser.into_inner())?);
+    Ok(())
+}
+
+/// Render results in Composer's text format. For each row:
+/// - `<href=URL>name</>` (terminal hyperlink) when `url` is non-empty,
+///   else plain `name`, padded to the longest-name column.
+/// - `<warning>! Abandoned !</warning> ` prefix when abandoned.
+/// - Description, truncated with `...` to fit the terminal width.
+fn render_text(results: &[SearchResult], console: &Console) {
+    if results.is_empty() {
+        return;
+    }
+
+    let width = terminal_size::terminal_size()
+        .map(|(w, _)| w.0 as usize)
+        .unwrap_or(80);
+    let name_length = results.iter().map(|r| r.name.len()).max().unwrap_or(0) + 1;
+
+    for result in results {
+        let warning = if is_abandoned(result) {
+            console_format!("<warning>! Abandoned !</warning> ")
+        } else {
+            String::new()
+        };
+
+        // Composer uses `Console::strlen` on the warning fragment which
+        // strips formatter tags before measuring; here we count the visible
+        // chars manually since the styled string contains ANSI bytes.
+        let visible_warning_len = if warning.is_empty() { 0 } else { 14 };
+        let remaining = width.saturating_sub(name_length + visible_warning_len);
+        let description = result.description.as_str();
+        let desc_display = if description.chars().count() > remaining && remaining > 3 {
+            let cutoff: String = description.chars().take(remaining - 3).collect();
+            format!("{cutoff}...")
+        } else {
+            description.to_string()
+        };
+
+        let padding_width = name_length.saturating_sub(result.name.len());
+        let padded_name = if !result.url.is_empty() {
+            format!(
+                "{}{}",
+                hyperlink(&result.url, &result.name, console.decorated),
+                " ".repeat(padding_width)
+            )
+        } else {
+            format!("{}{}", result.name, " ".repeat(padding_width))
+        };
+
+        console_writeln!(console, &format!("{padded_name}{warning}{desc_display}"));
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn test_format_count_small() {
-        assert_eq!(format_count(0), "0");
-        assert_eq!(format_count(42), "42");
-        assert_eq!(format_count(999), "999");
-    }
-
-    #[test]
-    fn test_format_count_thousands() {
-        assert_eq!(format_count(1_000), "1K");
-        assert_eq!(format_count(1_500), "1.5K");
-        assert_eq!(format_count(2_500), "2.5K");
-        assert_eq!(format_count(10_000), "10K");
-    }
-
-    #[test]
-    fn test_format_count_millions() {
-        assert_eq!(format_count(1_000_000), "1M");
-        assert_eq!(format_count(1_500_000), "1.5M");
-        assert_eq!(format_count(2_500_000), "2.5M");
-    }
 
     #[test]
     fn test_parse_search_response() {
@@ -352,62 +305,6 @@ mod tests {
     }
 
     #[test]
-    fn test_passes_only_name_match() {
-        let result = make_result("monolog/monolog");
-        assert!(passes_only_name(&result, "monolog"));
-    }
-
-    #[test]
-    fn test_passes_only_name_partial_match() {
-        let result = make_result("monolog/monolog");
-        assert!(passes_only_name(&result, "mono"));
-    }
-
-    #[test]
-    fn test_passes_only_name_case_insensitive() {
-        let result = make_result("Monolog/Monolog");
-        assert!(passes_only_name(&result, "monolog"));
-    }
-
-    #[test]
-    fn test_passes_only_name_no_match() {
-        let result = make_result("symfony/console");
-        assert!(!passes_only_name(&result, "monolog"));
-    }
-
-    #[test]
-    fn test_passes_only_name_vendor_part_matches() {
-        let result = make_result("monolog/handler");
-        assert!(passes_only_name(&result, "monolog"));
-    }
-
-    #[test]
-    fn test_passes_only_vendor_match() {
-        let result = make_result("monolog/monolog");
-        assert!(passes_only_vendor(&result, "monolog"));
-    }
-
-    #[test]
-    fn test_passes_only_vendor_case_insensitive() {
-        let result = make_result("Monolog/SomePackage");
-        assert!(passes_only_vendor(&result, "monolog"));
-    }
-
-    #[test]
-    fn test_passes_only_vendor_no_match() {
-        // query "monolog" as vendor but package vendor is "symfony"
-        let result = make_result("symfony/console");
-        assert!(!passes_only_vendor(&result, "monolog"));
-    }
-
-    #[test]
-    fn test_passes_only_vendor_partial_does_not_match() {
-        // only_vendor requires exact vendor match, not substring
-        let result = make_result("monolog/monolog");
-        assert!(!passes_only_vendor(&result, "mono"));
-    }
-
-    #[test]
     fn test_is_abandoned_none() {
         let result = make_result("vendor/pkg");
         assert!(!is_abandoned(&result));
@@ -485,27 +382,6 @@ mod tests {
         let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
 
         assert_eq!(parsed["abandoned"], "new/pkg");
-    }
-
-    #[test]
-    fn test_only_vendor_deduplicates_vendor_names() {
-        let results = [
-            make_result("monolog/monolog"),
-            make_result("monolog/handler"),
-            make_result("monolog/formatter"),
-        ];
-        let refs: Vec<&SearchResult> = results.iter().collect();
-
-        let mut seen = indexmap::IndexSet::new();
-        let mut vendor_names: Vec<String> = Vec::new();
-        for r in &refs {
-            let vendor = r.name.split('/').next().unwrap_or("").to_string();
-            if seen.insert(vendor.clone()) {
-                vendor_names.push(vendor);
-            }
-        }
-
-        assert_eq!(vendor_names, vec!["monolog"]);
     }
 
     fn make_result(name: &str) -> SearchResult {

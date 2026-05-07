@@ -367,6 +367,78 @@ pub async fn search_packages(
     Ok((all_results, total))
 }
 
+/// Response shape of `https://packagist.org/packages/list.json[?type=...]`.
+#[derive(Debug, Deserialize)]
+struct ListResponse {
+    #[serde(rename = "packageNames")]
+    package_names: Vec<String>,
+}
+
+/// Fetch the full list of Packagist package names, optionally filtered by type.
+///
+/// Backs Composer's `ComposerRepository::getPackageNames()` for the
+/// `SEARCH_NAME` and `SEARCH_VENDOR` search modes. Cached on disk under
+/// `list-packages~{type}.json` (or `list-packages~all.json` when no type
+/// filter is given).
+#[tracing::instrument(skip(repo_cache))]
+pub async fn fetch_package_names(
+    package_type: Option<&str>,
+    repo_cache: &Cache,
+) -> anyhow::Result<Vec<String>> {
+    let cache_key = match package_type {
+        Some(t) => format!("list-packages~{t}.json"),
+        None => "list-packages~all.json".to_string(),
+    };
+
+    if let Some(cached) = repo_cache.read(&cache_key) {
+        tracing::debug!("cache hit");
+        let parsed: ListResponse = serde_json::from_str(&cached)?;
+        return Ok(parsed.package_names);
+    }
+
+    let mut url = "https://packagist.org/packages/list.json".to_string();
+    if let Some(t) = package_type {
+        url.push_str("?type=");
+        url.push_str(&url_encode(t));
+    }
+    tracing::debug!(%url, "fetching package list");
+    let client = mozart_core::http::client_builder().build()?;
+    let response = client.get(&url).send().await?;
+    tracing::debug!(status = %response.status(), "received response");
+
+    if !response.status().is_success() {
+        anyhow::bail!(
+            "Failed to fetch package list from Packagist (HTTP {})",
+            response.status()
+        );
+    }
+
+    let body = response.text().await?;
+    let _ = repo_cache.write(&cache_key, &body);
+
+    let parsed: ListResponse = serde_json::from_str(&body)?;
+    Ok(parsed.package_names)
+}
+
+/// Fetch the deduplicated list of Packagist vendor names.
+///
+/// Mirrors Composer's `ComposerRepository::getVendorNames()` which derives
+/// vendors from `getPackageNames()` (regardless of type) by stripping the
+/// `/...` suffix and de-duplicating in insertion order.
+#[tracing::instrument(skip(repo_cache))]
+pub async fn fetch_vendor_names(repo_cache: &Cache) -> anyhow::Result<Vec<String>> {
+    let names = fetch_package_names(None, repo_cache).await?;
+    let mut seen: indexmap::IndexSet<String> = indexmap::IndexSet::new();
+    for name in names {
+        let vendor = match name.split_once('/') {
+            Some((v, _)) => v.to_string(),
+            None => name,
+        };
+        seen.insert(vendor);
+    }
+    Ok(seen.into_iter().collect())
+}
+
 /// A single security advisory from the Packagist API.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct SecurityAdvisory {
