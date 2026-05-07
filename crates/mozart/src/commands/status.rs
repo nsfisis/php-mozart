@@ -501,6 +501,8 @@ mod tests {
             install_path: None,
             autoload: None,
             aliases: vec![],
+            homepage: None,
+            support: None,
             extra_fields: BTreeMap::new(),
         };
 
@@ -528,6 +530,8 @@ mod tests {
             install_path: None,
             autoload: None,
             aliases: vec![],
+            homepage: None,
+            support: None,
             extra_fields: BTreeMap::new(),
         };
 
@@ -548,6 +552,8 @@ mod tests {
             install_path: None,
             autoload: None,
             aliases: vec![],
+            homepage: None,
+            support: None,
             extra_fields: BTreeMap::new(),
         };
 
@@ -568,6 +574,8 @@ mod tests {
             install_path: None,
             autoload: None,
             aliases: vec![],
+            homepage: None,
+            support: None,
             extra_fields: BTreeMap::new(),
         };
 
@@ -590,6 +598,8 @@ mod tests {
             install_path: Some("../monolog/monolog".to_string()),
             autoload: None,
             aliases: vec![],
+            homepage: None,
+            support: None,
             extra_fields: BTreeMap::new(),
         };
 

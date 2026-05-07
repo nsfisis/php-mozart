@@ -48,6 +48,12 @@ pub struct InstalledPackageEntry {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub aliases: Vec<String>,
 
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub homepage: Option<String>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub support: Option<serde_json::Value>,
+
     #[serde(flatten)]
     pub extra_fields: BTreeMap<String, serde_json::Value>,
 }
@@ -188,6 +194,8 @@ mod tests {
             install_path: None,
             autoload: None,
             aliases: vec![],
+            homepage: None,
+            support: None,
             extra_fields: BTreeMap::new(),
         }
     }
@@ -328,5 +336,29 @@ mod tests {
         assert_eq!(loaded.packages.len(), 1);
         assert_eq!(loaded.packages[0].name, "monolog/monolog");
         assert_eq!(loaded.packages[0].version, "3.8.0");
+    }
+
+    #[test]
+    fn test_homepage_and_support_roundtrip() {
+        let json = r#"{
+            "packages": [
+                {
+                    "name": "vendor/pkg",
+                    "version": "1.0.0",
+                    "homepage": "https://vendor.example.com",
+                    "support": {"source": "https://github.com/vendor/pkg"}
+                }
+            ]
+        }"#;
+        let installed = InstalledPackages::from_json_str(json).unwrap();
+        let pkg = &installed.packages[0];
+        assert_eq!(pkg.homepage.as_deref(), Some("https://vendor.example.com"));
+        assert_eq!(
+            pkg.support
+                .as_ref()
+                .and_then(|s| s.get("source"))
+                .and_then(|s| s.as_str()),
+            Some("https://github.com/vendor/pkg")
+        );
     }
 }

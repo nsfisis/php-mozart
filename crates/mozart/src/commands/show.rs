@@ -2062,6 +2062,8 @@ mod tests {
             install_path: None,
             autoload: None,
             aliases: vec![],
+            homepage: None,
+            support: None,
             extra_fields: extra,
         };
         assert_eq!(get_installed_description(&pkg), "A logging library");
@@ -2080,6 +2082,8 @@ mod tests {
             install_path: None,
             autoload: None,
             aliases: vec![],
+            homepage: None,
+            support: None,
             extra_fields: BTreeMap::new(),
         };
         assert_eq!(get_installed_description(&pkg), "");
@@ -2103,6 +2107,8 @@ mod tests {
             install_path: None,
             autoload: None,
             aliases: vec![],
+            homepage: None,
+            support: None,
             extra_fields: extra,
         };
         assert_eq!(get_installed_keywords(&pkg), "log, psr3, logging");

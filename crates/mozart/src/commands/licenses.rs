@@ -376,6 +376,8 @@ mod tests {
             install_path: None,
             autoload: None,
             aliases: vec![],
+            homepage: None,
+            support: None,
             extra_fields: extra,
         }
     }
@@ -489,6 +491,8 @@ mod tests {
             install_path: None,
             autoload: None,
             aliases: vec![],
+            homepage: None,
+            support: None,
             extra_fields: extra,
         });
 
@@ -530,6 +534,8 @@ mod tests {
             install_path: None,
             autoload: None,
             aliases: vec![],
+            homepage: None,
+            support: None,
             extra_fields: extra_prod,
         });
 
@@ -546,6 +552,8 @@ mod tests {
             install_path: None,
             autoload: None,
             aliases: vec![],
+            homepage: None,
+            support: None,
             extra_fields: extra_dev,
         });
         installed

@@ -858,6 +858,8 @@ mod tests {
             install_path: None,
             autoload: None,
             aliases: vec![],
+            homepage: None,
+            support: None,
             extra_fields: BTreeMap::new(),
         });
         installed.write(&vendor_dir).unwrap();
@@ -887,6 +889,8 @@ mod tests {
             install_path: None,
             autoload: None,
             aliases: vec![],
+            homepage: None,
+            support: None,
             extra_fields: BTreeMap::new(),
         });
         installed.upsert(mozart_registry::installed::InstalledPackageEntry {
@@ -899,6 +903,8 @@ mod tests {
             install_path: None,
             autoload: None,
             aliases: vec![],
+            homepage: None,
+            support: None,
             extra_fields: BTreeMap::new(),
         });
         installed

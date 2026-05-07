@@ -1069,6 +1069,8 @@ mod tests {
             install_path: Some(format!("../{name}")),
             autoload: None,
             aliases: vec![],
+            homepage: None,
+            support: None,
             extra_fields: BTreeMap::new(),
         }
     }

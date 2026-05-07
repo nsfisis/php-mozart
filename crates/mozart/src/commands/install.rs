@@ -629,6 +629,8 @@ pub fn locked_to_installed_entry(
         install_path: Some(install_path),
         autoload: pkg.autoload.clone(),
         aliases: vec![],
+        homepage: pkg.homepage.clone(),
+        support: pkg.support.clone(),
         extra_fields: pkg.extra_fields.clone(),
     }
 }
@@ -1634,6 +1636,8 @@ mod tests {
             install_path: None,
             autoload: None,
             aliases: vec![],
+            homepage: None,
+            support: None,
             extra_fields: BTreeMap::new(),
         }
     }

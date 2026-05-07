@@ -1,8 +1,13 @@
 use clap::Args;
+use mozart_core::composer::Composer;
+use mozart_core::console::Console;
 use mozart_core::console_format;
 use mozart_core::console_writeln;
+use mozart_core::console_writeln_error;
 use mozart_core::exit_code;
-use std::path::Path;
+use mozart_registry::browse_repos::{BrowseRepos, CompletePackageView};
+use mozart_registry::cache::{Cache, build_cache_config};
+use mozart_registry::installed::InstalledPackages;
 use std::process::Command;
 
 #[derive(Args)]
@@ -19,381 +24,241 @@ pub struct BrowseArgs {
     pub show: bool,
 }
 
-pub async fn execute(
-    args: &BrowseArgs,
-    cli: &super::Cli,
-    console: &mozart_core::console::Console,
-) -> anyhow::Result<()> {
-    let cache_config = mozart_registry::cache::build_cache_config(cli.no_cache);
-    let repo_cache = mozart_registry::cache::Cache::repo(&cache_config);
-
+pub async fn execute(args: &BrowseArgs, cli: &super::Cli, console: &Console) -> anyhow::Result<()> {
     let working_dir = cli.working_dir()?;
+    let cache = Cache::repo(&build_cache_config(cli.no_cache));
 
-    // If no packages specified, use root package name from composer.json
+    let composer = Composer::try_load(&working_dir)?;
+    let repos = build_repos(composer.as_ref(), cache);
+
     let packages: Vec<String> = if args.packages.is_empty() {
-        let composer_json = working_dir.join("composer.json");
-        if !composer_json.exists() {
-            anyhow::bail!(
-                "No composer.json found in the current directory and no package specified."
-            );
-        }
-        console.info("No package specified, opening homepage for the root package");
-        let root = mozart_core::package::read_from_file(&composer_json)?;
-        vec![root.name.clone()]
+        console_writeln_error!(
+            console,
+            "No package specified, opening homepage for the root package"
+        );
+        // Mirrors HomeCommand's `$this->requireComposer()->getPackage()->getName()`.
+        let composer = composer.ok_or_else(|| {
+            anyhow::anyhow!(
+                "Composer could not find a composer.json file in {}",
+                working_dir.display()
+            )
+        })?;
+        vec![composer.package().name.clone()]
     } else {
         args.packages.clone()
     };
 
-    let mut exit_code = 0i32;
-
+    let mut return_code = 0i32;
     for package_name in &packages {
-        match resolve_url(package_name, &working_dir, args.homepage, &repo_cache).await? {
-            ResolveResult::Found(url) => {
-                if args.show {
-                    console_writeln!(console, &console_format!("<info>{}</info>", url),);
-                } else {
-                    open_browser(&url, console)?;
+        let mut handled = false;
+        let mut package_exists = false;
+        'outer: for repo in repos.iter() {
+            for view in repo.find_packages(package_name).await? {
+                package_exists = true;
+                if handle_package(&view, args.homepage, args.show, console)? {
+                    handled = true;
+                    break 'outer;
                 }
             }
-            ResolveResult::NotFound => {
-                console.info(&console_format!(
-                    "<warning>Package {} not found</warning>",
-                    package_name
-                ));
-                exit_code = 1;
-            }
-            ResolveResult::NoUrl => {
-                let msg = if args.homepage {
-                    format!("Invalid or missing homepage for {}", package_name)
-                } else {
-                    format!("Invalid or missing repository URL for {}", package_name)
-                };
-                console.info(&console_format!("<warning>{}</warning>", msg));
-                exit_code = 1;
-            }
+        }
+
+        if !package_exists {
+            return_code = 1;
+            console_writeln_error!(
+                console,
+                &console_format!("<warning>Package {} not found</warning>", package_name),
+            );
+        }
+
+        if !handled {
+            return_code = 1;
+            let kind = if args.homepage {
+                "Invalid or missing homepage"
+            } else {
+                "Invalid or missing repository URL"
+            };
+            console_writeln_error!(
+                console,
+                &console_format!("<warning>{} for {}</warning>", kind, package_name),
+            );
         }
     }
 
-    if exit_code != 0 {
-        return Err(exit_code::bail_silent(exit_code));
+    if return_code != 0 {
+        return Err(exit_code::bail_silent(return_code));
     }
 
     Ok(())
 }
 
-enum ResolveResult {
-    /// Package found and URL resolved
-    Found(String),
-    /// Package found but no valid URL available
-    NoUrl,
-    /// Package not found in any source
-    NotFound,
-}
-
-async fn resolve_url(
-    package_name: &str,
-    working_dir: &Path,
-    prefer_homepage: bool,
-    repo_cache: &mozart_registry::cache::Cache,
-) -> anyhow::Result<ResolveResult> {
-    // 1. Check root package (composer.json)
-    let composer_json = working_dir.join("composer.json");
-    if composer_json.exists()
-        && let Ok(root) = mozart_core::package::read_from_file(&composer_json)
-        && root.name.eq_ignore_ascii_case(package_name)
-    {
-        return Ok(match extract_url_from_root(&root, prefer_homepage) {
-            Some(url) => ResolveResult::Found(url),
-            None => ResolveResult::NoUrl,
-        });
-    }
-
-    // 2. Check lock file (composer.lock)
-    let lock_path = working_dir.join("composer.lock");
-    if lock_path.exists()
-        && let Ok(lock) = mozart_registry::lockfile::LockFile::read_from_file(&lock_path)
-    {
-        let all_packages = lock
-            .packages
-            .iter()
-            .chain(lock.packages_dev.as_deref().unwrap_or(&[]));
-
-        for pkg in all_packages {
-            if pkg.name.eq_ignore_ascii_case(package_name) {
-                return Ok(match extract_url_from_locked(pkg, prefer_homepage) {
-                    Some(url) => ResolveResult::Found(url),
-                    None => ResolveResult::NoUrl,
-                });
-            }
+fn build_repos(composer: Option<&Composer>, cache: Cache) -> BrowseRepos {
+    let (root, installed) = match composer {
+        Some(c) => {
+            let root = Some(c.package().clone());
+            let installed = InstalledPackages::read(c.installation_manager().vendor_dir()).ok();
+            (root, installed)
         }
-    }
-
-    // 3. Fall back to Packagist API
-    match mozart_registry::packagist::fetch_package_versions(package_name, repo_cache).await {
-        Ok(versions) if !versions.is_empty() => {
-            // Find the latest stable version (first non-dev, or fallback to first)
-            let best = versions
-                .iter()
-                .find(|v| !v.version.starts_with("dev-") && !v.version.ends_with("-dev"))
-                .or_else(|| versions.first());
-
-            if let Some(version) = best {
-                return Ok(match extract_url_from_packagist(version, prefer_homepage) {
-                    Some(url) => ResolveResult::Found(url),
-                    None => ResolveResult::NoUrl,
-                });
-            }
-            Ok(ResolveResult::NotFound)
-        }
-        _ => Ok(ResolveResult::NotFound),
-    }
+        None => (None, None),
+    };
+    BrowseRepos::new(root, installed, cache)
 }
 
-fn extract_url_from_locked(
-    pkg: &mozart_registry::lockfile::LockedPackage,
-    prefer_homepage: bool,
-) -> Option<String> {
-    if prefer_homepage {
-        return pkg
-            .homepage
-            .as_deref()
-            .filter(|u| is_valid_url(u))
-            .map(|u| u.to_string());
+/// Port of `HomeCommand::handlePackage`. Returns `true` on success
+/// (URL printed or browser opened), `false` when no valid URL was
+/// available — matching Composer's signal for the outer loop.
+fn handle_package(
+    view: &CompletePackageView,
+    show_homepage: bool,
+    show_only: bool,
+    console: &Console,
+) -> anyhow::Result<bool> {
+    let mut url = view
+        .support_source
+        .clone()
+        .or_else(|| view.source_url.clone());
+    if url.is_none() || show_homepage {
+        url = view.homepage.clone();
     }
 
-    // Priority: support.source → source.url → homepage
-    if let Some(ref support) = pkg.support
-        && let Some(source_url) = support.get("source").and_then(|v| v.as_str())
-        && is_valid_url(source_url)
-    {
-        return Some(source_url.to_string());
+    let Some(url) = url.filter(|u| is_valid_url(u)) else {
+        return Ok(false);
+    };
+
+    if show_only {
+        console_writeln!(console, &console_format!("<info>{}</info>", url));
+    } else {
+        open_browser(&url, console)?;
     }
-
-    if let Some(ref source) = pkg.source
-        && is_valid_url(&source.url)
-    {
-        return Some(source.url.clone());
-    }
-
-    pkg.homepage
-        .as_deref()
-        .filter(|u| is_valid_url(u))
-        .map(|u| u.to_string())
-}
-
-fn extract_url_from_root(
-    root: &mozart_core::package::RawPackageData,
-    prefer_homepage: bool,
-) -> Option<String> {
-    if prefer_homepage {
-        return root
-            .homepage
-            .as_deref()
-            .filter(|u| is_valid_url(u))
-            .map(|u| u.to_string());
-    }
-
-    // Priority: support.source → homepage (no source.url in RawPackageData)
-    if let Some(support_val) = root.extra_fields.get("support")
-        && let Some(source_url) = support_val.get("source").and_then(|v| v.as_str())
-        && is_valid_url(source_url)
-    {
-        return Some(source_url.to_string());
-    }
-
-    root.homepage
-        .as_deref()
-        .filter(|u| is_valid_url(u))
-        .map(|u| u.to_string())
-}
-
-fn extract_url_from_packagist(
-    pkg: &mozart_registry::packagist::PackagistVersion,
-    prefer_homepage: bool,
-) -> Option<String> {
-    if prefer_homepage {
-        return pkg
-            .homepage
-            .as_deref()
-            .filter(|u| is_valid_url(u))
-            .map(|u| u.to_string());
-    }
-
-    // Priority: support.source → source.url → homepage
-    if let Some(ref support) = pkg.support
-        && let Some(source_url) = support.get("source").and_then(|v| v.as_str())
-        && is_valid_url(source_url)
-    {
-        return Some(source_url.to_string());
-    }
-
-    if let Some(ref source) = pkg.source
-        && is_valid_url(&source.url)
-    {
-        return Some(source.url.clone());
-    }
-
-    pkg.homepage
-        .as_deref()
-        .filter(|u| is_valid_url(u))
-        .map(|u| u.to_string())
+    Ok(true)
 }
 
 fn is_valid_url(url: &str) -> bool {
-    match url::Url::parse(url) {
-        Ok(parsed) => matches!(parsed.scheme(), "http" | "https"),
-        Err(_) => false,
-    }
+    url::Url::parse(url).is_ok()
 }
 
-fn open_browser(url: &str, console: &mozart_core::console::Console) -> anyhow::Result<()> {
-    #[cfg(target_os = "macos")]
-    {
-        Command::new("open").arg(url).status()?;
-        return Ok(());
-    }
-
+fn open_browser(url: &str, console: &Console) -> anyhow::Result<()> {
     #[cfg(target_os = "windows")]
     {
         Command::new("cmd")
-            .args(["/C", "start", "web", "explorer", url])
+            .args(["/C", "start", "\"web\"", "explorer", url])
             .status()?;
         return Ok(());
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(not(target_os = "windows"))]
     {
-        if Command::new("which")
-            .arg("xdg-open")
-            .output()
-            .map(|o| o.status.success())
-            .unwrap_or(false)
-        {
+        let xdg_open = which("xdg-open");
+        let open = which("open");
+        if xdg_open {
             Command::new("xdg-open").arg(url).status()?;
-            return Ok(());
-        }
-        if Command::new("which")
-            .arg("open")
-            .output()
-            .map(|o| o.status.success())
-            .unwrap_or(false)
-        {
+        } else if open {
             Command::new("open").arg(url).status()?;
-            return Ok(());
+        } else {
+            console_writeln_error!(
+                console,
+                &format!(
+                    "No suitable browser opening command found, open yourself: {}",
+                    url
+                ),
+            );
         }
-        console.info(&format!(
-            "No suitable browser opener found. Please open manually: {}",
-            url
-        ));
         Ok(())
     }
+}
+
+#[cfg(not(target_os = "windows"))]
+fn which(cmd: &str) -> bool {
+    Command::new("which")
+        .arg(cmd)
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::BTreeMap;
 
-    fn make_locked_package(
-        source_url: Option<&str>,
+    fn console() -> Console {
+        Console::new(0, false, false, false, true)
+    }
+
+    fn view(
+        support: Option<&str>,
+        source: Option<&str>,
         homepage: Option<&str>,
-        support_source: Option<&str>,
-    ) -> mozart_registry::lockfile::LockedPackage {
-        let support = support_source.map(|s| serde_json::json!({"source": s}));
-        let source = source_url.map(|url| mozart_registry::lockfile::LockedSource {
-            source_type: "git".to_string(),
-            url: url.to_string(),
-            reference: None,
-        });
-        mozart_registry::lockfile::LockedPackage {
-            name: "vendor/package".to_string(),
-            version: "1.0.0".to_string(),
-            version_normalized: None,
-            source,
-            dist: None,
-            require: BTreeMap::new(),
-            require_dev: BTreeMap::new(),
-            conflict: BTreeMap::new(),
-            provide: BTreeMap::new(),
-            replace: BTreeMap::new(),
-            suggest: None,
-            package_type: None,
-            autoload: None,
-            autoload_dev: None,
-            license: None,
-            description: None,
-            homepage: homepage.map(|s| s.to_string()),
-            keywords: None,
-            authors: None,
-            support,
-            funding: None,
-            time: None,
-            extra_fields: BTreeMap::new(),
+    ) -> CompletePackageView {
+        CompletePackageView {
+            support_source: support.map(str::to_string),
+            source_url: source.map(str::to_string),
+            homepage: homepage.map(str::to_string),
         }
     }
 
     #[test]
-    fn test_is_valid_url() {
-        assert!(!is_valid_url("https://"));
+    fn is_valid_url_accepts_filter_var_compatible_schemes() {
         assert!(is_valid_url("https://example.com"));
         assert!(is_valid_url("http://example.com/path?query=1"));
-        assert!(!is_valid_url("ftp://example.com"));
-        assert!(!is_valid_url("not-a-url"));
+        assert!(is_valid_url("ftp://example.com/a"));
+    }
+
+    #[test]
+    fn is_valid_url_rejects_malformed() {
         assert!(!is_valid_url(""));
+        assert!(!is_valid_url("not-a-url"));
+        assert!(!is_valid_url("https://"));
     }
 
     #[test]
-    fn test_extract_url_from_locked_prefers_support_source() {
-        // Has all three: support.source should win
-        let pkg = make_locked_package(
-            Some("https://github.com/vendor/package.git"),
+    fn handle_package_prefers_support_source() {
+        let v = view(
+            Some("https://github.com/vendor/pkg"),
+            Some("https://github.com/vendor/pkg.git"),
             Some("https://vendor.example.com"),
-            Some("https://github.com/vendor/package"),
         );
-        let url = extract_url_from_locked(&pkg, false);
-        assert_eq!(url, Some("https://github.com/vendor/package".to_string()));
+        assert!(handle_package(&v, false, true, &console()).unwrap());
     }
 
     #[test]
-    fn test_extract_url_from_locked_prefers_homepage() {
-        // With prefer_homepage=true, only homepage is returned
-        let pkg = make_locked_package(
-            Some("https://github.com/vendor/package.git"),
-            Some("https://vendor.example.com"),
-            Some("https://github.com/vendor/package"),
-        );
-        let url = extract_url_from_locked(&pkg, true);
-        assert_eq!(url, Some("https://vendor.example.com".to_string()));
-    }
-
-    #[test]
-    fn test_extract_url_from_locked_fallback_to_source() {
-        // No support.source, has source.url
-        let pkg = make_locked_package(
-            Some("https://github.com/vendor/package.git"),
-            Some("https://vendor.example.com"),
+    fn handle_package_falls_back_to_source_url() {
+        let v = view(
             None,
+            Some("https://github.com/vendor/pkg.git"),
+            Some("https://vendor.example.com"),
         );
-        let url = extract_url_from_locked(&pkg, false);
-        assert_eq!(
-            url,
-            Some("https://github.com/vendor/package.git".to_string())
-        );
+        assert!(handle_package(&v, false, true, &console()).unwrap());
     }
 
     #[test]
-    fn test_extract_url_from_locked_fallback_to_homepage() {
-        // No source URLs, falls back to homepage
-        let pkg = make_locked_package(None, Some("https://vendor.example.com"), None);
-        let url = extract_url_from_locked(&pkg, false);
-        assert_eq!(url, Some("https://vendor.example.com".to_string()));
+    fn handle_package_falls_back_to_homepage_when_no_source() {
+        let v = view(None, None, Some("https://vendor.example.com"));
+        assert!(handle_package(&v, false, true, &console()).unwrap());
     }
 
     #[test]
-    fn test_extract_url_from_locked_no_urls() {
-        // No URLs at all
-        let pkg = make_locked_package(None, None, None);
-        let url = extract_url_from_locked(&pkg, false);
-        assert_eq!(url, None);
+    fn handle_package_show_homepage_overrides_to_homepage() {
+        let v = view(
+            Some("https://github.com/vendor/pkg"),
+            Some("https://github.com/vendor/pkg.git"),
+            Some("https://vendor.example.com"),
+        );
+        assert!(handle_package(&v, true, true, &console()).unwrap());
+    }
+
+    #[test]
+    fn handle_package_returns_false_when_no_valid_url() {
+        let v = view(None, None, None);
+        assert!(!handle_package(&v, false, true, &console()).unwrap());
+
+        // Invalid URL strings still cause `handlePackage` to bail.
+        let bad = view(Some("not-a-url"), None, None);
+        assert!(!handle_package(&bad, false, true, &console()).unwrap());
+    }
+
+    #[test]
+    fn handle_package_show_homepage_with_missing_homepage_returns_false() {
+        let v = view(Some("https://github.com/vendor/pkg"), None, None);
+        // -H and homepage absent → falls through and bails.
+        assert!(!handle_package(&v, true, true, &console()).unwrap());
     }
 }
