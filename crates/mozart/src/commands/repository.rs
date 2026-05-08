@@ -89,10 +89,7 @@ fn list_repositories(
     let mut display_repos = repos;
     if !packagist_present {
         let mut m = serde_json::Map::new();
-        m.insert(
-            "packagist.org".to_string(),
-            serde_json::Value::Bool(false),
-        );
+        m.insert("packagist.org".to_string(), serde_json::Value::Bool(false));
         display_repos.push(serde_json::Value::Object(m));
     }
 
@@ -119,10 +116,7 @@ fn list_repositories(
             .get("type")
             .and_then(|t| t.as_str())
             .unwrap_or("unknown");
-        let url = entry
-            .get("url")
-            .map(render_value)
-            .unwrap_or_default();
+        let url = entry.get("url").map(render_value).unwrap_or_default();
 
         console_writeln!(console, &format!("[{name}] {repo_type} {url}"));
     }
@@ -139,12 +133,15 @@ fn host_ends_with_packagist_org(url: &str) -> bool {
 
 fn execute_add(ctx: &BaseConfigContext, args: &RepositoryArgs) -> anyhow::Result<()> {
     let name = args.name.as_deref().ok_or_else(|| {
-        anyhow!("You must pass a repository name. Example: mozart repo add foo vcs https://example.org")
+        anyhow!(
+            "You must pass a repository name. Example: mozart repo add foo vcs https://example.org"
+        )
     })?;
 
-    let arg1 = args.arg1.as_deref().ok_or_else(|| {
-        anyhow!("You must pass the type and a url, or a JSON string.")
-    })?;
+    let arg1 = args
+        .arg1
+        .as_deref()
+        .ok_or_else(|| anyhow!("You must pass the type and a url, or a JSON string."))?;
 
     // Mirror Composer's `Preg::isMatch('{^\s*\{}', $arg1)` check.
     let repo_config = if arg1.trim_start().starts_with('{') {
@@ -186,8 +183,11 @@ fn execute_remove(ctx: &BaseConfigContext, args: &RepositoryArgs) -> anyhow::Res
         // Removing packagist means disabling it (Composer behaviour).
         // Default append=false so the disable entry goes to the front when
         // the user didn't pass --append.
-        ctx.config_source
-            .add_repository("packagist.org", &serde_json::Value::Bool(false), args.append)?;
+        ctx.config_source.add_repository(
+            "packagist.org",
+            &serde_json::Value::Bool(false),
+            args.append,
+        )?;
     }
 
     Ok(())
@@ -251,12 +251,17 @@ fn execute_disable(ctx: &BaseConfigContext, args: &RepositoryArgs) -> anyhow::Re
         .ok_or_else(|| anyhow!("Usage: mozart repo disable packagist.org"))?;
 
     if name == "packagist.org" || name == "packagist" {
-        ctx.config_source
-            .add_repository("packagist.org", &serde_json::Value::Bool(false), args.append)?;
+        ctx.config_source.add_repository(
+            "packagist.org",
+            &serde_json::Value::Bool(false),
+            args.append,
+        )?;
         return Ok(());
     }
 
-    anyhow::bail!("Only packagist.org can be enabled/disabled using this command. Use add/remove for other repositories.");
+    anyhow::bail!(
+        "Only packagist.org can be enabled/disabled using this command. Use add/remove for other repositories."
+    );
 }
 
 fn execute_enable(ctx: &BaseConfigContext, args: &RepositoryArgs) -> anyhow::Result<()> {

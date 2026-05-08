@@ -1,7 +1,7 @@
 pub mod about;
 pub mod archive;
-pub(crate) mod base_config;
 pub mod audit;
+pub(crate) mod base_config;
 pub mod browse;
 pub mod bump;
 pub mod check_platform_reqs;

@@ -10,6 +10,9 @@
 //! the live Packagist HTTP repo, [`inline_package_repo`] for `type: package`
 //! entries embedded in `composer.json`, and [`vcs_repo`] for VCS repositories.
 
+use std::collections::BTreeMap;
+
+use crate::advisory::{MatchedAdvisory, PackageInfo};
 use crate::packagist::{PackagistVersion, SearchResult};
 
 pub mod inline_package_repo;
@@ -191,4 +194,126 @@ impl RepositorySet {
         }
         Ok(all)
     }
+
+    /// Fetch security advisories matching the installed packages, with version filtering.
+    ///
+    /// Mirrors `Composer\Repository\RepositorySet::getMatchingSecurityAdvisories()`.
+    /// Returns the matched advisories (already filtered by installed version) and a list
+    /// of unreachable repository URLs. When `ignore_unreachable` is false and a repository
+    /// is unreachable, the error is propagated instead.
+    pub async fn get_matching_security_advisories(
+        &self,
+        packages: &[PackageInfo],
+        _allow_partial: bool,
+        ignore_unreachable: bool,
+    ) -> anyhow::Result<(BTreeMap<String, Vec<MatchedAdvisory>>, Vec<String>)> {
+        let names: Vec<&str> = packages.iter().map(|p| p.name.as_str()).collect();
+
+        let (raw_advisories, unreachable_repos) =
+            match crate::packagist::fetch_security_advisories(&names).await {
+                Ok(a) => (a, vec![]),
+                Err(e) if ignore_unreachable => {
+                    tracing::warn!("Packagist advisory fetch failed (ignored): {e}");
+                    let unreachable = vec!["https://packagist.org".to_string()];
+                    (BTreeMap::new(), unreachable)
+                }
+                Err(e) => return Err(e),
+            };
+
+        let matched = version_filter_advisories(&raw_advisories, packages);
+
+        Ok((matched, unreachable_repos))
+    }
+}
+
+/// Normalize single-pipe OR separators (`|`) in a version constraint string to
+/// double-pipe (`||`) so the constraint parser can handle both forms.
+///
+/// The Packagist security advisories API may return constraints with single `|`
+/// as the OR separator (e.g. `>=1.0,<1.5|>=2.0,<2.3`), but Mozart's
+/// `VersionConstraint::parse` expects `||`.
+///
+/// TODO: fix `mozart_semver::VersionConstraint::parse` to accept single `|` and remove this.
+fn normalize_or_separator(constraint: &str) -> String {
+    let bytes = constraint.as_bytes();
+    let mut result = String::with_capacity(constraint.len() + 4);
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'|' {
+            if i + 1 < bytes.len() && bytes[i + 1] == b'|' {
+                result.push_str("||");
+                i += 2;
+            } else {
+                result.push_str("||");
+                i += 1;
+            }
+        } else {
+            result.push(bytes[i] as char);
+            i += 1;
+        }
+    }
+    result
+}
+
+/// Filter raw advisories by installed package versions.
+///
+/// Mirrors the version-matching step inside Composer's repository advisory fetch.
+fn version_filter_advisories(
+    all_advisories: &BTreeMap<String, Vec<crate::packagist::SecurityAdvisory>>,
+    packages: &[PackageInfo],
+) -> BTreeMap<String, Vec<MatchedAdvisory>> {
+    let mut result: BTreeMap<String, Vec<MatchedAdvisory>> = BTreeMap::new();
+
+    for pkg in packages {
+        let Some(advisories) = all_advisories.get(&pkg.name) else {
+            continue;
+        };
+
+        let version_str = pkg
+            .version_normalized
+            .as_deref()
+            .unwrap_or(pkg.version.as_str());
+
+        let installed_ver = match mozart_semver::Version::parse(version_str) {
+            Ok(v) => v,
+            Err(_) => {
+                tracing::warn!(
+                    "Could not parse version {:?} for package {:?}, skipping advisory matching",
+                    version_str,
+                    pkg.name
+                );
+                continue;
+            }
+        };
+
+        let mut matched: Vec<MatchedAdvisory> = Vec::new();
+
+        for advisory in advisories {
+            let normalized = normalize_or_separator(&advisory.affected_versions);
+            let constraint = match mozart_semver::VersionConstraint::parse(&normalized) {
+                Ok(c) => c,
+                Err(_) => {
+                    tracing::warn!(
+                        "Could not parse affected versions {:?} for advisory {:?}, skipping",
+                        advisory.affected_versions,
+                        advisory.advisory_id
+                    );
+                    continue;
+                }
+            };
+
+            if constraint.matches(&installed_ver) {
+                matched.push(MatchedAdvisory {
+                    advisory: advisory.clone(),
+                    installed_version: pkg.version.clone(),
+                });
+            }
+        }
+
+        if !matched.is_empty() {
+            result.insert(pkg.name.clone(), matched);
+        }
+    }
+
+    result
 }

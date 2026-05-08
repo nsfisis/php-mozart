@@ -54,10 +54,7 @@ impl JsonConfigSource {
                 if let Some(inner) = val.as_object() {
                     let mut entry = serde_json::Map::new();
                     if !inner.contains_key("name") {
-                        entry.insert(
-                            "name".to_string(),
-                            serde_json::Value::String(key.clone()),
-                        );
+                        entry.insert("name".to_string(), serde_json::Value::String(key.clone()));
                     }
                     for (k, v) in inner {
                         entry.insert(k.clone(), v.clone());
@@ -91,9 +88,7 @@ impl JsonConfigSource {
             serde_json::Value::Object(o) => o.is_empty(),
             _ => false,
         };
-        if is_empty
-            && let Some(obj) = root.as_object_mut()
-        {
+        if is_empty && let Some(obj) = root.as_object_mut() {
             obj.remove("repositories");
         }
     }
@@ -269,9 +264,9 @@ impl JsonConfigSource {
 
         // List format: find entry by `name` field
         let idx = root["repositories"].as_array().and_then(|repos| {
-            repos.iter().position(|repo| {
-                repo.get("name").and_then(|n| n.as_str()) == Some(name)
-            })
+            repos
+                .iter()
+                .position(|repo| repo.get("name").and_then(|n| n.as_str()) == Some(name))
         });
 
         match idx {
@@ -329,7 +324,11 @@ mod tests {
     fn add_repository_prepend() {
         let dir = TempDir::new().unwrap();
         let (src, path) = source(&dir, "composer.json");
-        std::fs::write(&path, r#"{"repositories":[{"name":"a","type":"vcs","url":"https://a.com"}]}"#).unwrap();
+        std::fs::write(
+            &path,
+            r#"{"repositories":[{"name":"a","type":"vcs","url":"https://a.com"}]}"#,
+        )
+        .unwrap();
         src.add_repository(
             "b",
             &serde_json::json!({"type": "vcs", "url": "https://b.com"}),
@@ -346,7 +345,11 @@ mod tests {
     fn add_repository_append() {
         let dir = TempDir::new().unwrap();
         let (src, path) = source(&dir, "composer.json");
-        std::fs::write(&path, r#"{"repositories":[{"name":"a","type":"vcs","url":"https://a.com"}]}"#).unwrap();
+        std::fs::write(
+            &path,
+            r#"{"repositories":[{"name":"a","type":"vcs","url":"https://a.com"}]}"#,
+        )
+        .unwrap();
         src.add_repository(
             "b",
             &serde_json::json!({"type": "vcs", "url": "https://b.com"}),
@@ -375,11 +378,7 @@ mod tests {
     fn add_repository_disable_already_disabled_is_noop() {
         let dir = TempDir::new().unwrap();
         let (src, path) = source(&dir, "composer.json");
-        std::fs::write(
-            &path,
-            r#"{"repositories":[{"packagist.org":false}]}"#,
-        )
-        .unwrap();
+        std::fs::write(&path, r#"{"repositories":[{"packagist.org":false}]}"#).unwrap();
         src.add_repository("packagist.org", &serde_json::Value::Bool(false), true)
             .unwrap();
         let json: serde_json::Value =

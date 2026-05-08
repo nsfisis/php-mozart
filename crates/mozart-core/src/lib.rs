@@ -1,5 +1,6 @@
 extern crate self as mozart_core;
 
+pub mod advisory;
 pub mod composer;
 pub mod config;
 pub mod config_source;

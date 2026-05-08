@@ -1,3 +1,4 @@
+pub mod advisory;
 pub mod browse_repos;
 pub mod cache;
 pub mod composer_repo;

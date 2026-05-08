@@ -11,11 +11,7 @@ pub(crate) struct BaseConfigContext {
 }
 
 impl BaseConfigContext {
-    pub fn initialize(
-        global: bool,
-        file: Option<&str>,
-        cli: &super::Cli,
-    ) -> anyhow::Result<Self> {
+    pub fn initialize(global: bool, file: Option<&str>, cli: &super::Cli) -> anyhow::Result<Self> {
         if global && file.is_some() {
             anyhow::bail!("--file and --global can not be combined");
         }

@@ -1,10 +1,12 @@
-use clap::Args;
-use mozart_core::console_format;
-use mozart_core::console_writeln;
-use mozart_core::console_writeln_error;
-use mozart_registry::packagist::SecurityAdvisory;
-use std::collections::BTreeMap;
 use std::path::Path;
+
+use clap::Args;
+use indexmap::IndexMap;
+use mozart_core::advisory::{AbandonedHandling, AuditConfig, AuditFormat};
+use mozart_core::composer::Composer;
+use mozart_registry::advisory::{Auditor, PackageInfo};
+use mozart_registry::cache::{Cache, build_cache_config};
+use mozart_registry::repository::RepositorySet;
 
 #[derive(Args)]
 pub struct AuditArgs {
@@ -13,8 +15,8 @@ pub struct AuditArgs {
     pub no_dev: bool,
 
     /// Output format (table, plain, json, summary)
-    #[arg(short, long, default_value = "table")]
-    pub format: String,
+    #[arg(short, long)]
+    pub format: Option<String>,
 
     /// Audit packages from the lock file instead of installed
     #[arg(long)]
@@ -33,148 +35,95 @@ pub struct AuditArgs {
     pub ignore_unreachable: bool,
 }
 
-#[derive(Debug)]
-struct PackageEntry {
-    name: String,
-    version: String,
-    version_normalized: Option<String>,
-    abandoned: Option<serde_json::Value>,
-}
-
-/// An advisory that matched an installed package version.
-struct MatchedAdvisory {
-    advisory: SecurityAdvisory,
-    installed_version: String,
-}
-
-/// An abandoned package found during audit.
-struct AbandonedPackage {
-    name: String,
-    version: String,
-    replacement: Option<String>,
-}
-
-/// Aggregated audit results.
-struct AuditResult {
-    /// Map from package name to list of matching advisories.
-    advisories: BTreeMap<String, Vec<MatchedAdvisory>>,
-    /// Abandoned packages found (only if --abandoned != ignore).
-    abandoned: Vec<AbandonedPackage>,
-    /// Total count of advisory-affected packages.
-    affected_package_count: usize,
-    /// Total count of individual advisories.
-    total_advisory_count: usize,
-}
-
 pub async fn execute(
     args: &AuditArgs,
     cli: &super::Cli,
     console: &mozart_core::console::Console,
 ) -> anyhow::Result<()> {
-    // Validate format
-    let format = args.format.as_str();
-    if format != "table" && format != "plain" && format != "json" && format != "summary" {
-        anyhow::bail!(
-            "Invalid format \"{}\". Supported formats: table, plain, json, summary",
-            format
-        );
-    }
-
-    // Validate --abandoned
-    let abandoned_mode = match args.abandoned.as_deref().unwrap_or("fail") {
-        "ignore" => "ignore",
-        "report" => "report",
-        "fail" => "fail",
-        other => anyhow::bail!(
-            "Invalid abandoned value \"{}\". Supported values: ignore, report, fail",
-            other
-        ),
-    };
-
     let working_dir = cli.working_dir()?;
 
+    // Load Composer state (reads composer.json + config)
+    let composer = Composer::require(&working_dir)?;
+
+    // Parse audit config from composer.json's config.audit section
+    let audit_config = AuditConfig::from_config(composer.config(), true, AuditFormat::Table);
+
+    // Resolve format: CLI arg > config default (table)
+    let format = match args.format.as_deref() {
+        Some(f) => match AuditFormat::from_str(f) {
+            Some(fmt) => fmt,
+            None => anyhow::bail!(
+                "Invalid format \"{f}\". Supported formats: table, plain, json, summary"
+            ),
+        },
+        None => audit_config.audit_format,
+    };
+
+    // Resolve --abandoned: CLI > config
+    let abandoned = match args.abandoned.as_deref() {
+        Some(s) => match AbandonedHandling::from_str(s) {
+            Some(h) => h,
+            None => anyhow::bail!(
+                "Invalid abandoned value \"{s}\". Supported values: ignore, report, fail"
+            ),
+        },
+        None => audit_config.audit_abandoned,
+    };
+
+    // Merge CLI --ignore-severity with config's ignore_severity_for_audit
+    let mut ignore_severities: IndexMap<String, Option<String>> =
+        audit_config.ignore_severity_for_audit.clone();
+    for sev in &args.ignore_severity {
+        ignore_severities.entry(sev.clone()).or_insert(None);
+    }
+
+    // OR CLI --ignore-unreachable with config
+    let ignore_unreachable = args.ignore_unreachable || audit_config.ignore_unreachable;
+
     // Load packages
-    let packages = load_packages(&working_dir, args.locked, args.no_dev)?;
+    let packages = get_packages(&composer, args)?;
 
     if packages.is_empty() {
         console.info("No packages - skipping audit.");
         return Ok(());
     }
 
-    // Fetch advisories
-    let names: Vec<&str> = packages.iter().map(|p| p.name.as_str()).collect();
-    let all_advisories = match mozart_registry::packagist::fetch_security_advisories(&names).await {
-        Ok(a) => a,
-        Err(e) => {
-            if args.ignore_unreachable {
-                BTreeMap::new()
-            } else {
-                return Err(e);
-            }
-        }
-    };
+    // Build repository set
+    let repo_cache = Cache::repo(&build_cache_config(cli.no_cache));
+    let repo_set = RepositorySet::with_packagist(repo_cache);
 
-    // Filter advisories by installed versions and severity
-    let matched = filter_advisories(&all_advisories, &packages, &args.ignore_severity, console);
-
-    // Detect abandoned packages
-    let abandoned = if abandoned_mode == "ignore" {
-        Vec::new()
-    } else {
-        detect_abandoned(&packages)
-    };
-
-    // Build result
-    let affected_package_count = matched.len();
-    let total_advisory_count = matched.values().map(|v| v.len()).sum();
-
-    let result = AuditResult {
-        advisories: matched,
-        abandoned,
-        affected_package_count,
-        total_advisory_count,
-    };
-
-    // Render output
-    match format {
-        "table" => render_table(&result, console),
-        "plain" => render_plain(&result, console),
-        "json" => render_json(&result, console)?,
-        "summary" => render_summary(&result, console),
-        _ => unreachable!(),
-    }
-
-    // Compute bitmask exit code
-    let has_advisories = result.total_advisory_count > 0;
-    let has_abandoned = !result.abandoned.is_empty() && abandoned_mode == "fail";
-
-    let exit_code: i32 = match (has_advisories, has_abandoned) {
-        (false, false) => 0,
-        (true, false) => 1,
-        (false, true) => 2,
-        (true, true) => 3,
-    };
+    // Run audit
+    let exit_code = Auditor::new()
+        .audit(
+            console,
+            &repo_set,
+            &packages,
+            format,
+            false,
+            &audit_config.ignore_list_for_audit,
+            abandoned,
+            &ignore_severities,
+            ignore_unreachable,
+            &audit_config.ignore_abandoned_for_audit,
+        )
+        .await?;
 
     if exit_code != 0 {
-        return Err(mozart_core::exit_code::bail_silent(exit_code));
+        return Err(mozart_core::exit_code::bail_silent(exit_code as i32));
     }
 
     Ok(())
 }
 
-fn load_packages(
-    working_dir: &Path,
-    locked: bool,
-    no_dev: bool,
-) -> anyhow::Result<Vec<PackageEntry>> {
-    if locked {
-        load_locked_packages(working_dir, no_dev)
+fn get_packages(composer: &Composer, args: &AuditArgs) -> anyhow::Result<Vec<PackageInfo>> {
+    if args.locked {
+        load_locked_packages(composer.project_dir(), args.no_dev)
     } else {
-        load_installed_packages(working_dir, no_dev)
+        load_installed_packages(composer.project_dir(), args.no_dev)
     }
 }
 
-fn load_installed_packages(working_dir: &Path, no_dev: bool) -> anyhow::Result<Vec<PackageEntry>> {
+fn load_installed_packages(working_dir: &Path, no_dev: bool) -> anyhow::Result<Vec<PackageInfo>> {
     let vendor_dir = working_dir.join("vendor");
     let installed = mozart_registry::installed::InstalledPackages::read(&vendor_dir)?;
 
@@ -194,12 +143,12 @@ fn load_installed_packages(working_dir: &Path, no_dev: bool) -> anyhow::Result<V
             true
         })
         .map(|p| {
-            let abandoned = p.extra_fields.get("abandoned").cloned();
-            PackageEntry {
+            let abandoned_raw = p.extra_fields.get("abandoned").cloned();
+            PackageInfo {
                 name: p.name.clone(),
                 version: p.version.clone(),
                 version_normalized: p.version_normalized.clone(),
-                abandoned,
+                abandoned_raw,
             }
         })
         .collect();
@@ -207,7 +156,7 @@ fn load_installed_packages(working_dir: &Path, no_dev: bool) -> anyhow::Result<V
     Ok(packages)
 }
 
-fn load_locked_packages(working_dir: &Path, no_dev: bool) -> anyhow::Result<Vec<PackageEntry>> {
+fn load_locked_packages(working_dir: &Path, no_dev: bool) -> anyhow::Result<Vec<PackageInfo>> {
     let lock_path = working_dir.join("composer.lock");
     if !lock_path.exists() {
         anyhow::bail!(
@@ -220,19 +169,20 @@ fn load_locked_packages(working_dir: &Path, no_dev: bool) -> anyhow::Result<Vec<
     let mut all_packages: Vec<&mozart_registry::lockfile::LockedPackage> =
         lock.packages.iter().collect();
 
-    if !no_dev && let Some(ref pkgs_dev) = lock.packages_dev {
-        all_packages.extend(pkgs_dev.iter());
-    }
+    if !no_dev
+        && let Some(ref pkgs_dev) = lock.packages_dev {
+            all_packages.extend(pkgs_dev.iter());
+        }
 
     let packages = all_packages
         .iter()
         .map(|p| {
-            let abandoned = p.extra_fields.get("abandoned").cloned();
-            PackageEntry {
+            let abandoned_raw = p.extra_fields.get("abandoned").cloned();
+            PackageInfo {
                 name: p.name.clone(),
                 version: p.version.clone(),
                 version_normalized: p.version_normalized.clone(),
-                abandoned,
+                abandoned_raw,
             }
         })
         .collect();
@@ -240,603 +190,33 @@ fn load_locked_packages(working_dir: &Path, no_dev: bool) -> anyhow::Result<Vec<
     Ok(packages)
 }
 
-fn filter_advisories(
-    all_advisories: &BTreeMap<String, Vec<SecurityAdvisory>>,
-    packages: &[PackageEntry],
-    ignore_severity: &[String],
-    console: &mozart_core::console::Console,
-) -> BTreeMap<String, Vec<MatchedAdvisory>> {
-    let ignore_set: indexmap::IndexSet<String> =
-        ignore_severity.iter().map(|s| s.to_lowercase()).collect();
-
-    let mut result: BTreeMap<String, Vec<MatchedAdvisory>> = BTreeMap::new();
-
-    for pkg in packages {
-        let Some(advisories) = all_advisories.get(&pkg.name) else {
-            continue;
-        };
-
-        // Parse the installed version
-        let version_str = pkg
-            .version_normalized
-            .as_deref()
-            .unwrap_or(pkg.version.as_str());
-
-        let installed_ver = match mozart_semver::Version::parse(version_str) {
-            Ok(v) => v,
-            Err(_) => {
-                console_writeln_error!(
-                    console,
-                    &format!(
-                        "Warning: could not parse version \"{}\" for package \"{}\", skipping advisory matching",
-                        version_str, pkg.name
-                    ),
-                );
-                continue;
-            }
-        };
-
-        let mut matched: Vec<MatchedAdvisory> = Vec::new();
-
-        for advisory in advisories {
-            // Apply severity filter
-            if let Some(ref sev) = advisory.severity
-                && ignore_set.contains(&sev.to_lowercase())
-            {
-                continue;
-            }
-
-            // Parse and match the affected versions constraint.
-            // Normalize single-pipe OR separators (`|`) to double-pipe (`||`)
-            // since the Packagist API may use either form.
-            let normalized_constraint = normalize_or_separator(&advisory.affected_versions);
-            let constraint = match mozart_semver::VersionConstraint::parse(&normalized_constraint) {
-                Ok(c) => c,
-                Err(_) => {
-                    console_writeln_error!(
-                        console,
-                        &format!(
-                            "Warning: could not parse affected versions \"{}\" for advisory \"{}\", skipping",
-                            advisory.affected_versions, advisory.advisory_id
-                        ),
-                    );
-                    continue;
-                }
-            };
-
-            if constraint.matches(&installed_ver) {
-                matched.push(MatchedAdvisory {
-                    advisory: advisory.clone(),
-                    installed_version: pkg.version.clone(),
-                });
-            }
-        }
-
-        if !matched.is_empty() {
-            result.insert(pkg.name.clone(), matched);
-        }
-    }
-
-    result
-}
-
-/// Normalize single-pipe OR separators (`|`) in a version constraint string to
-/// double-pipe (`||`) so the constraint parser can handle both forms.
-///
-/// The Packagist security advisories API may return constraints with single `|`
-/// as the OR separator (e.g. `>=1.0,<1.5|>=2.0,<2.3`), but Mozart's
-/// `VersionConstraint::parse` expects `||`.
-fn normalize_or_separator(constraint: &str) -> String {
-    // Replace isolated `|` (not already `||`) with `||`.
-    // Walk byte-by-byte to avoid replacing `||` again.
-    let bytes = constraint.as_bytes();
-    let mut result = String::with_capacity(constraint.len() + 4);
-    let mut i = 0;
-    while i < bytes.len() {
-        if bytes[i] == b'|' {
-            if i + 1 < bytes.len() && bytes[i + 1] == b'|' {
-                // Already `||` — emit as-is and skip both
-                result.push_str("||");
-                i += 2;
-            } else {
-                // Single `|` — upgrade to `||`
-                result.push_str("||");
-                i += 1;
-            }
-        } else {
-            result.push(bytes[i] as char);
-            i += 1;
-        }
-    }
-    result
-}
-
-fn detect_abandoned(packages: &[PackageEntry]) -> Vec<AbandonedPackage> {
-    let mut result = Vec::new();
-
-    for pkg in packages {
-        let Some(ref abandoned_val) = pkg.abandoned else {
-            continue;
-        };
-
-        let replacement = match abandoned_val {
-            serde_json::Value::Bool(true) => None,
-            serde_json::Value::String(s) => Some(s.clone()),
-            _ => continue,
-        };
-
-        result.push(AbandonedPackage {
-            name: pkg.name.clone(),
-            version: pkg.version.clone(),
-            replacement,
-        });
-    }
-
-    result
-}
-
-fn render_table(result: &AuditResult, console: &mozart_core::console::Console) {
-    if result.total_advisory_count == 0 && result.abandoned.is_empty() {
-        console.info(&console_format!(
-            "<info>No security vulnerability advisories found.</info>"
-        ));
-        return;
-    }
-
-    if result.total_advisory_count > 0 {
-        let advisory_word = if result.total_advisory_count == 1 {
-            "advisory"
-        } else {
-            "advisories"
-        };
-        let header = format!(
-            "Found {} security vulnerability {} affecting {} package(s):",
-            result.total_advisory_count, advisory_word, result.affected_package_count
-        );
-        console_writeln_error!(console, &console_format!("<highlight>{header}</highlight>"),);
-        console_writeln_error!(console, "");
-
-        for advisories in result.advisories.values() {
-            for matched in advisories {
-                let adv = &matched.advisory;
-
-                // Compute column widths for the two-column table
-                let label_width = 17usize;
-                let rows: Vec<(&str, String)> = vec![
-                    ("Package", adv.package_name.clone()),
-                    ("Version", matched.installed_version.clone()),
-                    ("Severity", adv.severity.clone().unwrap_or_default()),
-                    ("Advisory ID", adv.advisory_id.clone()),
-                    (
-                        "CVE",
-                        adv.cve.clone().unwrap_or_else(|| "NO CVE".to_string()),
-                    ),
-                    ("Title", adv.title.clone()),
-                    ("URL", adv.link.clone().unwrap_or_default()),
-                    ("Affected versions", adv.affected_versions.clone()),
-                    ("Reported at", adv.reported_at.clone()),
-                ];
-
-                let value_width = rows.iter().map(|(_, v)| v.len()).max().unwrap_or(0).max(20);
-                let separator = format!(
-                    "+-{:-<lw$}-+-{:-<vw$}-+",
-                    "",
-                    "",
-                    lw = label_width,
-                    vw = value_width
-                );
-
-                console_writeln_error!(console, &separator);
-                for (label, value) in &rows {
-                    console_writeln_error!(
-                        console,
-                        &format!(
-                            "| {:<lw$} | {:<vw$} |",
-                            label,
-                            value,
-                            lw = label_width,
-                            vw = value_width
-                        ),
-                    );
-                }
-                console_writeln_error!(console, &separator);
-                console_writeln_error!(console, "");
-            }
-        }
-    }
-
-    if !result.abandoned.is_empty() {
-        let header = format!("Found {} abandoned package(s):", result.abandoned.len());
-        console_writeln_error!(console, &console_format!("<highlight>{header}</highlight>"),);
-        console_writeln_error!(console, "");
-
-        let name_width = 20usize;
-        let ver_width = result
-            .abandoned
-            .iter()
-            .map(|a| a.version.len())
-            .max()
-            .unwrap_or(0)
-            .max("Version".len());
-        let repl_width = result
-            .abandoned
-            .iter()
-            .map(|a| {
-                a.replacement
-                    .as_deref()
-                    .unwrap_or("No replacement suggested")
-                    .len()
-            })
-            .max()
-            .unwrap_or(0)
-            .max("Suggested Replacement".len());
-
-        console_writeln_error!(
-            console,
-            &format!(
-                "| {:<nw$} | {:<vw$} | {:<rw$} |",
-                "Abandoned Package",
-                "Version",
-                "Suggested Replacement",
-                nw = name_width,
-                vw = ver_width,
-                rw = repl_width
-            ),
-        );
-        console_writeln_error!(
-            console,
-            &format!(
-                "+-{:-<nw$}-+-{:-<vw$}-+-{:-<rw$}-+",
-                "",
-                "",
-                "",
-                nw = name_width,
-                vw = ver_width,
-                rw = repl_width
-            ),
-        );
-        for pkg in &result.abandoned {
-            let replacement = pkg
-                .replacement
-                .as_deref()
-                .unwrap_or("No replacement suggested");
-            console_writeln_error!(
-                console,
-                &format!(
-                    "| {:<nw$} | {:<vw$} | {:<rw$} |",
-                    pkg.name,
-                    pkg.version,
-                    replacement,
-                    nw = name_width,
-                    vw = ver_width,
-                    rw = repl_width
-                ),
-            );
-        }
-        console_writeln_error!(console, "");
-    }
-}
-
-fn render_plain(result: &AuditResult, console: &mozart_core::console::Console) {
-    if result.total_advisory_count == 0 && result.abandoned.is_empty() {
-        console.info("No security vulnerability advisories found.");
-        return;
-    }
-
-    if result.total_advisory_count > 0 {
-        let advisory_word = if result.total_advisory_count == 1 {
-            "advisory"
-        } else {
-            "advisories"
-        };
-        console_writeln_error!(
-            console,
-            &format!(
-                "Found {} security vulnerability {} affecting {} package(s):",
-                result.total_advisory_count, advisory_word, result.affected_package_count
-            ),
-        );
-        console_writeln_error!(console, "");
-
-        for advisories in result.advisories.values() {
-            for matched in advisories {
-                let adv = &matched.advisory;
-                console_writeln_error!(console, &format!("Package: {}", adv.package_name),);
-                console_writeln_error!(console, &format!("Version: {}", matched.installed_version),);
-                console_writeln_error!(
-                    console,
-                    &format!("Severity: {}", adv.severity.as_deref().unwrap_or("")),
-                );
-                console_writeln_error!(console, &format!("Advisory ID: {}", adv.advisory_id),);
-                console_writeln_error!(
-                    console,
-                    &format!("CVE: {}", adv.cve.as_deref().unwrap_or("NO CVE")),
-                );
-                console_writeln_error!(console, &format!("Title: {}", adv.title),);
-                console_writeln_error!(
-                    console,
-                    &format!("URL: {}", adv.link.as_deref().unwrap_or("")),
-                );
-                console_writeln_error!(
-                    console,
-                    &format!("Affected versions: {}", adv.affected_versions),
-                );
-                console_writeln_error!(console, &format!("Reported at: {}", adv.reported_at),);
-                console_writeln_error!(console, "--------");
-            }
-        }
-    }
-
-    for pkg in &result.abandoned {
-        match &pkg.replacement {
-            Some(repl) => console_writeln_error!(
-                console,
-                &format!(
-                    "{} ({}) is abandoned. Use {} instead.",
-                    pkg.name, pkg.version, repl
-                ),
-            ),
-            None => console_writeln_error!(
-                console,
-                &format!(
-                    "{} ({}) is abandoned. No replacement was suggested.",
-                    pkg.name, pkg.version
-                ),
-            ),
-        }
-    }
-}
-
-fn render_json(
-    result: &AuditResult,
-    console: &mozart_core::console::Console,
-) -> anyhow::Result<()> {
-    // Build advisories map: package_name -> [advisory objects]
-    let mut advisories_map: serde_json::Map<String, serde_json::Value> = serde_json::Map::new();
-    for (pkg_name, advisories) in &result.advisories {
-        let arr: Vec<serde_json::Value> = advisories
-            .iter()
-            .map(|m| serde_json::to_value(&m.advisory).unwrap_or(serde_json::Value::Null))
-            .collect();
-        advisories_map.insert(pkg_name.clone(), serde_json::Value::Array(arr));
-    }
-
-    // Build abandoned map: package_name -> { version, replacement }
-    let mut abandoned_map: serde_json::Map<String, serde_json::Value> = serde_json::Map::new();
-    for pkg in &result.abandoned {
-        let repl = match &pkg.replacement {
-            Some(s) => serde_json::Value::String(s.clone()),
-            None => serde_json::Value::Null,
-        };
-        let entry = serde_json::json!({
-            "version": pkg.version,
-            "replacement": repl,
-        });
-        abandoned_map.insert(pkg.name.clone(), entry);
-    }
-
-    let output = serde_json::json!({
-        "advisories": advisories_map,
-        "abandoned": abandoned_map,
-    });
-
-    console_writeln!(console, &serde_json::to_string_pretty(&output)?,);
-    Ok(())
-}
-
-fn render_summary(result: &AuditResult, console: &mozart_core::console::Console) {
-    if result.total_advisory_count == 0 {
-        console.info("No security vulnerability advisories found.");
-    } else {
-        let advisory_word = if result.total_advisory_count == 1 {
-            "advisory"
-        } else {
-            "advisories"
-        };
-        console_writeln_error!(
-            console,
-            &format!(
-                "Found {} security vulnerability {} affecting {} package(s).",
-                result.total_advisory_count, advisory_word, result.affected_package_count
-            ),
-        );
-        console.info("Run \"mozart audit\" for a full list of advisories.");
-    }
-
-    for pkg in &result.abandoned {
-        match &pkg.replacement {
-            Some(repl) => console_writeln_error!(
-                console,
-                &format!(
-                    "{} ({}) is abandoned. Use {} instead.",
-                    pkg.name, pkg.version, repl
-                ),
-            ),
-            None => console_writeln_error!(
-                console,
-                &format!(
-                    "{} ({}) is abandoned. No replacement was suggested.",
-                    pkg.name, pkg.version
-                ),
-            ),
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use mozart_registry::packagist::{AdvisorySource, SecurityAdvisory};
     use std::collections::BTreeMap;
 
-    fn make_advisory(
-        id: &str,
-        pkg: &str,
-        affected: &str,
-        severity: Option<&str>,
-    ) -> SecurityAdvisory {
-        SecurityAdvisory {
-            advisory_id: id.to_string(),
-            package_name: pkg.to_string(),
-            remote_id: format!("{id}.yaml"),
-            title: format!("Advisory {id}"),
-            link: None,
-            cve: None,
-            affected_versions: affected.to_string(),
-            source: "FriendsOfPHP/security-advisories".to_string(),
-            reported_at: "2024-01-01T00:00:00+00:00".to_string(),
-            composer_repository: None,
-            severity: severity.map(|s| s.to_string()),
-            sources: vec![],
-        }
-    }
+    use super::*;
+    use mozart_registry::lockfile::{LockFile, LockedPackage};
 
-    fn make_pkg(name: &str, version: &str, version_normalized: Option<&str>) -> PackageEntry {
-        PackageEntry {
+    fn make_pkg(name: &str, version: &str, version_normalized: Option<&str>) -> PackageInfo {
+        PackageInfo {
             name: name.to_string(),
             version: version.to_string(),
             version_normalized: version_normalized.map(|s| s.to_string()),
-            abandoned: None,
+            abandoned_raw: None,
         }
     }
 
-    fn make_pkg_abandoned(name: &str, version: &str, replacement: Option<&str>) -> PackageEntry {
-        let abandoned = match replacement {
+    fn make_pkg_abandoned(name: &str, version: &str, replacement: Option<&str>) -> PackageInfo {
+        let abandoned_raw = match replacement {
             Some(r) => Some(serde_json::Value::String(r.to_string())),
             None => Some(serde_json::Value::Bool(true)),
         };
-        PackageEntry {
+        PackageInfo {
             name: name.to_string(),
             version: version.to_string(),
             version_normalized: None,
-            abandoned,
+            abandoned_raw,
         }
-    }
-
-    fn make_console() -> mozart_core::console::Console {
-        mozart_core::console::Console::new(0, false, false, false, false)
-    }
-
-    #[test]
-    fn test_filter_advisories_matching() {
-        let console = make_console();
-        let advisory = make_advisory("PKSA-0001", "vendor/pkg", ">=1.0,<2.0", None);
-        let mut all: BTreeMap<String, Vec<SecurityAdvisory>> = BTreeMap::new();
-        all.insert("vendor/pkg".to_string(), vec![advisory]);
-
-        let packages = vec![make_pkg("vendor/pkg", "1.5.0", Some("1.5.0.0"))];
-        let result = filter_advisories(&all, &packages, &[], &console);
-
-        assert_eq!(result.len(), 1);
-        assert_eq!(result["vendor/pkg"].len(), 1);
-    }
-
-    #[test]
-    fn test_filter_advisories_not_matching() {
-        let console = make_console();
-        let advisory = make_advisory("PKSA-0002", "vendor/pkg", ">=1.0,<2.0", None);
-        let mut all: BTreeMap<String, Vec<SecurityAdvisory>> = BTreeMap::new();
-        all.insert("vendor/pkg".to_string(), vec![advisory]);
-
-        let packages = vec![make_pkg("vendor/pkg", "2.0.0", Some("2.0.0.0"))];
-        let result = filter_advisories(&all, &packages, &[], &console);
-
-        assert!(result.is_empty());
-    }
-
-    #[test]
-    fn test_filter_advisories_ignore_severity() {
-        let console = make_console();
-        let advisory = make_advisory("PKSA-0003", "vendor/pkg", ">=1.0,<2.0", Some("low"));
-        let mut all: BTreeMap<String, Vec<SecurityAdvisory>> = BTreeMap::new();
-        all.insert("vendor/pkg".to_string(), vec![advisory]);
-
-        let packages = vec![make_pkg("vendor/pkg", "1.5.0", Some("1.5.0.0"))];
-        let result = filter_advisories(&all, &packages, &["low".to_string()], &console);
-
-        assert!(result.is_empty());
-    }
-
-    #[test]
-    fn test_filter_advisories_multiple_packages() {
-        let console = make_console();
-        let adv1 = make_advisory("PKSA-0004", "vendor/pkg1", ">=1.0,<2.0", None);
-        let adv2 = make_advisory("PKSA-0005", "vendor/pkg2", ">=3.0,<4.0", None);
-        let mut all: BTreeMap<String, Vec<SecurityAdvisory>> = BTreeMap::new();
-        all.insert("vendor/pkg1".to_string(), vec![adv1]);
-        all.insert("vendor/pkg2".to_string(), vec![adv2]);
-
-        let packages = vec![
-            make_pkg("vendor/pkg1", "1.5.0", Some("1.5.0.0")),
-            make_pkg("vendor/pkg2", "3.5.0", Some("3.5.0.0")),
-        ];
-        let result = filter_advisories(&all, &packages, &[], &console);
-
-        assert_eq!(result.len(), 2);
-        assert_eq!(result["vendor/pkg1"].len(), 1);
-        assert_eq!(result["vendor/pkg2"].len(), 1);
-    }
-
-    #[test]
-    fn test_filter_advisories_complex_constraint() {
-        let console = make_console();
-        // OR constraint: >=1.0,<1.5|>=2.0,<2.3
-        let advisory = make_advisory("PKSA-0006", "vendor/pkg", ">=1.0,<1.5|>=2.0,<2.3", None);
-        let mut all: BTreeMap<String, Vec<SecurityAdvisory>> = BTreeMap::new();
-        all.insert("vendor/pkg".to_string(), vec![advisory]);
-
-        // 2.1.0 is in [2.0, 2.3) so should match
-        let packages = vec![make_pkg("vendor/pkg", "2.1.0", Some("2.1.0.0"))];
-        let result = filter_advisories(&all, &packages, &[], &console);
-
-        assert_eq!(result.len(), 1);
-    }
-
-    #[test]
-    fn test_filter_advisories_no_advisories() {
-        let console = make_console();
-        let all: BTreeMap<String, Vec<SecurityAdvisory>> = BTreeMap::new();
-        let packages = vec![make_pkg("vendor/pkg", "1.5.0", Some("1.5.0.0"))];
-        let result = filter_advisories(&all, &packages, &[], &console);
-        assert!(result.is_empty());
-    }
-
-    #[test]
-    fn test_detect_abandoned_true() {
-        let packages = vec![make_pkg_abandoned("old/pkg", "1.0.0", None)];
-        let result = detect_abandoned(&packages);
-        assert_eq!(result.len(), 1);
-        assert_eq!(result[0].name, "old/pkg");
-        assert!(result[0].replacement.is_none());
-    }
-
-    #[test]
-    fn test_detect_abandoned_with_replacement() {
-        let packages = vec![make_pkg_abandoned("old/pkg", "1.0.0", Some("new/pkg"))];
-        let result = detect_abandoned(&packages);
-        assert_eq!(result.len(), 1);
-        assert_eq!(result[0].replacement.as_deref(), Some("new/pkg"));
-    }
-
-    #[test]
-    fn test_detect_abandoned_not_abandoned() {
-        let packages = vec![make_pkg("active/pkg", "1.0.0", None)];
-        let result = detect_abandoned(&packages);
-        assert!(result.is_empty());
-    }
-
-    #[test]
-    fn test_detect_abandoned_mixed() {
-        let packages = vec![
-            make_pkg("active/pkg", "1.0.0", None),
-            make_pkg_abandoned("old/pkg", "2.0.0", Some("new/pkg")),
-            make_pkg("another/active", "3.0.0", None),
-            make_pkg_abandoned("dead/pkg", "1.0.0", None),
-        ];
-        let result = detect_abandoned(&packages);
-        assert_eq!(result.len(), 2);
-        assert!(result.iter().any(|p| p.name == "old/pkg"));
-        assert!(result.iter().any(|p| p.name == "dead/pkg"));
     }
 
     #[test]
@@ -919,7 +299,6 @@ mod tests {
 
     #[test]
     fn test_load_locked_packages() {
-        use mozart_registry::lockfile::{LockFile, LockedPackage};
         use tempfile::tempdir;
 
         let dir = tempdir().unwrap();
@@ -975,7 +354,6 @@ mod tests {
 
     #[test]
     fn test_load_locked_packages_no_dev() {
-        use mozart_registry::lockfile::{LockFile, LockedPackage};
         use tempfile::tempdir;
 
         let dir = tempdir().unwrap();
@@ -1047,12 +425,10 @@ mod tests {
         lock.write_to_file(&working_dir.join("composer.lock"))
             .unwrap();
 
-        // With --no-dev: only prod
         let packages = load_locked_packages(working_dir, true).unwrap();
         assert_eq!(packages.len(), 1);
         assert_eq!(packages[0].name, "psr/log");
 
-        // Without --no-dev: both
         let packages_all = load_locked_packages(working_dir, false).unwrap();
         assert_eq!(packages_all.len(), 2);
     }
@@ -1069,89 +445,47 @@ mod tests {
     }
 
     #[test]
-    fn test_render_json_structure() {
-        let advisory = make_advisory("PKSA-0001", "vendor/pkg", ">=1.0,<2.0", Some("high"));
-        let mut advisories: BTreeMap<String, Vec<MatchedAdvisory>> = BTreeMap::new();
-        advisories.insert(
-            "vendor/pkg".to_string(),
-            vec![MatchedAdvisory {
-                advisory,
-                installed_version: "1.5.0".to_string(),
-            }],
-        );
+    fn test_package_info_abandoned() {
+        let pkg = make_pkg_abandoned("old/pkg", "1.0.0", None);
+        assert!(pkg.is_abandoned());
+        assert!(pkg.replacement_package().is_none());
 
-        let abandoned = vec![AbandonedPackage {
-            name: "old/pkg".to_string(),
-            version: "1.0.0".to_string(),
-            replacement: Some("new/pkg".to_string()),
-        }];
+        let pkg_with_repl = make_pkg_abandoned("old/pkg", "1.0.0", Some("new/pkg"));
+        assert!(pkg_with_repl.is_abandoned());
+        assert_eq!(pkg_with_repl.replacement_package(), Some("new/pkg"));
 
-        let result = AuditResult {
-            affected_package_count: 1,
-            total_advisory_count: 1,
-            advisories,
-            abandoned,
-        };
-
-        // Should not panic
-        let console = make_console();
-        render_json(&result, &console).unwrap();
-    }
-
-    #[test]
-    fn test_render_json_empty() {
-        let console = make_console();
-        let result = AuditResult {
-            advisories: BTreeMap::new(),
-            abandoned: vec![],
-            affected_package_count: 0,
-            total_advisory_count: 0,
-        };
-        render_json(&result, &console).unwrap();
+        let active_pkg = make_pkg("active/pkg", "1.0.0", None);
+        assert!(!active_pkg.is_abandoned());
     }
 
     #[test]
     fn test_invalid_format() {
-        // We test the validation logic directly
         let format = "xml";
-        let valid =
-            format == "table" || format == "plain" || format == "json" || format == "summary";
-        assert!(!valid);
-    }
-
-    #[test]
-    fn test_invalid_abandoned_value() {
-        let value = "maybe";
-        let valid = value == "ignore" || value == "report" || value == "fail";
-        assert!(!valid);
+        assert!(AuditFormat::from_str(format).is_none());
     }
 
     #[test]
     fn test_valid_formats() {
-        for format in &["table", "plain", "json", "summary"] {
-            let valid = *format == "table"
-                || *format == "plain"
-                || *format == "json"
-                || *format == "summary";
-            assert!(valid, "format {} should be valid", format);
+        for fmt in &["table", "plain", "json", "summary"] {
+            assert!(
+                AuditFormat::from_str(fmt).is_some(),
+                "format {fmt} should be valid"
+            );
         }
+    }
+
+    #[test]
+    fn test_invalid_abandoned_value() {
+        assert!(AbandonedHandling::from_str("maybe").is_none());
     }
 
     #[test]
     fn test_valid_abandoned_values() {
         for value in &["ignore", "report", "fail"] {
-            let valid = *value == "ignore" || *value == "report" || *value == "fail";
-            assert!(valid, "abandoned value {} should be valid", value);
+            assert!(
+                AbandonedHandling::from_str(value).is_some(),
+                "abandoned value {value} should be valid"
+            );
         }
-    }
-
-    #[test]
-    fn test_advisory_source_fields() {
-        let src = AdvisorySource {
-            name: "FriendsOfPHP/security-advisories".to_string(),
-            remote_id: "monolog/monolog/2017-11-13-1.yaml".to_string(),
-        };
-        assert_eq!(src.name, "FriendsOfPHP/security-advisories");
-        assert_eq!(src.remote_id, "monolog/monolog/2017-11-13-1.yaml");
     }
 }
