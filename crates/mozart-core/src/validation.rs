@@ -115,6 +115,19 @@ pub fn parse_require_string(s: &str) -> Result<(String, String), String> {
     ))
 }
 
+/// Mirror of `Composer\Package\BasePackage::packageNameToRegexp`. Each
+/// character of `pattern` is `regex::escape`d, then `\*` is rewritten
+/// to `.*`, and the result is anchored and compiled case-insensitively.
+/// Used by selection commands (`reinstall`, `remove`, `update`, …) to
+/// expand `vendor/*`-style globs against installed/locked package names.
+pub fn package_name_to_regexp(pattern: &str) -> Regex {
+    let escaped = regex::escape(pattern).replace("\\*", ".*");
+    // PHP wraps with `{^...$}i`; in Rust we anchor with `\A`/`\z` and
+    // pass `(?i)` for case-insensitivity.
+    Regex::new(&format!(r"(?i)\A{escaped}\z"))
+        .expect("package_name_to_regexp pattern always compiles")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -204,6 +217,45 @@ mod tests {
         );
         assert_eq!(sanitize_package_name_component("already-ok"), "already-ok");
         assert_eq!(sanitize_package_name_component("__bad__"), "bad");
+    }
+
+    #[test]
+    fn test_package_name_to_regexp_exact() {
+        let re = package_name_to_regexp("monolog/monolog");
+        assert!(re.is_match("monolog/monolog"));
+        assert!(re.is_match("Monolog/Monolog"));
+        assert!(!re.is_match("psr/log"));
+        assert!(!re.is_match("monolog/monolog-extra"));
+        assert!(!re.is_match("xmonolog/monolog"));
+    }
+
+    #[test]
+    fn test_package_name_to_regexp_wildcard() {
+        let re = package_name_to_regexp("psr/*");
+        assert!(re.is_match("psr/log"));
+        assert!(re.is_match("psr/container"));
+        assert!(re.is_match("psr/log/sub"));
+        assert!(!re.is_match("monolog/monolog"));
+
+        let re = package_name_to_regexp("*/log");
+        assert!(re.is_match("psr/log"));
+        assert!(re.is_match("monolog/log"));
+        assert!(!re.is_match("psr/container"));
+
+        let re = package_name_to_regexp("symfony/*/bridge");
+        assert!(re.is_match("symfony/http/bridge"));
+        assert!(!re.is_match("symfony/bridge"));
+
+        let re = package_name_to_regexp("*");
+        assert!(re.is_match("anything/at/all"));
+    }
+
+    #[test]
+    fn test_package_name_to_regexp_escapes_metacharacters() {
+        // `.` must be literal, not "any character"
+        let re = package_name_to_regexp("foo.bar/baz");
+        assert!(re.is_match("foo.bar/baz"));
+        assert!(!re.is_match("fooXbar/baz"));
     }
 
     #[test]

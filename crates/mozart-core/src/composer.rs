@@ -219,11 +219,27 @@ impl LocalPackage {
 /// commands that walk the local install (currently: `dump-autoload`).
 pub struct LocalRepository {
     packages: Vec<LocalPackage>,
+    /// Mirrors `InstalledRepositoryInterface::getDevMode()`: `Some(true)` when
+    /// the last install ran with dev requires, `Some(false)` when run with
+    /// `--no-dev`, and `None` when the flag was absent (the legacy v1
+    /// installed.json shape, or an in-memory repository that was never
+    /// hydrated from disk). Callers default to `true` on `None`, matching
+    /// `ReinstallCommand::execute`'s `getDevMode() ?? true`.
+    dev_mode: Option<bool>,
 }
 
 impl LocalRepository {
     pub fn new(packages: Vec<LocalPackage>) -> Self {
-        Self { packages }
+        Self {
+            packages,
+            dev_mode: None,
+        }
+    }
+
+    /// Build a [`LocalRepository`] with an explicit `dev` flag taken from
+    /// `vendor/composer/installed.json`'s top-level `dev` field.
+    pub fn with_dev_mode(packages: Vec<LocalPackage>, dev_mode: Option<bool>) -> Self {
+        Self { packages, dev_mode }
     }
 
     /// Mirror of `WritableRepositoryInterface::getCanonicalPackages` —
@@ -232,6 +248,14 @@ impl LocalRepository {
     /// pass-through over the loaded packages.
     pub fn canonical_packages(&self) -> impl Iterator<Item = &LocalPackage> {
         self.packages.iter()
+    }
+
+    /// Mirror of `InstalledRepositoryInterface::getDevMode()` — returns
+    /// `None` when the source `installed.json` did not record a `dev`
+    /// flag (e.g. legacy v1 array form). Callers should default to
+    /// `true` on `None`, matching PHP's `?? true` coalesce.
+    pub fn dev_mode(&self) -> Option<bool> {
+        self.dev_mode
     }
 }
 

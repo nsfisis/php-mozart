@@ -208,8 +208,9 @@ pub fn create_composer(project_dir: PathBuf, composer_json: &Path) -> anyhow::Re
         project_dir.join(&config.vendor_dir)
     };
 
-    let local_packages = read_local_packages(&vendor_dir)?;
-    let repository_manager = RepositoryManager::new(LocalRepository::new(local_packages));
+    let (local_packages, dev_mode) = read_local_packages(&vendor_dir)?;
+    let repository_manager =
+        RepositoryManager::new(LocalRepository::with_dev_mode(local_packages, dev_mode));
     let installation_manager = InstallationManager::new(vendor_dir);
     let autoload_generator = AutoloadGenerator::new();
 
@@ -252,21 +253,24 @@ pub fn create_composer(project_dir: PathBuf, composer_json: &Path) -> anyhow::Re
 /// dependency graph; the parsing that's actually load-bearing for the
 /// install-path computation is just the package name + optional
 /// `target-dir`.
-fn read_local_packages(vendor_dir: &Path) -> anyhow::Result<Vec<LocalPackage>> {
+fn read_local_packages(vendor_dir: &Path) -> anyhow::Result<(Vec<LocalPackage>, Option<bool>)> {
     let path = vendor_dir.join("composer/installed.json");
     if !path.exists() {
-        return Ok(Vec::new());
+        return Ok((Vec::new(), None));
     }
     let content = std::fs::read_to_string(&path)?;
     let value: serde_json::Value = serde_json::from_str(&content)?;
 
-    let entries: &[serde_json::Value] = match &value {
-        serde_json::Value::Object(obj) => match obj.get("packages") {
-            Some(serde_json::Value::Array(arr)) => arr.as_slice(),
-            _ => return Ok(Vec::new()),
-        },
-        serde_json::Value::Array(arr) => arr.as_slice(),
-        _ => return Ok(Vec::new()),
+    let (entries, dev_mode): (&[serde_json::Value], Option<bool>) = match &value {
+        serde_json::Value::Object(obj) => {
+            let entries = match obj.get("packages") {
+                Some(serde_json::Value::Array(arr)) => arr.as_slice(),
+                _ => return Ok((Vec::new(), obj.get("dev").and_then(|v| v.as_bool()))),
+            };
+            (entries, obj.get("dev").and_then(|v| v.as_bool()))
+        }
+        serde_json::Value::Array(arr) => (arr.as_slice(), None),
+        _ => return Ok((Vec::new(), None)),
     };
 
     let mut out = Vec::with_capacity(entries.len());
@@ -310,7 +314,7 @@ fn read_local_packages(vendor_dir: &Path) -> anyhow::Result<Vec<LocalPackage>> {
             extra,
         ));
     }
-    Ok(out)
+    Ok((out, dev_mode))
 }
 
 fn read_package_reference(
