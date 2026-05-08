@@ -112,28 +112,6 @@ pub(crate) fn normalize_repositories(value: &serde_json::Value) -> Vec<serde_jso
     }
 }
 
-/// Convert a Composer-style associative `repositories` object to Mozart's
-/// array-of-objects format in-place.  If `repositories` is already an array
-/// (or absent), this is a no-op.
-pub(crate) fn ensure_repositories_array(json: &mut serde_json::Value) {
-    if json["repositories"].is_object() {
-        let normalized = normalize_repositories(&json["repositories"].clone());
-        json["repositories"] = serde_json::Value::Array(normalized);
-    }
-}
-
-/// Find the index of a repository entry by name in a slice of normalized
-/// repository values.  Matches against the `"name"` field.
-pub(crate) fn find_repo_by_name(repos: &[serde_json::Value], name: &str) -> Option<usize> {
-    repos.iter().position(|entry| {
-        entry
-            .get("name")
-            .and_then(|n| n.as_str())
-            .map(|n| n == name)
-            .unwrap_or(false)
-    })
-}
-
 /// Add a repository entry to the `repositories` array in json.
 /// If `append` is true, push to end; otherwise insert at beginning.
 /// Removes any existing entry with the same name first.
@@ -172,39 +150,6 @@ pub(crate) fn remove_repository(json: &mut serde_json::Value, name: &str) {
             }
         });
     }
-}
-
-/// Insert a repository entry before or after a named repository.
-/// Returns an error if the target repository is not found.
-pub(crate) fn insert_repository(
-    json: &mut serde_json::Value,
-    name: &str,
-    config: serde_json::Value,
-    target: &str,
-    before: bool,
-) -> anyhow::Result<()> {
-    if !json["repositories"].is_array() {
-        json["repositories"] = serde_json::json!([]);
-    }
-
-    remove_repository(json, name);
-
-    let repos = json["repositories"].as_array_mut().unwrap();
-
-    let pos = repos
-        .iter()
-        .position(|entry| {
-            entry.get("name").and_then(|n| n.as_str()) == Some(target)
-                || entry
-                    .as_object()
-                    .map(|obj| obj.contains_key(target))
-                    .unwrap_or(false)
-        })
-        .ok_or_else(|| anyhow!("Repository \"{target}\" not found"))?;
-
-    let insert_pos = if before { pos } else { pos + 1 };
-    repos.insert(insert_pos, config);
-    Ok(())
 }
 
 /// Render a `serde_json::Value` as a human-readable string suitable for

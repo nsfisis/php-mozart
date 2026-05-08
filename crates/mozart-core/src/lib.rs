@@ -2,6 +2,7 @@ extern crate self as mozart_core;
 
 pub mod composer;
 pub mod config;
+pub mod config_source;
 pub mod config_validator;
 pub mod console;
 pub mod exit_code;
