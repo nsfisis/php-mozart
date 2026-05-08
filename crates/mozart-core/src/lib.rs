@@ -1,5 +1,6 @@
 pub mod composer;
 pub mod config;
+pub mod config_validator;
 pub mod console;
 pub mod exit_code;
 pub mod factory;

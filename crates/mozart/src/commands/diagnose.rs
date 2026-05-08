@@ -2,295 +2,216 @@ use clap::Args;
 use colored::Colorize;
 use mozart_core::MOZART_VERSION;
 use mozart_core::composer::Composer;
+use mozart_core::config::Config;
+use mozart_core::config_validator::{ValidatorOptions, validate_manifest};
 use mozart_core::console::Console;
 use mozart_core::console_writeln;
 use mozart_core::factory::create_config;
+use mozart_core::http::HttpDownloader;
 use std::borrow::Cow;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 #[derive(Args)]
 pub struct DiagnoseArgs {}
 
+/// Result of a single check, mirroring the `string|true|string[]|\Exception`
+/// shape of `Composer\Command\DiagnoseCommand`'s private `checkX` methods.
 enum CheckResult {
-    /// OK, with optional detail string.
+    /// `<info>OK</info>` with optional detail string. Equivalent to PHP `true`.
     Ok(Option<String>),
-    /// WARNING + message.
-    Warning(String),
-    /// FAIL + message.
-    Fail(String),
-    /// SKIP + reason.
+    /// `<warning>WARNING</warning>` + message lines.
+    Warning(Vec<String>),
+    /// `<error>FAIL</error>` + message lines.
+    Fail(Vec<String>),
+    /// `<info>SKIP</info>` + reason. Composer emits this inline for the
+    /// `allow_url_fopen` / `COMPOSER_DISABLE_NETWORK` cases via the same
+    /// `outputResult` path.
     Skip(String),
-    /// Informational line (no pass/fail prefix).
-    Info(String),
 }
 
-/// Print "Checking {label}: OK/WARNING/FAIL/SKIP" and ratchet exit_code.
+impl CheckResult {
+    fn ok() -> Self {
+        CheckResult::Ok(None)
+    }
+
+    fn ok_with(detail: impl Into<String>) -> Self {
+        CheckResult::Ok(Some(detail.into()))
+    }
+
+    fn warn(msg: impl Into<String>) -> Self {
+        CheckResult::Warning(vec![msg.into()])
+    }
+
+    fn fail(msg: impl Into<String>) -> Self {
+        CheckResult::Fail(vec![msg.into()])
+    }
+}
+
+/// Mirror of `DiagnoseCommand::outputResult`. Writes the leading
+/// `Checking <label>: ` and then `<info>OK</>`, `<warning>WARNING</>` +
+/// messages, `<error>FAIL</>` + messages, or `<info>SKIP</>` + reason.
 ///
-/// Exit code ratchet: Warning → 1 (if currently 0), Fail → 2 (always overrides 1).
-fn print_check(label: &str, result: &CheckResult, exit_code: &mut i32, console: &Console) {
+/// Ratchets `exit_code`: `Warning` → 1 (if currently 0), `Fail` → 2 (always).
+fn output_result(label: &str, result: &CheckResult, exit_code: &mut i32, console: &Console) {
+    let prefix = format!("Checking {label}: ");
     match result {
         CheckResult::Ok(detail) => {
-            let ok_str = "OK".green().bold();
+            let ok = "OK".green().bold();
             match detail {
-                Some(d) => {
-                    console_writeln!(console, &format!("Checking {label}: {ok_str} ({d})"),);
-                }
-                None => {
-                    console_writeln!(console, &format!("Checking {label}: {ok_str}"),);
-                }
+                Some(d) => console_writeln!(
+                    console,
+                    &format!("{prefix}{ok} {}", format!("({d})").bright_black())
+                ),
+                None => console_writeln!(console, &format!("{prefix}{ok}")),
             }
         }
-        CheckResult::Warning(msg) => {
-            let warn_str = "WARNING".yellow().bold();
-            console_writeln!(console, &format!("Checking {label}: {warn_str}"),);
-            console_writeln!(console, &format!("  {}", msg.yellow()));
+        CheckResult::Warning(msgs) => {
+            console_writeln!(console, &format!("{prefix}{}", "WARNING".yellow().bold()));
+            for msg in msgs {
+                console_writeln!(console, &format!("{}", msg.yellow()));
+            }
             if *exit_code < 1 {
                 *exit_code = 1;
             }
         }
-        CheckResult::Fail(msg) => {
-            let fail_str = "FAIL".red().bold();
-            console_writeln!(console, &format!("Checking {label}: {fail_str}"),);
-            console_writeln!(console, &format!("  {}", msg.red()));
+        CheckResult::Fail(msgs) => {
+            console_writeln!(console, &format!("{prefix}{}", "FAIL".red().bold()));
+            for msg in msgs {
+                console_writeln!(console, &format!("{}", msg.red()));
+            }
             *exit_code = 2;
         }
         CheckResult::Skip(reason) => {
-            let skip_str = "SKIP".cyan().bold();
-            console_writeln!(console, &format!("Checking {label}: {skip_str} ({reason})"),);
-        }
-        CheckResult::Info(_) => {
-            // Info results are not "checked" — use print_info_line instead.
-        }
-    }
-}
-
-/// Print an informational line (not a check result).
-fn print_info_line(result: &CheckResult, console: &Console) {
-    if let CheckResult::Info(msg) = result {
-        console_writeln!(console, msg);
-    }
-}
-
-/// Check 1: Mozart version info (informational).
-fn check_version() -> CheckResult {
-    CheckResult::Info(format!("Mozart version {MOZART_VERSION}"))
-}
-
-/// Check 2 & 3: HTTP/HTTPS connectivity to Packagist.
-///
-/// Returns Ok if reachable, Fail if not, Skip if network is disabled.
-async fn check_http_connectivity(url: &str) -> CheckResult {
-    if std::env::var("COMPOSER_DISABLE_NETWORK").is_ok() {
-        return CheckResult::Skip("COMPOSER_DISABLE_NETWORK is set".to_string());
-    }
-
-    let client = match mozart_core::http::client_builder()
-        .timeout(std::time::Duration::from_secs(10))
-        .build()
-    {
-        Ok(c) => c,
-        Err(e) => return CheckResult::Fail(format!("Could not build HTTP client: {e}")),
-    };
-
-    match client.get(url).send().await {
-        Ok(resp) => {
-            let status = resp.status();
-            if status.is_success() || status.is_redirection() {
-                CheckResult::Ok(Some(format!("HTTP {}", status.as_u16())))
-            } else {
-                CheckResult::Warning(format!("Received HTTP {} from {url}", status.as_u16()))
-            }
-        }
-        Err(e) => CheckResult::Fail(format!("Could not reach {url}: {e}")),
-    }
-}
-
-/// Check 4: GitHub API connectivity.
-async fn check_github_api() -> CheckResult {
-    if std::env::var("COMPOSER_DISABLE_NETWORK").is_ok() {
-        return CheckResult::Skip("COMPOSER_DISABLE_NETWORK is set".to_string());
-    }
-
-    let client = match mozart_core::http::client_builder()
-        .timeout(std::time::Duration::from_secs(10))
-        .build()
-    {
-        Ok(c) => c,
-        Err(e) => return CheckResult::Fail(format!("Could not build HTTP client: {e}")),
-    };
-
-    let url = "https://api.github.com/";
-    match client.get(url).send().await {
-        Ok(resp) => {
-            let status = resp.status();
-            if status.is_success() || status.is_redirection() {
-                CheckResult::Ok(Some(format!("HTTP {}", status.as_u16())))
-            } else {
-                CheckResult::Warning(format!("Received HTTP {} from GitHub API", status.as_u16()))
-            }
-        }
-        Err(e) => CheckResult::Fail(format!("Could not reach GitHub API: {e}")),
-    }
-}
-
-/// Check 5: HTTP proxy configuration.
-///
-/// Reports any configured proxy environment variables as informational.
-fn check_http_proxy() -> CheckResult {
-    let proxy_vars = [
-        "HTTP_PROXY",
-        "HTTPS_PROXY",
-        "http_proxy",
-        "https_proxy",
-        "NO_PROXY",
-        "no_proxy",
-    ];
-
-    let mut found: Vec<String> = Vec::new();
-    for var in &proxy_vars {
-        if let Ok(val) = std::env::var(var) {
-            found.push(format!("{var}={val}"));
+            console_writeln!(
+                console,
+                &format!(
+                    "{prefix}{} {}",
+                    "SKIP".cyan().bold(),
+                    format!("({reason})").bright_black()
+                )
+            );
         }
     }
-
-    if found.is_empty() {
-        CheckResult::Ok(Some("no proxy configured".to_string()))
-    } else {
-        CheckResult::Ok(Some(found.join(", ")))
-    }
 }
 
-/// Check 6: composer.json validation.
-///
-/// Checks that it exists, is valid JSON, and has a `name` field.
-fn check_composer_json(working_dir: &Path) -> CheckResult {
-    let path = working_dir.join("composer.json");
+// -----------------------------------------------------------------------
+// Connectivity preflight (mirrors checkConnectivity / checkComposerNetworkHttpEnablement)
+// -----------------------------------------------------------------------
 
-    if !path.exists() {
-        return CheckResult::Warning(format!(
-            "composer.json not found in {}",
-            working_dir.display()
+/// Mirrors `DiagnoseCommand::checkComposerNetworkHttpEnablement` — returns a
+/// `Skip` result when `COMPOSER_DISABLE_NETWORK` is set.
+fn check_composer_network_http_enablement() -> Option<CheckResult> {
+    if std::env::var("COMPOSER_DISABLE_NETWORK").is_ok_and(|v| !v.is_empty()) {
+        return Some(CheckResult::Skip(
+            "Network is disabled by COMPOSER_DISABLE_NETWORK.".to_string(),
         ));
     }
+    None
+}
 
-    let content = match std::fs::read_to_string(&path) {
+/// Mirrors `DiagnoseCommand::checkConnectivityAndComposerNetworkHttpEnablement`.
+///
+/// Mozart has no `allow_url_fopen` analogue (we use reqwest directly), so the
+/// upstream `checkConnectivity` half is a no-op here — only the network-disabled
+/// gate fires.
+fn check_connectivity_and_network_http_enablement() -> Option<CheckResult> {
+    check_composer_network_http_enablement()
+}
+
+// -----------------------------------------------------------------------
+// Individual checks
+// -----------------------------------------------------------------------
+
+/// Mirrors `DiagnoseCommand::checkComposerSchema`. Both Composer's
+/// `ValidateCommand` and `DiagnoseCommand` instantiate the same
+/// `Composer\Util\ConfigValidator`; we mirror that by calling
+/// [`validate_manifest`] directly. Publish errors are intentionally
+/// elided — Composer's diagnose discards them too via
+/// `[$errors, , $warnings] = $validator->validate(...)`.
+fn check_composer_schema(working_dir: &Path) -> CheckResult {
+    let composer_json = working_dir.join("composer.json");
+    let content = match std::fs::read_to_string(&composer_json) {
         Ok(c) => c,
-        Err(e) => return CheckResult::Fail(format!("Could not read composer.json: {e}")),
+        Err(e) => {
+            return CheckResult::fail(format!("could not read {}: {e}", composer_json.display()));
+        }
     };
-
     let value: serde_json::Value = match serde_json::from_str(&content) {
         Ok(v) => v,
         Err(e) => {
-            return CheckResult::Fail(format!("composer.json is not valid JSON: {e}"));
+            return CheckResult::fail(format!(
+                "{} does not contain valid JSON: {e}",
+                composer_json.display()
+            ));
         }
     };
 
-    let obj = match value.as_object() {
-        Some(o) => o,
-        None => {
-            return CheckResult::Fail(
-                "composer.json must be a JSON object at the top level".to_string(),
-            );
-        }
-    };
-
-    if !obj.contains_key("name") {
-        return CheckResult::Warning("composer.json is missing the \"name\" field".to_string());
-    }
-
-    CheckResult::Ok(None)
-}
-
-/// Check 7: composer.lock freshness.
-///
-/// If composer.lock exists, verify its content-hash matches the current composer.json.
-fn check_composer_lock(working_dir: &Path) -> CheckResult {
-    let lock_path = working_dir.join("composer.lock");
-
-    if !lock_path.exists() {
-        return CheckResult::Skip("composer.lock not found".to_string());
-    }
-
-    let composer_json_path = working_dir.join("composer.json");
-    let composer_json_content = match std::fs::read_to_string(&composer_json_path) {
-        Ok(c) => c,
-        Err(_) => {
-            return CheckResult::Skip(
-                "could not read composer.json to compare against lock file".to_string(),
-            );
-        }
-    };
-
-    let lock = match mozart_registry::lockfile::LockFile::read_from_file(&lock_path) {
-        Ok(l) => l,
-        Err(e) => return CheckResult::Fail(format!("composer.lock is invalid: {e}")),
-    };
-
-    if lock.is_fresh(&composer_json_content) {
-        CheckResult::Ok(None)
+    let result = validate_manifest(&value, &ValidatorOptions::default());
+    if result.errors.is_empty() && result.warnings.is_empty() {
+        CheckResult::ok()
+    } else if !result.errors.is_empty() {
+        let mut msgs = result.errors;
+        msgs.extend(result.warnings);
+        CheckResult::Fail(msgs)
     } else {
-        CheckResult::Warning(
-            "composer.lock is out of date; run \"mozart update\" or \"mozart install\" to refresh it".to_string(),
-        )
+        CheckResult::Warning(result.warnings)
     }
 }
 
-/// Check 8: Git availability and minimum version.
-///
-/// Warns if git is not found or is older than 2.24.0.
+/// Mirrors `DiagnoseCommand::checkComposerLockSchema`. Mozart does not have
+/// a JSON-schema validator for `composer.lock` yet, so this currently emits
+/// a `SKIP` placeholder rather than asserting compliance.
+fn check_composer_lock_schema(_lock_path: &Path) -> CheckResult {
+    CheckResult::Skip(
+        "composer.lock schema validation is not yet implemented in Mozart".to_string(),
+    )
+}
+
+/// Mirrors `DiagnoseCommand::checkGit`.
 fn check_git() -> CheckResult {
     let output = match std::process::Command::new("git").arg("--version").output() {
         Ok(o) => o,
-        Err(_) => {
-            return CheckResult::Warning(
-                "git not found in PATH; some features may not work".to_string(),
-            );
-        }
+        Err(_) => return CheckResult::warn("No git process found"),
     };
 
     if !output.status.success() {
-        return CheckResult::Warning("git --version returned a non-zero exit code".to_string());
+        return CheckResult::warn("git --version returned a non-zero exit code");
     }
 
-    // Check color.ui setting before parsing the version
     if let Ok(color_output) = std::process::Command::new("git")
         .args(["config", "color.ui"])
         .output()
     {
         let color_val = String::from_utf8_lossy(&color_output.stdout);
         if color_val.trim().eq_ignore_ascii_case("always") {
-            return CheckResult::Warning(
+            return CheckResult::warn(
                 "Your git color.ui setting is set to always, this is known to create issues. \
-                 Use \"git config --global color.ui true\" to set it correctly."
-                    .to_string(),
+                 Use \"git config --global color.ui true\" to set it correctly.",
             );
         }
     }
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    let version_str = stdout.trim();
+    let raw = stdout.trim();
+    let version_only = raw.strip_prefix("git version ").unwrap_or(raw);
 
-    // Parse version from output like "git version 2.39.1"
-    match parse_git_version(version_str) {
+    match parse_git_version(raw) {
         Some((major, minor, _patch)) => {
-            // Require >= 2.24.0
             if major < 2 || (major == 2 && minor < 24) {
-                CheckResult::Warning(format!(
-                    "git {version_str} is older than the recommended minimum 2.24.0"
+                CheckResult::warn(format!(
+                    "Your git version ({version_only}) is too old and possibly will cause issues. \
+                     Please upgrade to git 2.24 or above"
                 ))
             } else {
-                CheckResult::Ok(Some(version_str.to_string()))
+                CheckResult::ok_with(format!("git version {version_only}"))
             }
         }
-        None => CheckResult::Ok(Some(version_str.to_string())),
+        None => CheckResult::ok_with(version_only.to_string()),
     }
 }
 
-/// Parse git version output (e.g. "git version 2.39.1") into (major, minor, patch).
 fn parse_git_version(output: &str) -> Option<(u64, u64, u64)> {
-    // Extract the version number portion after "git version "
     let version_part = output.strip_prefix("git version ").unwrap_or(output);
-    // Take only the first part before any space (e.g. "2.39.1.windows.1" → "2.39.1")
     let first_part = version_part.split_whitespace().next()?;
     let mut parts = first_part.split('.');
     let major: u64 = parts.next()?.parse().ok()?;
@@ -299,91 +220,135 @@ fn parse_git_version(output: &str) -> Option<(u64, u64, u64)> {
     Some((major, minor, patch))
 }
 
-/// Check 9: Disk free space for a path.
-///
-/// Warns if < 1 MiB free. Uses `df -P` for portable output.
-fn check_disk_space(path: &Path, label: &str) -> CheckResult {
-    // Ensure the path exists before calling df
-    if !path.exists() {
-        return CheckResult::Skip(format!("{} does not exist", path.display()));
+/// Mirrors `DiagnoseCommand::checkHttp(proto, $config)`.
+async fn check_http(proto: &str, http_downloader: &HttpDownloader, config: &Config) -> CheckResult {
+    if let Some(skip) = check_connectivity_and_network_http_enablement() {
+        return skip;
     }
 
-    let output = match std::process::Command::new("df")
+    let mut errors: Vec<String> = Vec::new();
+    let mut warnings: Vec<String> = Vec::new();
+
+    if proto == "https" && !config.secure_http {
+        warnings.push(
+            "Composer is configured to disable SSL/TLS protection. \
+             This will leave remote HTTPS requests vulnerable to Man-In-The-Middle attacks."
+                .to_string(),
+        );
+    }
+
+    let url = format!("{proto}://repo.packagist.org/packages.json");
+    if let Err(err) = http_downloader.get(&url).await {
+        for hint in mozart_core::http::exception_hints(&err) {
+            errors.push(hint);
+        }
+        errors.push(format!("[reqwest] {err}"));
+    }
+
+    if !errors.is_empty() {
+        errors.extend(warnings);
+        CheckResult::Fail(errors)
+    } else if !warnings.is_empty() {
+        CheckResult::Warning(warnings)
+    } else {
+        CheckResult::ok()
+    }
+}
+
+/// Mirrors `DiagnoseCommand::checkComposerRepo`.
+async fn check_composer_repo(
+    url: &str,
+    http_downloader: &HttpDownloader,
+    config: &Config,
+) -> CheckResult {
+    if let Some(skip) = check_connectivity_and_network_http_enablement() {
+        return skip;
+    }
+
+    let mut errors: Vec<String> = Vec::new();
+    let mut warnings: Vec<String> = Vec::new();
+
+    if url.starts_with("https://") && !config.secure_http {
+        warnings.push(
+            "Composer is configured to disable SSL/TLS protection. \
+             This will leave remote HTTPS requests vulnerable to Man-In-The-Middle attacks."
+                .to_string(),
+        );
+    }
+
+    if let Err(err) = http_downloader.get(url).await {
+        for hint in mozart_core::http::exception_hints(&err) {
+            errors.push(hint);
+        }
+        errors.push(format!("[reqwest] {err}"));
+    }
+
+    if !errors.is_empty() {
+        errors.extend(warnings);
+        CheckResult::Fail(errors)
+    } else if !warnings.is_empty() {
+        CheckResult::Warning(warnings)
+    } else {
+        CheckResult::ok()
+    }
+}
+
+/// Mirrors `DiagnoseCommand::checkDiskSpace($config)`. Single check that
+/// flags the first of `home` / `vendor-dir` to fall under 1MiB free.
+fn check_disk_space(config: &Config) -> CheckResult {
+    let home = config
+        .get("home")
+        .and_then(|v| v.as_str().map(|s| s.to_string()));
+    let vendor = config
+        .get("vendor-dir")
+        .and_then(|v| v.as_str().map(|s| s.to_string()));
+
+    let min_bytes: u64 = 1024 * 1024;
+
+    for dir in [home, vendor].into_iter().flatten() {
+        let path = Path::new(&dir);
+        if !path.exists() {
+            continue;
+        }
+        if let Some(b) = disk_free_bytes(path)
+            && b < min_bytes
+        {
+            return CheckResult::fail(format!("The disk hosting {} is full", path.display()));
+        }
+    }
+
+    CheckResult::ok()
+}
+
+/// Returns free space in bytes for the filesystem hosting `path`. `None` when
+/// the platform's `df` is unavailable or its output cannot be parsed.
+fn disk_free_bytes(path: &Path) -> Option<u64> {
+    let output = std::process::Command::new("df")
         .arg("-P")
         .arg(path)
         .output()
-    {
-        Ok(o) => o,
-        Err(_) => {
-            return CheckResult::Skip("df not available on this platform".to_string());
-        }
-    };
-
+        .ok()?;
     if !output.status.success() {
-        return CheckResult::Skip(format!("df -P failed for {}", path.display()));
+        return None;
     }
-
     let stdout = String::from_utf8_lossy(&output.stdout);
-    match parse_df_available_kib(&stdout) {
-        Some(avail_kib) => {
-            let avail_mib = avail_kib / 1024;
-            let one_mib_kib = 1024u64;
-            if avail_kib < one_mib_kib {
-                CheckResult::Warning(format!(
-                    "Low disk space on {label}: only {}KiB available",
-                    avail_kib
-                ))
-            } else {
-                CheckResult::Ok(Some(format!("{avail_mib}MiB free on {label}")))
-            }
-        }
-        None => CheckResult::Skip("could not parse df output".to_string()),
-    }
+    let kib = parse_df_available_kib(&stdout)?;
+    Some(kib.saturating_mul(1024))
 }
 
-/// Parse the "Available" column (4th column) of `df -P` output, returning KiB.
-///
-/// The -P (POSIX) format guarantees 1024-byte blocks in the "Available" column.
+/// Parse the "Available" column of `df -P` output (KiB).
 fn parse_df_available_kib(df_output: &str) -> Option<u64> {
-    // Skip the header line, then read the first data line
     let data_line = df_output.lines().nth(1)?;
     let mut cols = data_line.split_whitespace();
-    // Columns: Filesystem, 1024-blocks, Used, Available, Capacity%, Mounted
     cols.next()?; // Filesystem
     cols.next()?; // 1024-blocks
     cols.next()?; // Used
-    let available = cols.next()?;
-    available.parse::<u64>().ok()
+    cols.next()?.parse::<u64>().ok()
 }
 
-/// Check 10: Cache directory status.
-///
-/// Checks that the cache directory exists and is writable.
-fn check_cache_dir(cache_dir: &Path) -> CheckResult {
-    if !cache_dir.exists() {
-        // Try to create it
-        if let Err(e) = std::fs::create_dir_all(cache_dir) {
-            return CheckResult::Fail(format!(
-                "Cache directory {} does not exist and could not be created: {e}",
-                cache_dir.display()
-            ));
-        }
-        return CheckResult::Ok(Some(format!("created {}", cache_dir.display())));
-    }
-
-    // Check writability by attempting to create a temp file
-    let test_file = cache_dir.join(".mozart_write_test");
-    match std::fs::write(&test_file, b"test") {
-        Ok(()) => {
-            let _ = std::fs::remove_file(&test_file);
-            CheckResult::Ok(Some(cache_dir.display().to_string()))
-        }
-        Err(e) => CheckResult::Fail(format!(
-            "Cache directory {} is not writable: {e}",
-            cache_dir.display()
-        )),
-    }
-}
+// -----------------------------------------------------------------------
+// Orchestrator
+// -----------------------------------------------------------------------
 
 pub async fn execute(
     _args: &DiagnoseArgs,
@@ -395,102 +360,127 @@ pub async fn execute(
     let mut exit_code: i32 = 0;
 
     let composer = Composer::try_load(&working_dir)?;
-    let config = if let Some(composer) = &composer {
-        Cow::Borrowed(composer.config())
+    let config: Cow<'_, Config> = if let Some(c) = &composer {
+        Cow::Borrowed(c.config())
     } else {
         Cow::Owned(create_config()?)
     };
-    let cache_dir = PathBuf::from(&config.cache_dir);
 
-    // 1. Mozart version info
-    print_info_line(&check_version(), console);
-    console_writeln!(console, "");
+    let http_downloader = HttpDownloader::with_timeout(std::time::Duration::from_secs(10))?;
 
-    // 2. HTTPS connectivity to Packagist
-    let https_result = check_http_connectivity("https://repo.packagist.org/packages.json").await;
-    print_check(
-        "https connectivity to packagist",
-        &https_result,
+    // Step 4 (pubkey check) is phar-only — Mozart is not distributed as a phar.
+    // Step 4b (`checkVersion`) is deferred until self-update lands.
+
+    // Step 5: Mozart version line.
+    console_writeln!(console, &format!("Mozart version {MOZART_VERSION}"));
+
+    // Step 6: Mozart and its dependencies for vulnerabilities. Deferred — needs
+    // a Mozart Auditor port.
+    output_result(
+        "Mozart and its dependencies for vulnerabilities",
+        &CheckResult::Skip("audit is not yet implemented in Mozart".to_string()),
         &mut exit_code,
         console,
     );
 
-    // 3. HTTP connectivity to Packagist
-    let http_result = check_http_connectivity("http://repo.packagist.org/packages.json").await;
-    print_check(
+    // Steps 7-8 (PHP/OpenSSL/curl/zip detection) are PHP-runtime concerns
+    // and do not apply to Mozart. Composer's "Active plugins" line is also
+    // omitted (Mozart has no plugin system).
+
+    if composer.is_some() {
+        output_result(
+            "composer.json",
+            &check_composer_schema(&working_dir),
+            &mut exit_code,
+            console,
+        );
+
+        let lock_path = working_dir.join("composer.lock");
+        if lock_path.exists() {
+            output_result(
+                "composer.lock",
+                &check_composer_lock_schema(&lock_path),
+                &mut exit_code,
+                console,
+            );
+        }
+    }
+
+    // Step 10: platform settings — PHP-runtime probe; deferred.
+    output_result(
+        "platform settings",
+        &CheckResult::Skip("platform settings checks are not applicable to Mozart".to_string()),
+        &mut exit_code,
+        console,
+    );
+
+    // Step 11: git settings.
+    output_result("git settings", &check_git(), &mut exit_code, console);
+
+    // Step 12: HTTP / HTTPS connectivity to packagist.
+    output_result(
         "http connectivity to packagist",
-        &http_result,
+        &check_http("http", &http_downloader, &config).await,
+        &mut exit_code,
+        console,
+    );
+    output_result(
+        "https connectivity to packagist",
+        &check_http("https", &http_downloader, &config).await,
         &mut exit_code,
         console,
     );
 
-    // 4. GitHub API connectivity
-    let github_result = check_github_api().await;
-    print_check(
-        "github.com connectivity",
-        &github_result,
+    // Step 13: every additional `composer`-type repo.
+    if let Some(composer) = &composer {
+        for repo in composer.package().repositories.iter() {
+            if repo.repo_type != "composer" {
+                continue;
+            }
+            let Some(url) = repo.url.as_deref() else {
+                continue;
+            };
+            if !url.starts_with("http") {
+                continue;
+            }
+            if url.starts_with("https://repo.packagist.org") {
+                continue;
+            }
+            output_result(
+                &format!("connectivity to {url}"),
+                &check_composer_repo(url, &http_downloader, &config).await,
+                &mut exit_code,
+                console,
+            );
+        }
+    }
+
+    // Step 14: HTTP proxy probe — Mozart does not yet have a ProxyManager
+    // port. Deferred.
+
+    // Step 15: GitHub OAuth + rate limit — deferred until auth subsystem lands.
+
+    // Step 16: disk free space.
+    output_result(
+        "disk free space",
+        &check_disk_space(&config),
         &mut exit_code,
         console,
     );
 
-    // 5. HTTP proxy config
-    let proxy_result = check_http_proxy();
-    print_check("http proxy", &proxy_result, &mut exit_code, console);
-
-    // 6. composer.json validation
-    let composer_json_result = check_composer_json(&working_dir);
-    print_check(
-        "composer.json",
-        &composer_json_result,
-        &mut exit_code,
-        console,
-    );
-
-    // 7. composer.lock freshness
-    let lock_result = check_composer_lock(&working_dir);
-    print_check("composer.lock", &lock_result, &mut exit_code, console);
-
-    // 8. Git availability
-    let git_result = check_git();
-    print_check("git", &git_result, &mut exit_code, console);
-
-    // 9. Disk space — working directory
-    let disk_wd_result = check_disk_space(&working_dir, "working directory");
-    print_check(
-        "disk free space (working directory)",
-        &disk_wd_result,
-        &mut exit_code,
-        console,
-    );
-
-    // 9b. Disk space — cache directory
-    let disk_cache_result = check_disk_space(&cache_dir, "cache directory");
-    print_check(
-        "disk free space (cache directory)",
-        &disk_cache_result,
-        &mut exit_code,
-        console,
-    );
-
-    // 10. Cache directory status
-    let cache_result = check_cache_dir(&cache_dir);
-    print_check("cache directory", &cache_result, &mut exit_code, console);
-
-    console_writeln!(console, "");
-    if exit_code == 0 {
-        console_writeln!(console, &format!("{}", "No issues found.".green()),);
-    } else if exit_code == 1 {
+    // Mirrors the `COMPOSER_IPRESOLVE` warning emitted by `checkPlatform`.
+    if let Ok(val) = std::env::var("COMPOSER_IPRESOLVE")
+        && (val == "4" || val == "6")
+    {
         console_writeln!(
             console,
             &format!(
                 "{}",
-                "Some warnings were found. See above for details.".yellow()
-            ),
-        );
-    } else {
-        console_writeln!(
-            console,
-            &format!("{}", "Some errors were found. See above for details.".red()),
+                format!(
+                    "The COMPOSER_IPRESOLVE env var is set to {val} which may result in network failures below."
+                )
+                .yellow()
+            )
         );
     }
 
@@ -511,184 +501,76 @@ mod tests {
         assert_eq!(parse_git_version("git version 2.39.1"), Some((2, 39, 1)));
         assert_eq!(parse_git_version("git version 2.24.0"), Some((2, 24, 0)));
         assert_eq!(parse_git_version("git version 1.9.5"), Some((1, 9, 5)));
-        // Windows-style suffix
         assert_eq!(
             parse_git_version("git version 2.40.1.windows.1"),
             Some((2, 40, 1))
         );
-        // No patch component
         assert_eq!(parse_git_version("git version 2.39"), Some((2, 39, 0)));
-        // Bare version (no "git version" prefix)
         assert_eq!(parse_git_version("3.0.0"), Some((3, 0, 0)));
     }
 
     #[test]
-    fn test_check_composer_json_valid() {
+    fn test_check_composer_schema_valid() {
         let dir = tempdir().unwrap();
         fs::write(
             dir.path().join("composer.json"),
-            r#"{"name": "test/project", "require": {}}"#,
+            r#"{"name": "test/project", "license": "MIT", "require": {}}"#,
         )
         .unwrap();
-
-        let result = check_composer_json(dir.path());
-        assert!(
-            matches!(result, CheckResult::Ok(_)),
-            "expected Ok for valid composer.json"
-        );
+        let result = check_composer_schema(dir.path());
+        assert!(matches!(result, CheckResult::Ok(_)));
     }
 
     #[test]
-    fn test_check_composer_json_missing() {
-        let dir = tempdir().unwrap();
-        // Do not write a composer.json
-
-        let result = check_composer_json(dir.path());
-        assert!(
-            matches!(result, CheckResult::Warning(_)),
-            "expected Warning when composer.json is missing"
-        );
-    }
-
-    #[test]
-    fn test_check_composer_json_invalid_json() {
+    fn test_check_composer_schema_invalid_json() {
         let dir = tempdir().unwrap();
         fs::write(dir.path().join("composer.json"), b"{ this is not json ").unwrap();
-
-        let result = check_composer_json(dir.path());
-        assert!(
-            matches!(result, CheckResult::Fail(_)),
-            "expected Fail for invalid JSON"
-        );
+        let result = check_composer_schema(dir.path());
+        assert!(matches!(result, CheckResult::Fail(_)));
     }
 
     #[test]
-    fn test_check_composer_lock_fresh() {
-        use mozart_registry::lockfile::LockFile;
-
+    fn test_check_composer_schema_warns_on_missing_license() {
         let dir = tempdir().unwrap();
-
-        let composer_json = r#"{"name": "test/project", "require": {"php": ">=8.1"}}"#;
-        fs::write(dir.path().join("composer.json"), composer_json).unwrap();
-
-        let hash = LockFile::compute_content_hash(composer_json).unwrap();
-        let lock = LockFile {
-            readme: LockFile::default_readme(),
-            content_hash: hash,
-            packages: vec![],
-            packages_dev: None,
-            aliases: vec![],
-            minimum_stability: "stable".to_string(),
-            stability_flags: serde_json::json!({}),
-            prefer_stable: false,
-            prefer_lowest: false,
-            platform: serde_json::json!({}),
-            platform_dev: serde_json::json!({}),
-            plugin_api_version: None,
-        };
-        lock.write_to_file(&dir.path().join("composer.lock"))
-            .unwrap();
-
-        let result = check_composer_lock(dir.path());
-        assert!(
-            matches!(result, CheckResult::Ok(_)),
-            "expected Ok for fresh lock file"
-        );
+        fs::write(
+            dir.path().join("composer.json"),
+            r#"{"name": "test/project"}"#,
+        )
+        .unwrap();
+        let result = check_composer_schema(dir.path());
+        assert!(matches!(result, CheckResult::Warning(_)));
     }
 
     #[test]
-    fn test_check_composer_lock_stale() {
-        use mozart_registry::lockfile::LockFile;
-
-        let dir = tempdir().unwrap();
-
-        let composer_json = r#"{"name": "test/project", "require": {"php": ">=8.1"}}"#;
-        fs::write(dir.path().join("composer.json"), composer_json).unwrap();
-
-        // Deliberately use a stale/wrong hash
-        let lock = LockFile {
-            readme: LockFile::default_readme(),
-            content_hash: "stale_hash_that_does_not_match".to_string(),
-            packages: vec![],
-            packages_dev: None,
-            aliases: vec![],
-            minimum_stability: "stable".to_string(),
-            stability_flags: serde_json::json!({}),
-            prefer_stable: false,
-            prefer_lowest: false,
-            platform: serde_json::json!({}),
-            platform_dev: serde_json::json!({}),
-            plugin_api_version: None,
-        };
-        lock.write_to_file(&dir.path().join("composer.lock"))
-            .unwrap();
-
-        let result = check_composer_lock(dir.path());
-        assert!(
-            matches!(result, CheckResult::Warning(_)),
-            "expected Warning for stale lock file"
-        );
-    }
-
-    #[test]
-    fn test_check_composer_lock_missing() {
-        let dir = tempdir().unwrap();
-        // Do not write a composer.lock
-
-        let result = check_composer_lock(dir.path());
-        assert!(
-            matches!(result, CheckResult::Skip(_)),
-            "expected Skip when composer.lock is missing"
-        );
-    }
-
-    #[test]
-    fn test_check_disk_space_ok() {
-        let dir = tempdir().unwrap();
-        // Temp directories should always have plenty of free space
-        let result = check_disk_space(dir.path(), "temp");
-        // Accept Ok or Skip (on platforms where df isn't available)
-        assert!(
-            matches!(result, CheckResult::Ok(_) | CheckResult::Skip(_)),
-            "expected Ok or Skip for disk space check on temp directory"
-        );
-    }
-
-    #[test]
-    fn test_check_result_exit_code_ratcheting() {
+    fn test_output_result_exit_code_ratcheting() {
         let console = Console::new(0, false, false, false, false);
         let mut exit_code = 0i32;
 
-        // Ok does not change exit code
-        print_check("label", &CheckResult::Ok(None), &mut exit_code, &console);
+        output_result("label", &CheckResult::ok(), &mut exit_code, &console);
         assert_eq!(exit_code, 0);
 
-        // Warning raises to 1
-        print_check(
+        output_result(
             "label",
-            &CheckResult::Warning("warn".to_string()),
+            &CheckResult::warn("warn"),
             &mut exit_code,
             &console,
         );
         assert_eq!(exit_code, 1);
 
-        // Another Ok does not lower from 1
-        print_check("label", &CheckResult::Ok(None), &mut exit_code, &console);
+        output_result("label", &CheckResult::ok(), &mut exit_code, &console);
         assert_eq!(exit_code, 1);
 
-        // Fail raises to 2
-        print_check(
+        output_result(
             "label",
-            &CheckResult::Fail("fail".to_string()),
+            &CheckResult::fail("fail"),
             &mut exit_code,
             &console,
         );
         assert_eq!(exit_code, 2);
 
-        // Warning does not lower from 2
-        print_check(
+        output_result(
             "label",
-            &CheckResult::Warning("another warn".to_string()),
+            &CheckResult::warn("another warn"),
             &mut exit_code,
             &console,
         );
@@ -696,65 +578,11 @@ mod tests {
     }
 
     #[test]
-    fn test_check_http_proxy_none_set() {
-        // Remove all proxy vars for this test
-        let proxy_vars = [
-            "HTTP_PROXY",
-            "HTTPS_PROXY",
-            "http_proxy",
-            "https_proxy",
-            "NO_PROXY",
-            "no_proxy",
-        ];
-        for var in &proxy_vars {
-            // SAFETY: tests run single-threaded for env mutation purposes.
-            // We save and restore values to avoid polluting other tests.
-            unsafe { std::env::remove_var(var) };
-        }
-
-        let result = check_http_proxy();
-        match &result {
-            CheckResult::Ok(detail) => {
-                let detail_str = detail.as_deref().unwrap_or("");
-                assert!(
-                    detail_str.contains("no proxy"),
-                    "expected 'no proxy configured' detail, got: {detail_str:?}"
-                );
-            }
-            other => panic!(
-                "expected Ok for proxy check with no proxy set, got: {:?}",
-                std::mem::discriminant(other)
-            ),
-        }
-    }
-
-    #[tokio::test]
-    #[ignore]
-    async fn test_check_https_packagist_connectivity() {
-        let result = check_http_connectivity("https://repo.packagist.org/packages.json").await;
-        assert!(
-            matches!(result, CheckResult::Ok(_)),
-            "expected Ok for HTTPS Packagist connectivity"
-        );
-    }
-
-    #[tokio::test]
-    #[ignore]
-    async fn test_check_http_packagist_connectivity() {
-        let result = check_http_connectivity("http://repo.packagist.org/packages.json").await;
-        assert!(
-            matches!(result, CheckResult::Ok(_) | CheckResult::Warning(_)),
-            "expected Ok or Warning for HTTP Packagist connectivity"
-        );
-    }
-
-    #[tokio::test]
-    #[ignore]
-    async fn test_check_github_api_connectivity() {
-        let result = check_github_api().await;
-        assert!(
-            matches!(result, CheckResult::Ok(_)),
-            "expected Ok for GitHub API connectivity"
-        );
+    fn test_check_composer_network_http_enablement_skips_when_disabled() {
+        // SAFETY: tests that mutate env vars are inherently process-wide.
+        unsafe { std::env::set_var("COMPOSER_DISABLE_NETWORK", "1") };
+        let result = check_composer_network_http_enablement();
+        assert!(matches!(result, Some(CheckResult::Skip(_))));
+        unsafe { std::env::remove_var("COMPOSER_DISABLE_NETWORK") };
     }
 }

@@ -135,6 +135,84 @@ pub fn default_client() -> reqwest::Client {
         .expect("failed to build default HTTP client")
 }
 
+/// Thin wrapper around [`reqwest::Client`] that mirrors the relevant slice of
+/// `Composer\Util\HttpDownloader`: a project-shared client used for plain
+/// `GET` requests against package metadata URLs.
+///
+/// Today this is only the bits the `diagnose` command needs (a pre-built
+/// client, a single `get` method, and `exception_hints`). The intention is
+/// for `mozart-registry`'s download pipeline to migrate onto the same
+/// wrapper later.
+#[derive(Clone)]
+pub struct HttpDownloader {
+    client: reqwest::Client,
+}
+
+impl HttpDownloader {
+    /// Build a downloader using the standard Mozart client (User-Agent +
+    /// configured root certificates).
+    pub fn new() -> Self {
+        Self {
+            client: default_client(),
+        }
+    }
+
+    /// Build a downloader with a custom timeout, used by health checks where
+    /// hangs would mask the failure mode the user is actually trying to
+    /// diagnose.
+    pub fn with_timeout(timeout: std::time::Duration) -> Result<Self> {
+        let client = client_builder()
+            .timeout(timeout)
+            .build()
+            .context("failed to build HTTP client")?;
+        Ok(Self { client })
+    }
+
+    /// Issue a `GET` against `url`. Mirrors `HttpDownloader::get` in role,
+    /// but returns the raw [`reqwest::Response`] so callers can decide
+    /// what to do with the body.
+    pub async fn get(&self, url: &str) -> Result<reqwest::Response, reqwest::Error> {
+        self.client.get(url).send().await
+    }
+
+    /// Underlying client, exposed so callers that need to set additional
+    /// request-level options can build off it. Try not to use this from
+    /// new code — prefer extending `HttpDownloader` itself.
+    pub fn client(&self) -> &reqwest::Client {
+        &self.client
+    }
+}
+
+impl Default for HttpDownloader {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Mirror of `HttpDownloader::getExceptionHints` from PHP — best-effort
+/// human-readable hints for a transport failure. Today this only surfaces
+/// the few cases reqwest can distinguish (timeout, connect, decode); we
+/// can extend it as we encounter more failure modes in the wild.
+pub fn exception_hints(err: &reqwest::Error) -> Vec<String> {
+    let mut hints = Vec::new();
+    if err.is_timeout() {
+        hints.push(
+            "The request timed out. Check your network connection or any HTTP proxy settings."
+                .to_string(),
+        );
+    }
+    if err.is_connect() {
+        hints.push(
+            "Could not establish a connection. Check that the host is reachable and that no firewall is blocking outbound HTTPS."
+                .to_string(),
+        );
+    }
+    if err.is_decode() {
+        hints.push("The response body could not be decoded.".to_string());
+    }
+    hints
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
