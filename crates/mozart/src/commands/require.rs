@@ -464,7 +464,7 @@ async fn do_update(
         .collect();
     let removals: Vec<_> = changes
         .iter()
-        .filter(|c| matches!(c.kind, super::update::ChangeKind::Remove { .. }))
+        .filter(|c| matches!(c.kind, super::update::ChangeKind::Uninstall { .. }))
         .collect();
 
     console.info(&format!(
@@ -479,7 +479,7 @@ async fn do_update(
 
     for change in &changes {
         match &change.kind {
-            super::update::ChangeKind::Remove { old_version } => {
+            super::update::ChangeKind::Uninstall { old_version } => {
                 if args.dry_run {
                     console.info(&format!("  - Would remove {} ({old_version})", change.name));
                 } else {
@@ -512,7 +512,6 @@ async fn do_update(
                     ));
                 }
             }
-            super::update::ChangeKind::Unchanged => {}
         }
     }
 

@@ -375,7 +375,7 @@ pub async fn execute(
             .collect();
         let removals: Vec<_> = changes
             .iter()
-            .filter(|c| matches!(c.kind, super::update::ChangeKind::Remove { .. }))
+            .filter(|c| matches!(c.kind, super::update::ChangeKind::Uninstall { .. }))
             .collect();
 
         console.info(&console_format!(
@@ -390,7 +390,7 @@ pub async fn execute(
 
         for change in &changes {
             match &change.kind {
-                super::update::ChangeKind::Remove { old_version } => {
+                super::update::ChangeKind::Uninstall { old_version } => {
                     if args.dry_run {
                         console.info(&format!(
                             "  - Would remove {} ({})",
@@ -432,7 +432,6 @@ pub async fn execute(
                         ));
                     }
                 }
-                super::update::ChangeKind::Unchanged => {}
             }
         }
 
@@ -861,7 +860,7 @@ mod tests {
         assert!(composer.require.contains_key("psr/log"));
     }
 
-    /// After re-resolve, removed packages appear as `ChangeKind::Remove` in the change report.
+    /// After re-resolve, removed packages appear as `ChangeKind::Uninstall` in the change report.
     #[test]
     fn test_remove_change_report_shows_removals() {
         let old_lock = minimal_lock(vec![
@@ -878,10 +877,10 @@ mod tests {
         assert!(
             matches!(
                 &changes[0].kind,
-                super::super::update::ChangeKind::Remove { old_version }
+                super::super::update::ChangeKind::Uninstall { old_version }
                 if old_version == "3.8.0"
             ),
-            "monolog/monolog should appear as a Remove change"
+            "monolog/monolog should appear as an Uninstall change"
         );
     }
 

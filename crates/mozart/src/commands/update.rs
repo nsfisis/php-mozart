@@ -1,7 +1,8 @@
 use clap::Args;
 use indexmap::{IndexMap, IndexSet};
+use mozart_core::composer::Composer;
 use mozart_core::console_format;
-use mozart_core::package::{self, Stability};
+use mozart_core::package;
 use mozart_core::platform::is_platform_package;
 use mozart_registry::lockfile;
 use mozart_registry::resolver::{
@@ -135,6 +136,8 @@ pub struct UpdateArgs {
 }
 
 /// The kind of change for a package during update.
+///
+/// Mirrors `Composer\DependencyResolver\Operation\{InstallOperation,UpdateOperation,UninstallOperation}`.
 #[derive(Debug, PartialEq, Eq)]
 pub enum ChangeKind {
     Install {
@@ -144,10 +147,9 @@ pub enum ChangeKind {
         old_version: String,
         new_version: String,
     },
-    Remove {
+    Uninstall {
         old_version: String,
     },
-    Unchanged,
 }
 
 /// A single package change entry computed during update.
@@ -160,7 +162,7 @@ pub struct UpdateChange {
 /// Parse a minimum-stability string from composer.json into a `Stability` enum value.
 ///
 /// Recognizes "stable", "RC", "beta", "alpha", "dev" (case-insensitive).
-/// Defaults to `Stability::Stable` for unrecognized values.
+/// Defaults to `package::Stability::Stable` for unrecognized values.
 /// `update mirrors` post-process: rewrite each new lock package's source/dist
 /// reference back to the version recorded in the old lock when the source
 /// type (and dist type) match. Mirrors Composer's
@@ -232,10 +234,6 @@ fn extract_root_branch_alias(
         .map(String::from)
 }
 
-fn parse_minimum_stability(s: &str) -> Stability {
-    package::Stability::parse(s)
-}
-
 /// Compare old lock vs new lock to determine installs, updates, removals, and unchanged packages.
 ///
 /// Produces one `UpdateChange` per affected package. Packages that are identical in both
@@ -274,35 +272,32 @@ pub fn compute_update_changes(
 
     // Check all packages in the new lock
     for (name, new_version) in &new_map {
-        let kind = if let Some(old_version) = old_map.get(name) {
-            if old_version == new_version {
-                ChangeKind::Unchanged
-            } else {
-                ChangeKind::Update {
-                    old_version: old_version.clone(),
-                    new_version: new_version.clone(),
-                }
+        if let Some(old_version) = old_map.get(name) {
+            if old_version != new_version {
+                changes.push(UpdateChange {
+                    name: name.clone(),
+                    kind: ChangeKind::Update {
+                        old_version: old_version.clone(),
+                        new_version: new_version.clone(),
+                    },
+                });
             }
         } else {
-            ChangeKind::Install {
-                new_version: new_version.clone(),
-            }
-        };
-
-        if !matches!(kind, ChangeKind::Unchanged) {
             changes.push(UpdateChange {
                 name: name.clone(),
-                kind,
+                kind: ChangeKind::Install {
+                    new_version: new_version.clone(),
+                },
             });
         }
     }
 
-    // Check packages in the old lock that are missing from the new lock (removals)
+    // Check packages in the old lock that are missing from the new lock (uninstalls)
     for (name, old_version) in &old_map {
         if !new_map.contains_key(name) {
             changes.push(UpdateChange {
                 name: name.clone(),
-                kind: ChangeKind::Remove {
+                kind: ChangeKind::Uninstall {
                     old_version: old_version.clone(),
                 },
             });
@@ -579,18 +574,6 @@ pub fn collect_repo_requires(
     out
 }
 
-/// Whether `dep_name` is a platform package (php / ext-* / lib-*) and so
-/// should be skipped from allow-list expansion.
-fn is_platform_dep(dep_name: &str) -> bool {
-    dep_name == "php"
-        || dep_name.starts_with("ext-")
-        || dep_name.starts_with("lib-")
-        || dep_name == "php-64bit"
-        || dep_name == "php-ipv6"
-        || dep_name == "php-zts"
-        || dep_name == "php-debug"
-}
-
 /// Look up the require-list for `name`, unioning the lock entry's
 /// requires with every available version's requires from inline /
 /// composer-repo entries. Lowercase names returned, deduped.
@@ -660,7 +643,7 @@ pub fn expand_with_direct_dependencies(
             continue;
         };
         for dep_name in deps {
-            if is_platform_dep(&dep_name) {
+            if is_platform_package(&dep_name) {
                 continue;
             }
             // Root-require barrier: don't unlock and don't recurse.
@@ -698,7 +681,7 @@ pub fn expand_with_all_dependencies(
             continue;
         };
         for dep_name in deps {
-            if is_platform_dep(&dep_name) {
+            if is_platform_package(&dep_name) {
                 continue;
             }
             for actual in resolve_dep_via_replace(&dep_name, &lock_map, &replace_map) {
@@ -990,7 +973,7 @@ pub async fn run(
     }
     if args.no_suggest {
         console.info(&console_format!(
-            "<warning>The --no-suggest option is deprecated and has no effect.</warning>"
+            "<warning>You are using the deprecated option \"--no-suggest\". It has no effect and will break in Composer 3.</warning>"
         ));
     }
 
@@ -1031,37 +1014,6 @@ pub async fn run(
 
     let lock_path = working_dir.join("composer.lock");
     let vendor_dir = working_dir.join("vendor");
-
-    // Step 4: Reject combining --lock with specific package names. Mirrors
-    // Composer's `UpdateCommand::execute` line 222: the lock flag and a
-    // package selection are mutually exclusive because `--lock` rebuilds
-    // the entire lock from its current pins, not a subset of it.
-    if args.lock {
-        let non_magic: Vec<_> = args
-            .packages
-            .iter()
-            .filter(|p| !matches!(p.to_lowercase().as_str(), "lock" | "nothing" | "mirrors"))
-            .collect();
-        if !non_magic.is_empty() {
-            anyhow::bail!(
-                "You cannot simultaneously update only a selection of packages and regenerate the lock file metadata."
-            );
-        }
-    }
-
-    // Both `--lock` and the bare-keyword forms (`update lock`, `update
-    // nothing`, `update mirrors`) trigger Composer's
-    // `setUpdateMirrors(true)` flow: every locked package is re-required
-    // pinned at its exact version, so the resolver picks the same
-    // versions but freshly loads source/dist metadata from the
-    // repository. Mirrors `UpdateCommand::execute` line 219:
-    // `$updateMirrors = $input->getOption('lock') || ...`.
-    let update_mirrors = args.lock
-        || (!args.packages.is_empty()
-            && args
-                .packages
-                .iter()
-                .all(|p| matches!(p.to_lowercase().as_str(), "lock" | "nothing" | "mirrors")));
 
     let dev_mode = !args.no_dev;
 
@@ -1121,11 +1073,79 @@ pub async fn run(
         }
     }
 
-    // Fix 5: Filter magic keywords from package list
+    // Filter magic keywords (`lock`, `nothing`, `mirrors`) from the package list.
+    // Mirrors Composer's UpdateCommand::execute 214–226:
+    //   $filteredPackages = array_filter($packages, fn($p) => !in_array($p, ['lock','nothing','mirrors']));
+    //   $updateMirrors = --lock || count($filteredPackages) !== count($packages);
+    //   if ($updateMirrors && count($filteredPackages) > 0) → error
+    let packages_before_filter_len = raw_packages.len();
     let raw_packages: Vec<String> = raw_packages
         .into_iter()
         .filter(|p| !matches!(p.to_lowercase().as_str(), "lock" | "nothing" | "mirrors"))
         .collect();
+    let update_mirrors = args.lock || raw_packages.len() != packages_before_filter_len;
+
+    // Mirrors+packages mutex: cannot simultaneously update a selection and regenerate
+    // lock metadata. Composer returns -1 here; Mozart uses exit 1 (no -1 on Unix).
+    if update_mirrors && !raw_packages.is_empty() {
+        anyhow::bail!(
+            "You cannot simultaneously update only a selection of packages and regenerate the lock file metadata."
+        );
+    }
+
+    // --patch-only requires a lock file: fail fast before the solve.
+    // Mirrors Composer's UpdateCommand::execute 177–178 which throws
+    // InvalidArgumentException when no lock exists.
+    if args.patch_only && !lock_path.exists() {
+        return Err(mozart_core::exit_code::bail(
+            mozart_core::exit_code::GENERAL_ERROR,
+            "The --patch-only option requires a lock file to be present.",
+        ));
+    }
+
+    // --patch-only PRE-SOLVE constraint injection: for each locked package
+    // whose pretty version starts with M.N.P, inject a `~M.N.P` temporary
+    // constraint so the resolver itself only allows patch-level moves.
+    // Mirrors Composer's UpdateCommand::execute 177–195. Packages that
+    // already have a user-supplied temporary constraint are skipped (the
+    // user's explicit `--with foo:^2` takes precedence).
+    if args.patch_only
+        && lock_path.exists()
+        && let Ok(lock) = lockfile::LockFile::read_from_file(&lock_path)
+    {
+        for pkg in lock
+            .packages
+            .iter()
+            .chain(lock.packages_dev.iter().flatten())
+        {
+            let name_lower = pkg.name.to_lowercase();
+            if temporary_constraints.contains_key(&name_lower) {
+                continue;
+            }
+            // Only apply to SemVer-like versions starting with M.N.P.
+            // Mirrors Composer's UpdateCommand::execute preg_match('{^\d+\.\d+\.\d+}').
+            let parts: Vec<&str> = pkg.version.splitn(4, '.').collect();
+            if parts.len() >= 3 {
+                let patch_raw = parts[2].split(['-', '+']).next().unwrap_or("0");
+                if let (Ok(major), Ok(minor), Ok(patch)) = (
+                    parts[0].parse::<u64>(),
+                    parts[1].parse::<u64>(),
+                    patch_raw.parse::<u64>(),
+                ) {
+                    // >=M.N.P.0, <M.(N+1).0.0 — mirrors Composer's MultiConstraint
+                    let constraint = format!(
+                        ">={}.{}.{}.0, <{}.{}.0.0",
+                        major,
+                        minor,
+                        patch,
+                        major,
+                        minor + 1
+                    );
+                    temporary_constraints.insert(name_lower, constraint);
+                }
+            }
+        }
+    }
 
     // For partial updates (specific package names given), eagerly read the
     // lock file to gather both the names that stay pinned across this
@@ -1296,7 +1316,7 @@ pub async fn run(
         .minimum_stability
         .as_deref()
         .unwrap_or("stable");
-    let minimum_stability = parse_minimum_stability(minimum_stability_str);
+    let minimum_stability = package::Stability::parse(minimum_stability_str);
 
     // Determine prefer-stable: CLI flag OR composer.json field
     let composer_prefer_stable = composer_json
@@ -1455,6 +1475,8 @@ pub async fn run(
     //
     // Note: wildcard expansion and dependency traversal both require a lock file.
     // If --minimal-changes is requested without specific packages, we pin all packages.
+    // Save raw_packages for the --bump-after-update delegate before it is moved.
+    let raw_packages_for_bump = raw_packages.clone();
     // --root-reqs: treat root requirements as the package list
     let effective_packages: Vec<String> = if args.root_reqs && raw_packages.is_empty() {
         let mut root_pkgs: Vec<String> = composer_json
@@ -1621,11 +1643,11 @@ pub async fn run(
         .collect();
     let removals: Vec<_> = changes
         .iter()
-        .filter(|c| matches!(c.kind, ChangeKind::Remove { .. }))
+        .filter(|c| matches!(c.kind, ChangeKind::Uninstall { .. }))
         .collect();
 
-    console.info(&format!(
-        "Lock file operations: {} install{}, {} update{}, {} removal{}",
+    console.info(&console_format!(
+        "<info>Lock file operations: {} install{}, {} update{}, {} removal{}</info>",
         installs.len(),
         if installs.len() == 1 { "" } else { "s" },
         updates.len(),
@@ -1637,7 +1659,7 @@ pub async fn run(
     // Print individual change lines
     for change in &changes {
         match &change.kind {
-            ChangeKind::Remove { old_version } => {
+            ChangeKind::Uninstall { old_version } => {
                 if args.dry_run {
                     console.info(&console_format!(
                         "  - Would remove <info>{}</info> (<comment>{}</comment>)",
@@ -1690,104 +1712,38 @@ pub async fn run(
                     new_version
                 ));
             }
-            ChangeKind::Unchanged => {}
         }
     }
 
     // Step 11: Write lock file (unless --dry-run)
     if !args.dry_run {
-        console.info("Writing lock file");
+        console.info(&console_format!("<info>Writing lock file</info>"));
         new_lock.write_to_file(&lock_path)?;
     }
 
-    // Step 11b: Bump composer.json constraints if --bump-after-update
+    // Step 11b: Bump composer.json constraints if --bump-after-update.
+    // Mirrors Composer's UpdateCommand::execute 280–299: delegate to BumpCommand::doBump.
+    // Only runs when result == 0 (we're here) AND --lock was not set.
     if let Some(ref bump_mode) = args.bump_after_update
         && !args.dry_run
+        && !args.lock
     {
         let mode = bump_mode.as_deref().unwrap_or("all");
-        let bump_require = mode == "all" || mode == "no-dev";
-        let bump_require_dev = mode == "all" || mode == "dev";
-
-        // Build locked versions map from the new lock
-        let mut locked_versions: IndexMap<String, (String, Option<String>)> = IndexMap::new();
-        for pkg in &new_lock.packages {
-            locked_versions.insert(
-                pkg.name.to_lowercase(),
-                (pkg.version.clone(), pkg.version_normalized.clone()),
-            );
-        }
-        if let Some(ref dev_pkgs) = new_lock.packages_dev {
-            for pkg in dev_pkgs {
-                locked_versions.insert(
-                    pkg.name.to_lowercase(),
-                    (pkg.version.clone(), pkg.version_normalized.clone()),
-                );
-            }
-        }
-
-        let mut bumped = 0u32;
-        let mut root = composer_json.clone();
-
-        if bump_require {
-            for (pkg_name, constraint) in &composer_json.require {
-                if is_platform_package(pkg_name) {
-                    continue;
-                }
-                if let Some((pretty_version, version_normalized)) =
-                    locked_versions.get(&pkg_name.to_lowercase())
-                    && let Some(new_constraint) = mozart_core::version_bumper::bump_requirement(
-                        constraint,
-                        pretty_version,
-                        version_normalized.as_deref(),
-                    )
-                {
-                    console.info(&format!(
-                        "  Bumping {}: {} => {}",
-                        pkg_name, constraint, new_constraint
-                    ));
-                    root.require.insert(pkg_name.clone(), new_constraint);
-                    bumped += 1;
-                }
-            }
-        }
-
-        if bump_require_dev {
-            for (pkg_name, constraint) in &composer_json.require_dev {
-                if is_platform_package(pkg_name) {
-                    continue;
-                }
-                if let Some((pretty_version, version_normalized)) =
-                    locked_versions.get(&pkg_name.to_lowercase())
-                    && let Some(new_constraint) = mozart_core::version_bumper::bump_requirement(
-                        constraint,
-                        pretty_version,
-                        version_normalized.as_deref(),
-                    )
-                {
-                    console.info(&format!(
-                        "  Bumping {}: {} => {}",
-                        pkg_name, constraint, new_constraint
-                    ));
-                    root.require_dev.insert(pkg_name.clone(), new_constraint);
-                    bumped += 1;
-                }
-            }
-        }
-
-        if bumped > 0 {
-            package::write_to_file(&root, &composer_json_path)?;
-
-            // Update lock file content-hash to match the new composer.json
-            let new_content = std::fs::read_to_string(&composer_json_path)?;
-            let new_hash = lockfile::LockFile::compute_content_hash(&new_content)?;
-            let mut updated_lock = new_lock.clone();
-            updated_lock.content_hash = new_hash;
-            updated_lock.write_to_file(&lock_path)?;
-
-            console.info(&format!(
-                "{} has been updated ({bumped} changes).",
-                composer_json_path.display()
-            ));
+        let dev_only = mode == "dev";
+        let no_dev_only = mode == "no-dev";
+        let bump_composer = Composer::require(working_dir)?;
+        let bump_exit = super::bump::do_bump(
+            console,
+            &bump_composer,
+            dev_only,
+            no_dev_only,
+            false,
+            &raw_packages_for_bump,
+            "--bump-after-update=dev",
+        )
+        .await?;
+        if bump_exit != 0 {
+            return Err(mozart_core::exit_code::bail_silent(bump_exit));
         }
     }
 
@@ -1898,39 +1854,57 @@ mod tests {
 
     #[test]
     fn test_parse_minimum_stability_stable() {
-        assert_eq!(parse_minimum_stability("stable"), Stability::Stable);
-        assert_eq!(parse_minimum_stability("STABLE"), Stability::Stable);
-        assert_eq!(parse_minimum_stability("Stable"), Stability::Stable);
+        assert_eq!(
+            package::Stability::parse("stable"),
+            package::Stability::Stable
+        );
+        assert_eq!(
+            package::Stability::parse("STABLE"),
+            package::Stability::Stable
+        );
+        assert_eq!(
+            package::Stability::parse("Stable"),
+            package::Stability::Stable
+        );
     }
 
     #[test]
     fn test_parse_minimum_stability_rc() {
-        assert_eq!(parse_minimum_stability("RC"), Stability::RC);
-        assert_eq!(parse_minimum_stability("rc"), Stability::RC);
+        assert_eq!(package::Stability::parse("RC"), package::Stability::RC);
+        assert_eq!(package::Stability::parse("rc"), package::Stability::RC);
     }
 
     #[test]
     fn test_parse_minimum_stability_beta() {
-        assert_eq!(parse_minimum_stability("beta"), Stability::Beta);
-        assert_eq!(parse_minimum_stability("BETA"), Stability::Beta);
+        assert_eq!(package::Stability::parse("beta"), package::Stability::Beta);
+        assert_eq!(package::Stability::parse("BETA"), package::Stability::Beta);
     }
 
     #[test]
     fn test_parse_minimum_stability_alpha() {
-        assert_eq!(parse_minimum_stability("alpha"), Stability::Alpha);
-        assert_eq!(parse_minimum_stability("ALPHA"), Stability::Alpha);
+        assert_eq!(
+            package::Stability::parse("alpha"),
+            package::Stability::Alpha
+        );
+        assert_eq!(
+            package::Stability::parse("ALPHA"),
+            package::Stability::Alpha
+        );
     }
 
     #[test]
     fn test_parse_minimum_stability_dev() {
-        assert_eq!(parse_minimum_stability("dev"), Stability::Dev);
-        assert_eq!(parse_minimum_stability("DEV"), Stability::Dev);
+        assert_eq!(package::Stability::parse("dev"), package::Stability::Dev);
+        assert_eq!(package::Stability::parse("DEV"), package::Stability::Dev);
     }
 
     #[test]
     fn test_parse_minimum_stability_unknown_defaults_to_stable() {
-        assert_eq!(parse_minimum_stability("unknown"), Stability::Stable);
-        assert_eq!(parse_minimum_stability(""), Stability::Stable);
+        assert_eq!(
+            package::Stability::parse("unknown"),
+            package::Stability::Stable
+        );
+        assert_eq!(package::Stability::parse(""), package::Stability::Stable);
     }
 
     #[test]
@@ -1988,7 +1962,7 @@ mod tests {
         assert_eq!(changes[0].name, "monolog/monolog");
         assert!(matches!(
             &changes[0].kind,
-            ChangeKind::Remove { old_version } if old_version == "3.8.0"
+            ChangeKind::Uninstall { old_version } if old_version == "3.8.0"
         ));
     }
 
@@ -2036,7 +2010,7 @@ mod tests {
         ));
 
         let removed = changes.iter().find(|c| c.name == "old/package").unwrap();
-        assert!(matches!(&removed.kind, ChangeKind::Remove { .. }));
+        assert!(matches!(&removed.kind, ChangeKind::Uninstall { .. }));
 
         let installed = changes.iter().find(|c| c.name == "new/package").unwrap();
         assert!(matches!(&installed.kind, ChangeKind::Install { .. }));
@@ -2418,7 +2392,7 @@ mod tests {
             require: vec![("monolog/monolog".to_string(), "^3.0".to_string())],
             require_dev: vec![],
             include_dev: false,
-            minimum_stability: Stability::Stable,
+            minimum_stability: package::Stability::Stable,
             stability_flags: IndexMap::new(),
             prefer_stable: true,
             prefer_lowest: false,
