@@ -4,9 +4,10 @@ use mozart_core::console;
 use mozart_core::console_format;
 use mozart_registry::installed;
 use mozart_registry::installer_executor::{
-    ExecuteContext, FilesystemExecutor, InstallerExecutor, PackageOperation,
-    format_full_pretty_version, format_full_pretty_version_for_installed,
-    format_full_pretty_with_pretty_for_installed, format_update_pretty_versions,
+    Action, ExecuteContext, FilesystemExecutor, InstallerExecutor, PackageOperation,
+    compute_operations, compute_stale_installed_aliases, format_full_pretty_version,
+    format_full_pretty_version_for_installed, format_update_pretty_versions,
+    locked_to_installed_entry, previously_installed_alias_versions,
 };
 use mozart_registry::lockfile;
 use std::collections::BTreeMap;
@@ -145,505 +146,28 @@ impl Default for InstallConfig {
     }
 }
 
-/// The action to take for a package during install.
-#[derive(Debug, PartialEq, Eq)]
-pub enum Action {
-    Install,
-    Update,
-    Skip,
-}
-
-/// An operation to perform during install.
-pub struct InstallOp<'a> {
-    pub package: &'a lockfile::LockedPackage,
-    pub action: Action,
-}
-
-/// Compute install operations by comparing locked packages against installed packages.
-///
-/// Returns a tuple of (ops, removals) where:
-/// - ops: list of (package, action) ordered topologically — every package's
-///   lock-internal `require` deps appear before it, so installs run in
-///   dependency-first order to match Composer's `Transaction::calculateOperations`.
-/// - removals: list of package names that are installed but not locked
-pub fn compute_operations<'a>(
-    locked: &[&'a lockfile::LockedPackage],
-    installed: &installed::InstalledPackages,
-) -> (Vec<(&'a lockfile::LockedPackage, Action)>, Vec<String>) {
-    // Topo-sort `locked` so each package's deps (within the lock set) come
-    // before it. Composer's solver yields operations in this order via the
-    // Transaction; Mozart writes the lock alphabetically, so the install
-    // loop must re-order before emitting trace lines or invoking the
-    // executor.
-    let ordered = topological_sort(locked);
-
-    let mut ops: Vec<(&'a lockfile::LockedPackage, Action)> = Vec::new();
-    for pkg in ordered {
-        let installed_entry = installed
-            .packages
-            .iter()
-            .find(|p| p.name.eq_ignore_ascii_case(&pkg.name));
-        let action = match installed_entry {
-            None => Action::Install,
-            Some(entry) if entry.version != pkg.version => Action::Update,
-            // Same version present — Composer's Transaction also fires an
-            // UpdateOperation when the source/dist reference moved (e.g. a
-            // root require pinned a new commit via `dev-main#abcd`), or
-            // when the `abandoned` flag / replacement target drifted (so
-            // installed.json picks up the fresh metadata).
-            Some(entry) if !installed_refs_match_locked(entry, pkg) => Action::Update,
-            Some(entry) if !installed_abandoned_matches_locked(entry, pkg) => Action::Update,
-            Some(_) => Action::Skip,
-        };
-        ops.push((pkg, action));
-    }
-
-    // Compute removals: packages in installed but not in locked. Iterate
-    // installed.json in reverse, mirroring Composer's
-    // `Transaction::calculateOperations`, which seeds `removeMap` from
-    // `presentPackages` in order and then `array_unshift`s each entry onto
-    // `operations` — flipping the iteration order. Without the flip, two
-    // co-orphaned packages emit removals in the wrong order vs Composer's
-    // trace.
-    let locked_names: IndexSet<String> = locked.iter().map(|p| p.name.to_lowercase()).collect();
-
-    let removals: Vec<String> = installed
-        .packages
-        .iter()
-        .rev()
-        .filter(|p| !locked_names.contains(&p.name.to_lowercase()))
-        .map(|p| p.name.clone())
-        .collect();
-
-    (ops, removals)
-}
-
-/// Order a slice of locked packages so every package's `require` deps that
-/// are present in the same slice come before it. Mirrors
-/// `Composer\DependencyResolver\Transaction::calculateOperations` — the
-/// stack-based DFS over the result map.
-///
-/// Three parity points worth keeping in sync with Composer:
-///
-/// - The result map is uasort-ed with `strcmp($b, $a)` (reverse alphabetical).
-///   Mozart's lock is alphabetical, so we pre-sort reverse to match.
-/// - `getProvidersInResult` returns every package in the result whose name
-///   *or* `provide`/`replace` entry matches a `require` link target. We
-///   build a multimap keyed by all three so a `require: x/y` push covers
-///   all packages that resolve `x/y`.
-/// - The DFS uses an explicit LIFO stack (Composer's `array_pop`). On first
-///   visit the package is re-pushed and its requires are pushed afterwards,
-///   so dep traversal order is the **reverse** of `getRequires` iteration.
-///
-/// Cycles produce a deterministic root: Composer's `getRootPackages` walks
-/// the sorted map and removes each package's required providers as it goes,
-/// skipping outer packages already removed. So among cycle members, the one
-/// with the highest sort key survives as the entry point.
-fn topological_sort<'a>(
-    packages: &[&'a lockfile::LockedPackage],
-) -> Vec<&'a lockfile::LockedPackage> {
-    use std::collections::BTreeMap;
-
-    // Reverse-alphabetical sort, mirroring `setResultPackageMaps`.
-    let mut sorted: Vec<&'a lockfile::LockedPackage> = packages.to_vec();
-    sorted.sort_by_key(|p| std::cmp::Reverse(p.name.to_lowercase()));
-
-    // Multimap: `name -> [packages]`. A package contributes itself under its
-    // own name *and* under every `provide`/`replace` entry. The vec values
-    // stay in `sorted` (reverse-alphabetical) order, mirroring Composer's
-    // `resultPackagesByName` after its uasort.
-    let mut resolves: BTreeMap<String, Vec<&'a lockfile::LockedPackage>> = BTreeMap::new();
-    for pkg in &sorted {
-        let names = std::iter::once(pkg.name.to_lowercase())
-            .chain(pkg.provide.keys().map(|s| s.to_lowercase()))
-            .chain(pkg.replace.keys().map(|s| s.to_lowercase()));
-        for n in names {
-            resolves.entry(n).or_default().push(*pkg);
-        }
-    }
-
-    // Mirror Composer's `getRootPackages`: walk in sorted order, removing
-    // each package's required providers from the candidate-roots set as we
-    // go. Skip outer packages that have already been removed — that ordering
-    // matters in cycles, where the first sorted member's requires strip the
-    // others from the set, leaving a single survivor.
-    let mut roots_set: IndexSet<String> = sorted.iter().map(|p| p.name.to_lowercase()).collect();
-    for pkg in &sorted {
-        let pkg_lower = pkg.name.to_lowercase();
-        if !roots_set.contains(&pkg_lower) {
-            continue;
-        }
-        for dep in pkg.require.keys() {
-            let dep_lower = dep.to_lowercase();
-            if let Some(matches) = resolves.get(&dep_lower) {
-                for &m in matches {
-                    let m_lower = m.name.to_lowercase();
-                    if m_lower != pkg_lower {
-                        roots_set.shift_remove(&m_lower);
-                    }
-                }
-            }
-        }
-    }
-
-    let mut stack: Vec<&'a lockfile::LockedPackage> = sorted
-        .iter()
-        .filter(|p| roots_set.contains(&p.name.to_lowercase()))
-        .copied()
-        .collect();
-
-    let mut visited: IndexSet<String> = IndexSet::new();
-    let mut processed: IndexSet<String> = IndexSet::new();
-    let mut ordered: Vec<&'a lockfile::LockedPackage> = Vec::with_capacity(packages.len());
-
-    while let Some(pkg) = stack.pop() {
-        let lower = pkg.name.to_lowercase();
-        if processed.contains(&lower) {
-            continue;
-        }
-        if !visited.contains(&lower) {
-            visited.insert(lower);
-            // Re-push self so it's processed after its requires drain.
-            stack.push(pkg);
-            for dep in pkg.require.keys() {
-                let dep_lower = dep.to_lowercase();
-                if let Some(matches) = resolves.get(&dep_lower) {
-                    for &m in matches {
-                        stack.push(m);
-                    }
-                }
-            }
-        } else {
-            processed.insert(lower);
-            ordered.push(pkg);
-        }
-    }
-
-    // Cycle / disconnected fallback: append any leftover packages in the
-    // input order so the function is total.
-    for pkg in packages {
-        let lower = pkg.name.to_lowercase();
-        if !processed.contains(&lower) {
-            processed.insert(lower);
-            ordered.push(*pkg);
-        }
-    }
-
-    ordered
-}
-
-/// Pre-rendered MarkAliasUninstalled operation. Composer derives the alias
-/// from the installed package's `extra.branch-alias` map and the comparison
-/// runs against the new lock's `aliases[]` block; we precompute the trace
-/// strings here so the executor call site can stay simple.
-struct StaleInstalledAlias {
-    name: String,
-    alias_full: String,
-    target_full: String,
-}
-
-/// `(package_name_lowercase, alias_pretty)` pairs the *new* lock's packages
-/// will surface — the union of explicit `aliases[]`, `extra.branch-alias`
-/// expansion, and the synthetic `9999999-dev` default-branch alias. Used by
-/// `collect_stale_installed_aliases` to determine which currently-installed
-/// alias packages no longer have a counterpart in the new lock. Mirrors
-/// `Locker::getLockedRepository` running every locked package through
-/// `ArrayLoader`, which surfaces an `AliasPackage` for each branch-alias
-/// entry plus the default-branch fallback.
-fn lock_alias_pretty_pairs(
+/// Run all lock-verification checks that are temporary stand-ins for
+/// `Composer\Solver::solve` against a lock-only request. Returns all problem
+/// strings combined so a future "swap for SAT-verify" change is a single
+/// function replacement.
+fn verify_lock(
+    root: &mozart_core::package::RawPackageData,
     lock: &lockfile::LockFile,
-) -> std::collections::HashSet<(String, String)> {
-    use std::collections::HashSet;
-    let mut set: HashSet<(String, String)> = HashSet::new();
-    for a in &lock.aliases {
-        set.insert((a.package.to_lowercase(), a.alias.clone()));
-    }
-    for pkg in lock
-        .packages
-        .iter()
-        .chain(lock.packages_dev.iter().flatten())
-    {
-        let mut emitted_explicit = false;
-        if let Some(map) = pkg
-            .extra_fields
-            .get("extra")
-            .and_then(|e| e.get("branch-alias"))
-            .and_then(|b| b.as_object())
-        {
-            for (source, target) in map {
-                if !source.eq_ignore_ascii_case(&pkg.version) {
-                    continue;
-                }
-                let Some(target_str) = target.as_str() else {
-                    continue;
-                };
-                if !target_str.to_lowercase().ends_with("-dev") {
-                    continue;
-                }
-                set.insert((pkg.name.to_lowercase(), target_str.to_string()));
-                emitted_explicit = true;
-            }
-        }
-        if emitted_explicit {
-            continue;
-        }
-        let is_default_branch = pkg
-            .extra_fields
-            .get("default-branch")
-            .and_then(|v| v.as_bool())
-            .unwrap_or(false);
-        if !is_default_branch {
-            continue;
-        }
-        let version_lower = pkg.version.to_lowercase();
-        let is_dev_branch = version_lower.starts_with("dev-") || version_lower.ends_with("-dev");
-        if !is_dev_branch {
-            continue;
-        }
-        set.insert((pkg.name.to_lowercase(), "9999999-dev".to_string()));
-    }
-    set
-}
-
-/// Walk every `installed.json` entry, expand its `extra.branch-alias` map
-/// into `(target_branch_pretty → alias_pretty)` pairs, and emit a
-/// [`StaleInstalledAlias`] for each pair whose alias version doesn't appear
-/// among the new lock's surfaced aliases. Mirrors Composer's
-/// `Transaction::calculateOperations`, which seeds `removeAliasMap` from
-/// the present alias packages and trims it as the result is walked —
-/// whatever's left becomes a `MarkAliasUninstalledOperation`.
-fn collect_stale_installed_aliases(
-    installed: &installed::InstalledPackages,
-    lock: &lockfile::LockFile,
-) -> Vec<StaleInstalledAlias> {
-    let preserved = lock_alias_pretty_pairs(lock);
-    let still_present = |name: &str, alias_pretty: &str| -> bool {
-        preserved.contains(&(name.to_lowercase(), alias_pretty.to_string()))
-    };
-    let mut stale = Vec::new();
-    for entry in &installed.packages {
-        let mut emitted_explicit = false;
-        if let Some(branch_alias) = entry
-            .extra_fields
-            .get("extra")
-            .and_then(|e| e.get("branch-alias"))
-            .and_then(|b| b.as_object())
-        {
-            for (target_branch, alias_value) in branch_alias {
-                // The map key is the branch name (e.g. `dev-master`); only
-                // the alias for the *currently installed* version applies.
-                if entry.version != *target_branch {
-                    continue;
-                }
-                let Some(alias_pretty) = alias_value.as_str() else {
-                    continue;
-                };
-                emitted_explicit = true;
-                if still_present(&entry.name, alias_pretty) {
-                    continue;
-                }
-                stale.push(StaleInstalledAlias {
-                    name: entry.name.clone(),
-                    alias_full: format_full_pretty_with_pretty_for_installed(alias_pretty, entry),
-                    target_full: format_full_pretty_version_for_installed(entry),
-                });
-            }
-        }
-
-        // Synthetic `9999999-dev` default-branch alias. Mirrors
-        // `ArrayLoader::getBranchAlias`'s default-branch fallback: a
-        // `default-branch: true` dev package without an explicit
-        // branch-alias surfaces an AliasPackage at `9999999-dev`. When that
-        // package leaves the lock the alias is also retired.
-        if emitted_explicit {
-            continue;
-        }
-        let is_default_branch = entry
-            .extra_fields
-            .get("default-branch")
-            .and_then(|v| v.as_bool())
-            .unwrap_or(false);
-        if !is_default_branch {
-            continue;
-        }
-        let version_lower = entry.version.to_lowercase();
-        let is_dev_branch = version_lower.starts_with("dev-") || version_lower.ends_with("-dev");
-        if !is_dev_branch {
-            continue;
-        }
-        const DEFAULT_BRANCH_ALIAS: &str = "9999999-dev";
-        if still_present(&entry.name, DEFAULT_BRANCH_ALIAS) {
-            continue;
-        }
-        stale.push(StaleInstalledAlias {
-            name: entry.name.clone(),
-            alias_full: format_full_pretty_with_pretty_for_installed(DEFAULT_BRANCH_ALIAS, entry),
-            target_full: format_full_pretty_version_for_installed(entry),
-        });
-    }
-    stale
-}
-
-/// Collect the alias normalized-versions a previous install recorded for
-/// `pkg_name`. Mirrors Composer's `presentAliasMap` seeding:
-/// `LocalRepository::loadPackages` runs every installed entry through
-/// `ArrayLoader`, which surfaces an `AliasPackage` for each
-/// `extra.branch-alias` entry plus the synthetic
-/// `9999999.9999999.9999999.9999999-dev` alias for `default-branch: true`
-/// dev packages without an explicit alias. The new install/upgrade should
-/// only emit a MarkAliasInstalled trace line for an alias that wasn't
-/// already in this set.
-fn previously_installed_alias_versions(
-    installed: &installed::InstalledPackages,
-    pkg_name: &str,
+    dev_mode: bool,
+    ignore_platform_reqs: bool,
+    ignore_platform_req: &[String],
 ) -> Vec<String> {
-    let mut out = Vec::new();
-    for entry in &installed.packages {
-        if !entry.name.eq_ignore_ascii_case(pkg_name) {
-            continue;
-        }
-        let version_lower = entry.version.to_lowercase();
-        let is_dev_branch = version_lower.starts_with("dev-") || version_lower.ends_with("-dev");
-        if !is_dev_branch {
-            continue;
-        }
-
-        let mut emitted_explicit_alias = false;
-        if let Some(branch_alias_map) = entry
-            .extra_fields
-            .get("extra")
-            .and_then(|e| e.get("branch-alias"))
-            .and_then(|b| b.as_object())
-        {
-            for (source, target) in branch_alias_map {
-                if !source.eq_ignore_ascii_case(&entry.version) {
-                    continue;
-                }
-                let Some(target_str) = target.as_str() else {
-                    continue;
-                };
-                if !target_str.to_lowercase().ends_with("-dev") {
-                    continue;
-                }
-                if let Some(normalized) =
-                    mozart_registry::resolver::normalize_branch_alias_target(target_str)
-                {
-                    out.push(normalized);
-                    emitted_explicit_alias = true;
-                }
-            }
-        }
-
-        // Synthesize the default-branch alias when `default-branch: true` is
-        // recorded and no explicit branch-alias took its place. Mirrors
-        // `ArrayLoader::getBranchAlias`'s default-branch fallback.
-        if !emitted_explicit_alias
-            && entry
-                .extra_fields
-                .get("default-branch")
-                .and_then(|v| v.as_bool())
-                .unwrap_or(false)
-        {
-            out.push("9999999.9999999.9999999.9999999-dev".to_string());
-        }
-    }
-    out
-}
-
-/// Compare an installed-package entry's source/dist references with a
-/// locked package's. Mirrors the reference-equality leg of Composer's
-/// `Transaction::calculateOperations` update-detection: a same-version
-/// install is upgraded (or downgraded) when either reference has shifted,
-/// so users who pinned a new commit via `dev-main#abcd` see the move.
-fn installed_refs_match_locked(
-    entry: &installed::InstalledPackageEntry,
-    locked: &lockfile::LockedPackage,
-) -> bool {
-    let installed_source_ref = entry
-        .source
-        .as_ref()
-        .and_then(|v| v.get("reference"))
-        .and_then(|v| v.as_str());
-    let installed_dist_ref = entry
-        .dist
-        .as_ref()
-        .and_then(|v| v.get("reference"))
-        .and_then(|v| v.as_str());
-    let locked_source_ref = locked.source.as_ref().and_then(|s| s.reference.as_deref());
-    let locked_dist_ref = locked.dist.as_ref().and_then(|d| d.reference.as_deref());
-    installed_source_ref == locked_source_ref && installed_dist_ref == locked_dist_ref
-}
-
-/// Reduce a serialized `abandoned` value to the (isAbandoned, replacement)
-/// pair Composer compares in `Transaction::calculateOperations`:
-/// `isAbandoned()` is the truthy cast of the field, and
-/// `getReplacementPackage()` is the field itself when it's a string, else
-/// null. Missing / `false` / `null` collapse to "not abandoned"; `true` is
-/// abandoned with no replacement; a string is both.
-fn abandoned_state(v: Option<&serde_json::Value>) -> (bool, Option<&str>) {
-    match v {
-        Some(serde_json::Value::Bool(b)) => (*b, None),
-        Some(serde_json::Value::String(s)) => (true, Some(s.as_str())),
-        _ => (false, None),
-    }
-}
-
-/// Mirror the `isAbandoned()` / `getReplacementPackage()` leg of Composer's
-/// same-version update check: when an installed package's `abandoned` flag
-/// (or its replacement target) drifts from the lock, fire an UpdateOperation
-/// so vendor/composer/installed.json is rewritten with the fresh value.
-fn installed_abandoned_matches_locked(
-    entry: &installed::InstalledPackageEntry,
-    locked: &lockfile::LockedPackage,
-) -> bool {
-    abandoned_state(entry.extra_fields.get("abandoned"))
-        == abandoned_state(locked.extra_fields.get("abandoned"))
-}
-
-/// Convert a LockedPackage to an InstalledPackageEntry.
-///
-/// `LockedPackage::extra_fields` is forwarded verbatim so flags like
-/// `abandoned` and `default-branch` survive the lock → installed.json round
-/// trip, matching Composer's `InstalledFilesystemRepository::write()` (which
-/// dumps the full package via `ArrayDumper`).
-pub fn locked_to_installed_entry(
-    pkg: &lockfile::LockedPackage,
-    _vendor_dir: &Path,
-) -> installed::InstalledPackageEntry {
-    // Composer uses a path relative to vendor/composer/installed.json
-    let install_path = format!("../{}", pkg.name);
-
-    installed::InstalledPackageEntry {
-        name: pkg.name.clone(),
-        version: pkg.version.clone(),
-        version_normalized: pkg.version_normalized.clone(),
-        source: pkg
-            .source
-            .as_ref()
-            .map(|s| serde_json::to_value(s).unwrap_or_default()),
-        dist: pkg
-            .dist
-            .as_ref()
-            .map(|d| serde_json::to_value(d).unwrap_or_default()),
-        package_type: pkg.package_type.clone(),
-        install_path: Some(install_path),
-        autoload: pkg.autoload.clone(),
-        aliases: vec![],
-        homepage: pkg.homepage.clone(),
-        support: pkg.support.clone(),
-        extra_fields: pkg.extra_fields.clone(),
-    }
-}
-
-/// Check whether a package name refers to a platform package.
-///
-/// Platform packages are: names starting with "php", "ext-", or "lib-".
-fn is_platform_package(name: &str) -> bool {
-    let lower = name.to_lowercase();
-    lower == "php"
-        || lower.starts_with("php-")
-        || lower.starts_with("ext-")
-        || lower.starts_with("lib-")
+    let mut problems = verify_lock_platform_problems(
+        root,
+        lock,
+        dev_mode,
+        ignore_platform_reqs,
+        ignore_platform_req,
+    );
+    problems.extend(verify_lock_same_name_problems(lock, dev_mode));
+    problems.extend(verify_lock_conflict_problems(lock, dev_mode));
+    problems.extend(verify_lock_root_require_problems(lock, root, dev_mode));
+    problems
 }
 
 /// Verify root + lock platform requirements against the detected platform.
@@ -656,7 +180,7 @@ fn is_platform_package(name: &str) -> bool {
 ///
 /// Returns the list of "Root composer.json requires …" diagnostic lines (one
 /// per failing requirement). An empty vec means everything is satisfied.
-fn collect_install_platform_problems(
+fn verify_lock_platform_problems(
     root: &mozart_core::package::RawPackageData,
     lock: &lockfile::LockFile,
     dev_mode: bool,
@@ -686,7 +210,7 @@ fn collect_install_platform_problems(
 ///
 /// `provide` is intentionally excluded — `getNames(false)` excludes it, and
 /// virtual `provide` targets allow multiple co-installed providers.
-fn collect_install_same_name_problems(lock: &lockfile::LockFile, dev_mode: bool) -> Vec<String> {
+fn verify_lock_same_name_problems(lock: &lockfile::LockFile, dev_mode: bool) -> Vec<String> {
     let mut providers: BTreeMap<String, Vec<String>> = BTreeMap::new();
 
     let mut all_pkgs: Vec<&lockfile::LockedPackage> = lock.packages.iter().collect();
@@ -734,7 +258,7 @@ fn collect_install_same_name_problems(lock: &lockfile::LockFile, dev_mode: bool)
 /// `version` (or its branch alias) past the range a locked dependent
 /// expects, the lock can't be installed as-is and the resolver-equivalent
 /// must bail with exit-code 2 before any package operations run.
-fn collect_install_root_require_problems(
+fn verify_lock_root_require_problems(
     lock: &lockfile::LockFile,
     root: &mozart_core::package::RawPackageData,
     dev_mode: bool,
@@ -790,7 +314,7 @@ fn collect_install_root_require_problems(
 /// covers the lock-file-only conflict case the SAT solver would have
 /// caught. Each (declarer, target) pair where the target's effective
 /// version satisfies the declarer's `conflict` constraint is reported.
-fn collect_install_conflict_problems(lock: &lockfile::LockFile, dev_mode: bool) -> Vec<String> {
+fn verify_lock_conflict_problems(lock: &lockfile::LockFile, dev_mode: bool) -> Vec<String> {
     use mozart_semver::{Version, VersionConstraint};
 
     let mut all_pkgs: Vec<&lockfile::LockedPackage> = lock.packages.iter().collect();
@@ -894,14 +418,14 @@ fn combine_platform_requirements(
 
     for (name, constraint) in &root.require {
         let lower = name.to_lowercase();
-        if is_platform_package(&lower) {
+        if mozart_core::platform::is_platform_package(&lower) {
             combined.insert(lower, constraint.clone());
         }
     }
     if dev_mode {
         for (name, constraint) in &root.require_dev {
             let lower = name.to_lowercase();
-            if is_platform_package(&lower) {
+            if mozart_core::platform::is_platform_package(&lower) {
                 combined.insert(lower, constraint.clone());
             }
         }
@@ -986,7 +510,7 @@ fn warn_platform_requirements(
 
     for pkg in packages {
         for (req_name, req_constraint) in &pkg.require {
-            if is_platform_package(req_name) {
+            if mozart_core::platform::is_platform_package(req_name) {
                 let lower = req_name.to_lowercase();
                 if !ignored_set.contains(&lower) {
                     console.info(&console_format!(
@@ -1117,7 +641,7 @@ pub async fn install_from_lock(
         // line so consumers see the alias was retired alongside its target.
         // Detection runs before installs/updates since Composer hoists alias
         // uninstalls to the front of the operations list.
-        let stale_aliases = collect_stale_installed_aliases(&installed, lock);
+        let stale_aliases = compute_stale_installed_aliases(&installed, lock);
         for stale in &stale_aliases {
             executor
                 .install_package(
@@ -1354,11 +878,18 @@ pub async fn run(
     repositories: std::sync::Arc<mozart_registry::repository::RepositorySet>,
     executor: &mut dyn InstallerExecutor,
 ) -> anyhow::Result<()> {
-    // Step 2: Validate arguments
-    if args.prefer_install.is_some() && (args.prefer_source || args.prefer_dist) {
-        return Err(mozart_core::exit_code::bail(
-            mozart_core::exit_code::GENERAL_ERROR,
-            "The --prefer-install option cannot be used together with --prefer-source or --prefer-dist.",
+    // Step 2: Validate arguments — order matches Composer's InstallCommand::execute (80–101):
+    // 1. deprecation warnings, 2. reject packages, 3. reject --no-install,
+    // 4. Mozart-only prefer-install mutual-exclusion.
+    if args.dev {
+        console.info(&console_format!(
+            "<warning>You are using the deprecated option \"--dev\". It has no effect and will break in Composer 3.</warning>"
+        ));
+    }
+
+    if args.no_suggest {
+        console.info(&console_format!(
+            "<warning>You are using the deprecated option \"--no-suggest\". It has no effect and will break in Composer 3.</warning>"
         ));
     }
 
@@ -1379,15 +910,10 @@ pub async fn run(
         ));
     }
 
-    if args.dev {
-        console.info(&console_format!(
-            "<warning>The --dev option is deprecated. Dev packages are installed by default.</warning>"
-        ));
-    }
-
-    if args.no_suggest {
-        console.info(&console_format!(
-            "<warning>The --no-suggest option is deprecated and has no effect.</warning>"
+    if args.prefer_install.is_some() && (args.prefer_source || args.prefer_dist) {
+        return Err(mozart_core::exit_code::bail(
+            mozart_core::exit_code::GENERAL_ERROR,
+            "The --prefer-install option cannot be used together with --prefer-source or --prefer-dist.",
         ));
     }
 
@@ -1396,7 +922,7 @@ pub async fn run(
     let lock_path = working_dir.join("composer.lock");
     if !lock_path.exists() {
         console.info(&console_format!(
-            "<warning>No composer.lock file present. Updating dependencies to latest instead of installing from lock file.</warning>"
+            "<warning>No composer.lock file present. Updating dependencies to latest instead of installing from lock file. See https://getcomposer.org/install for more information.</warning>"
         ));
         let update_args = super::update::UpdateArgs {
             packages: vec![],
@@ -1487,65 +1013,19 @@ pub async fn run(
             }
         }
 
-        let platform_problems = collect_install_platform_problems(
+        let lock_problems = verify_lock(
             &root_pkg,
             &lock,
             dev_mode,
             args.ignore_platform_reqs,
             &args.ignore_platform_req,
         );
-        if !platform_problems.is_empty() {
+        if !lock_problems.is_empty() {
             console.info(
                 "Your lock file does not contain a compatible set of packages. Please run composer update.",
             );
             console.info("");
-            for (i, msg) in platform_problems.iter().enumerate() {
-                console.info(&format!("  Problem {}", i + 1));
-                console.info(&format!("    {msg}"));
-            }
-            return Err(mozart_core::exit_code::bail_silent(
-                mozart_core::exit_code::DEPENDENCY_RESOLUTION_FAILED,
-            ));
-        }
-
-        let same_name_problems = collect_install_same_name_problems(&lock, dev_mode);
-        if !same_name_problems.is_empty() {
-            console.info(
-                "Your lock file does not contain a compatible set of packages. Please run composer update.",
-            );
-            console.info("");
-            for (i, msg) in same_name_problems.iter().enumerate() {
-                console.info(&format!("  Problem {}", i + 1));
-                console.info(&format!("    {msg}"));
-            }
-            return Err(mozart_core::exit_code::bail_silent(
-                mozart_core::exit_code::DEPENDENCY_RESOLUTION_FAILED,
-            ));
-        }
-
-        let conflict_problems = collect_install_conflict_problems(&lock, dev_mode);
-        if !conflict_problems.is_empty() {
-            console.info(
-                "Your lock file does not contain a compatible set of packages. Please run composer update.",
-            );
-            console.info("");
-            for (i, msg) in conflict_problems.iter().enumerate() {
-                console.info(&format!("  Problem {}", i + 1));
-                console.info(&format!("    {msg}"));
-            }
-            return Err(mozart_core::exit_code::bail_silent(
-                mozart_core::exit_code::DEPENDENCY_RESOLUTION_FAILED,
-            ));
-        }
-
-        let root_require_problems =
-            collect_install_root_require_problems(&lock, &root_pkg, dev_mode);
-        if !root_require_problems.is_empty() {
-            console.info(
-                "Your lock file does not contain a compatible set of packages. Please run composer update.",
-            );
-            console.info("");
-            for (i, msg) in root_require_problems.iter().enumerate() {
+            for (i, msg) in lock_problems.iter().enumerate() {
                 console.info(&format!("  Problem {}", i + 1));
                 console.info(&format!("    {msg}"));
             }
@@ -1578,7 +1058,9 @@ pub async fn run(
             no_progress: args.no_progress,
             ignore_platform_reqs: args.ignore_platform_reqs,
             ignore_platform_req: args.ignore_platform_req.clone(),
-            optimize_autoloader: args.optimize_autoloader,
+            // Mirror Composer's setter coupling (Installer.php 1247–1272):
+            // classmap_authoritative=true forces optimize_autoloader=true.
+            optimize_autoloader: args.optimize_autoloader || args.classmap_authoritative,
             classmap_authoritative: args.classmap_authoritative,
             apcu_autoloader: args.apcu_autoloader || args.apcu_autoloader_prefix.is_some(),
             apcu_autoloader_prefix: args.apcu_autoloader_prefix.clone(),
@@ -2090,11 +1572,11 @@ mod tests {
     }
 
     #[test]
-    fn collect_install_platform_problems_returns_empty_when_no_reqs() {
+    fn verify_lock_platform_problems_returns_empty_when_no_reqs() {
         // No platform reqs anywhere → returns empty without invoking detect_platform.
         let lock = lock_with_platform(serde_json::json!({}), serde_json::json!({}));
         let root = root_with_require(&[("vendor/pkg", "^1.0")], &[]);
-        let problems = collect_install_platform_problems(&root, &lock, true, false, &[]);
+        let problems = verify_lock_platform_problems(&root, &lock, true, false, &[]);
 
         assert!(problems.is_empty());
     }

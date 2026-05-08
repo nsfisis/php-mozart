@@ -2,6 +2,7 @@ use clap::Args;
 use indexmap::{IndexMap, IndexSet};
 use mozart_core::console_format;
 use mozart_core::package::{self, Stability};
+use mozart_core::platform::is_platform_package;
 use mozart_registry::lockfile;
 use mozart_registry::resolver::{
     self, LockedPackageInfo, PlatformConfig, ResolveRequest, ResolvedPackage,
@@ -233,18 +234,6 @@ fn extract_root_branch_alias(
 
 fn parse_minimum_stability(s: &str) -> Stability {
     package::Stability::parse(s)
-}
-
-/// Check whether a package name refers to a platform package (php, ext-*, lib-*, composer-*).
-fn is_platform_package(name: &str) -> bool {
-    let lower = name.to_lowercase();
-    lower == "php"
-        || lower.starts_with("ext-")
-        || lower.starts_with("lib-")
-        || lower.starts_with("composer-")
-        || lower == "composer"
-        || lower == "composer-runtime-api"
-        || lower == "composer-plugin-api"
 }
 
 /// Compare old lock vs new lock to determine installs, updates, removals, and unchanged packages.

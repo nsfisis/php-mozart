@@ -20,9 +20,14 @@ use crate::lockfile::{LockAlias, LockedPackage};
 
 pub mod filesystem;
 pub mod trace_recorder;
+pub mod transaction;
 
 pub use filesystem::FilesystemExecutor;
 pub use trace_recorder::TraceRecorderExecutor;
+pub use transaction::{
+    Action, StaleInstalledAlias, compute_operations, compute_stale_installed_aliases,
+    locked_to_installed_entry, previously_installed_alias_versions,
+};
 
 /// One install or update operation handed to [`InstallerExecutor::install_package`].
 #[derive(Debug, Clone, Copy)]
