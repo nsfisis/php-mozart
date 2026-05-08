@@ -1,9 +1,13 @@
 use clap::Args;
 use indexmap::IndexMap;
+use mozart_core::composer::{Composer, LocalRepository};
+use mozart_core::console::Console;
 use mozart_core::console_format;
-use mozart_core::console_writeln;
+use mozart_core::{console_writeln, console_writeln_error};
+use std::collections::BTreeMap;
+use std::path::Path;
 
-/// Exit code for stale lock file (matches Composer's BumpCommand::ERROR_LOCK_OUTDATED)
+/// Exit code for stale lock file (matches Composer's BumpCommand::ERROR_LOCK_OUTDATED).
 const ERROR_LOCK_OUTDATED: i32 = 2;
 
 #[derive(Args)]
@@ -24,215 +28,335 @@ pub struct BumpArgs {
     pub dry_run: bool,
 }
 
-pub async fn execute(
-    args: &BumpArgs,
-    cli: &super::Cli,
-    console: &mozart_core::console::Console,
-) -> anyhow::Result<()> {
+pub async fn execute(args: &BumpArgs, cli: &super::Cli, console: &Console) -> anyhow::Result<()> {
     let working_dir = cli.working_dir()?;
+    let composer = Composer::require(&working_dir)?;
 
-    let composer_json_path = working_dir.join("composer.json");
-    let lock_path = working_dir.join("composer.lock");
+    let exit = do_bump(
+        console,
+        &composer,
+        args.dev_only,
+        args.no_dev_only,
+        args.dry_run,
+        &args.packages,
+        "--dev-only",
+    )
+    .await?;
 
-    // Ensure composer.json exists
-    if !composer_json_path.exists() {
-        anyhow::bail!("No composer.json found in {}", working_dir.display());
+    if exit != 0 {
+        return Err(mozart_core::exit_code::bail_silent(exit));
+    }
+    Ok(())
+}
+
+/// Mirrors `Composer\Command\BumpCommand::doBump`. Returns the exit code
+/// (0 / `ERROR_GENERIC` / `ERROR_LOCK_OUTDATED`).
+///
+/// `dev_only_flag_hint` is the option name shown in the `Alternatively you can use {hint}`
+/// warning when the package has no `type` set. `bump` itself passes `--dev-only`;
+/// `update --bump` will pass its own combined option name once that command is ported.
+pub async fn do_bump(
+    io: &Console,
+    composer: &Composer,
+    dev_only: bool,
+    no_dev_only: bool,
+    dry_run: bool,
+    packages_filter: &[String],
+    dev_only_flag_hint: &str,
+) -> anyhow::Result<i32> {
+    let composer_json_path = composer.project_dir().join("composer.json");
+
+    if !is_readable(&composer_json_path) {
+        console_writeln_error!(
+            io,
+            &console_format!(
+                "<error>{} is not readable.</error>",
+                composer_json_path.display()
+            ),
+        );
+        return Ok(mozart_core::exit_code::GENERAL_ERROR);
     }
 
-    // Read composer.json content (raw string for hash computation)
-    let composer_json_content = std::fs::read_to_string(&composer_json_path)?;
-
-    // Parse composer.json
-    let mut root: mozart_core::package::RawPackageData =
-        serde_json::from_str(&composer_json_content)?;
-
-    // Warn if package is not a project (libraries shouldn't bump)
-    match root.package_type.as_deref() {
-        Some("project") => {}
-        Some(pkg_type) => {
-            console.info(&console_format!("<warning>Warning: Bumping constraints for a non-project package (type=\"{pkg_type}\"). Libraries should not pin their dependencies.</warning>"));
+    let contents = match std::fs::read_to_string(&composer_json_path) {
+        Ok(c) => c,
+        Err(_) => {
+            console_writeln_error!(
+                io,
+                &console_format!(
+                    "<error>{} is not readable.</error>",
+                    composer_json_path.display()
+                ),
+            );
+            return Ok(mozart_core::exit_code::GENERAL_ERROR);
         }
-        None if !args.dev_only => {
-            console.info(&console_format!("<warning>Warning: Bumping constraints for a non-project package. No type was set so it defaults to \"library\". Libraries should not pin their dependencies. Consider using --dev-only or setting the type to \"project\".</warning>"));
-        }
-        None => {}
-    }
-
-    // Check lock file existence
-    if !lock_path.exists() {
-        anyhow::bail!("No composer.lock found. Run `mozart install` first.");
-    }
-
-    // Read and parse lock file
-    let lock = mozart_registry::lockfile::LockFile::read_from_file(&lock_path)?;
-
-    // Check lock file freshness
-    if !lock.is_fresh(&composer_json_content) {
-        return Err(mozart_core::exit_code::bail(
-            ERROR_LOCK_OUTDATED,
-            "composer.lock is not up to date with composer.json. \
-             Run `mozart install` or `mozart update` to refresh it.",
-        ));
-    }
-
-    // Build map: package name (lowercase) → (pretty_version, version_normalized)
-    let locked_versions = build_locked_versions_map(&lock);
-
-    // Determine which sections to process
-    let bump_require = !args.dev_only;
-    let bump_require_dev = !args.no_dev_only;
-
-    // Package filter (if specified)
-    let package_filter: Option<Vec<String>> = if args.packages.is_empty() {
-        None
-    } else {
-        Some(
-            args.packages
-                .iter()
-                .map(|p| strip_inline_constraint(p).to_lowercase())
-                .collect(),
-        )
     };
 
-    // Collect changes
-    let mut require_changes: Vec<(String, String, String)> = Vec::new(); // (name, old, new)
-    let mut require_dev_changes: Vec<(String, String, String)> = Vec::new();
+    if !is_writable(&composer_json_path) {
+        console_writeln_error!(
+            io,
+            &console_format!(
+                "<error>{} is not writable.</error>",
+                composer_json_path.display()
+            ),
+        );
+        return Ok(mozart_core::exit_code::GENERAL_ERROR);
+    }
 
-    // Process require
-    if bump_require {
-        for (pkg_name, constraint) in &root.require {
-            if is_platform_package(pkg_name) {
-                continue;
-            }
-            if let Some(ref filter) = package_filter
-                && !matches_filter(filter, pkg_name)
-            {
-                continue;
-            }
-            if let Some((pretty_version, version_normalized)) =
-                locked_versions.get(&pkg_name.to_lowercase())
-                && let Some(new_constraint) = mozart_core::version_bumper::bump_requirement(
-                    constraint,
-                    pretty_version,
-                    version_normalized.as_deref(),
-                )
-            {
-                require_changes.push((pkg_name.clone(), constraint.clone(), new_constraint));
-            }
+    // Mirrors Composer's `$hasLockfileDisabled = !$config->has('lock') || $config->get('lock')`.
+    // The PHP variable is named "hasLockfileDisabled" but its value is *true* when the
+    // lock is enabled (default) — i.e. the name is upstream-confusing. Mozart's
+    // `Config::lock` is a `bool` (defaults to `true`), so the equivalent is just the field.
+    let lock_enabled = composer.config().lock;
+    let lock_path = composer.locker().lock_file_path();
+
+    let locked_versions: IndexMap<String, (String, Option<String>)> = if !lock_enabled {
+        // Composer always reaches for the locker here, even though `lock` is disabled.
+        // Mirror that: if a lockfile exists on disk we use it; otherwise we fall back
+        // to an empty map (`getLockedRepository` would throw in PHP — Mozart degrades
+        // gracefully because `bump` has nothing to bump in that case anyway).
+        if composer.locker().is_locked() {
+            let lock = mozart_registry::lockfile::LockFile::read_from_file(lock_path)?;
+            build_locked_versions_from_lock(&lock)
+        } else {
+            IndexMap::new()
+        }
+    } else if composer.locker().is_locked() {
+        let lock = mozart_registry::lockfile::LockFile::read_from_file(lock_path)?;
+        if !lock.is_fresh(&contents) {
+            console_writeln_error!(
+                io,
+                &console_format!(
+                    "<error>The lock file is not up to date with the latest changes in composer.json. Run the appropriate `update` to fix that before you use the `bump` command.</error>"
+                ),
+            );
+            return Ok(ERROR_LOCK_OUTDATED);
+        }
+        build_locked_versions_from_lock(&lock)
+    } else {
+        build_locked_versions_from_local(composer.repository_manager().local_repository())
+    };
+
+    let package_type = composer.package().package_type.as_deref();
+    if package_type != Some("project") && !dev_only {
+        console_writeln_error!(
+            io,
+            &console_format!(
+                "<warning>Warning: Bumping dependency constraints is not recommended for libraries as it will narrow down your dependencies and may cause problems for your users.</warning>"
+            ),
+        );
+        if package_type.is_none() {
+            console_writeln_error!(
+                io,
+                &console_format!(
+                    "<warning>If your package is not a library, you can explicitly specify the \"type\" by using \"composer config type project\".</warning>"
+                ),
+            );
+            console_writeln_error!(
+                io,
+                &console_format!(
+                    "<warning>Alternatively you can use {dev_only_flag_hint} to only bump dependencies within \"require-dev\".</warning>"
+                ),
+            );
         }
     }
 
-    // Process require-dev
-    if bump_require_dev {
-        for (pkg_name, constraint) in &root.require_dev {
-            if is_platform_package(pkg_name) {
+    let mut tasks: Vec<(&'static str, &BTreeMap<String, String>)> = Vec::new();
+    if !dev_only {
+        tasks.push(("require", &composer.package().require));
+    }
+    if !no_dev_only {
+        tasks.push(("require-dev", &composer.package().require_dev));
+    }
+
+    let stripped_filter: Option<Vec<String>> = if packages_filter.is_empty() {
+        None
+    } else {
+        let mut filtered: Vec<String> = packages_filter
+            .iter()
+            .map(|p| strip_inline_constraint(p).to_lowercase())
+            .collect();
+        filtered.sort();
+        filtered.dedup();
+        Some(filtered)
+    };
+
+    let mut updates: BTreeMap<&'static str, BTreeMap<String, String>> = BTreeMap::new();
+
+    for (key, reqs) in &tasks {
+        for (pkg_name, constraint) in reqs.iter() {
+            if mozart_core::platform::is_platform_package(pkg_name) {
                 continue;
             }
-            if let Some(ref filter) = package_filter
-                && !matches_filter(filter, pkg_name)
+            if let Some(ref filter) = stripped_filter
+                && !filter
+                    .iter()
+                    .any(|pat| mozart_core::matches_wildcard(pkg_name, pat))
             {
                 continue;
             }
-            if let Some((pretty_version, version_normalized)) =
+            let Some((pretty_version, version_normalized)) =
                 locked_versions.get(&pkg_name.to_lowercase())
-                && let Some(new_constraint) = mozart_core::version_bumper::bump_requirement(
-                    constraint,
-                    pretty_version,
-                    version_normalized.as_deref(),
-                )
-            {
-                require_dev_changes.push((pkg_name.clone(), constraint.clone(), new_constraint));
+            else {
+                continue;
+            };
+            let Some(new_constraint) = mozart_core::version_bumper::bump_requirement(
+                constraint,
+                pretty_version,
+                version_normalized.as_deref(),
+            ) else {
+                continue;
+            };
+            if &new_constraint == constraint {
+                continue;
             }
+            updates
+                .entry(*key)
+                .or_default()
+                .insert(pkg_name.clone(), new_constraint);
         }
     }
 
-    let total_changes = require_changes.len() + require_dev_changes.len();
+    if !dry_run && !update_file_cleanly(&composer_json_path, &updates)? {
+        let mut composer_definition: mozart_core::package::RawPackageData =
+            serde_json::from_str(&std::fs::read_to_string(&composer_json_path)?)?;
+        for (key, packages) in &updates {
+            for (package, version) in packages {
+                match *key {
+                    "require" => {
+                        composer_definition
+                            .require
+                            .insert(package.clone(), version.clone());
+                    }
+                    "require-dev" => {
+                        composer_definition
+                            .require_dev
+                            .insert(package.clone(), version.clone());
+                    }
+                    _ => unreachable!(),
+                }
+            }
+        }
+        mozart_core::package::write_to_file(&composer_definition, &composer_json_path)?;
+    }
 
-    if total_changes == 0 {
+    let change_count: usize = updates.values().map(|m| m.len()).sum();
+    if change_count > 0 {
+        if dry_run {
+            console_writeln!(
+                io,
+                &console_format!(
+                    "<info>{} would be updated with:</info>",
+                    composer_json_path.display()
+                ),
+            );
+            for (require_type, packages) in &updates {
+                for (package, version) in packages {
+                    console_writeln!(
+                        io,
+                        &console_format!("<info> - {require_type}.{package}: {version}</info>"),
+                    );
+                }
+            }
+        } else {
+            console_writeln!(
+                io,
+                &console_format!(
+                    "<info>{} has been updated ({change_count} changes).</info>",
+                    composer_json_path.display()
+                ),
+            );
+        }
+    } else {
         console_writeln!(
-            console,
+            io,
             &console_format!(
                 "<info>No requirements to update in {}.</info>",
                 composer_json_path.display()
             ),
         );
-        return Ok(());
     }
 
-    if args.dry_run {
-        console_writeln!(
-            console,
-            &console_format!(
-                "<info>{} would be updated with:</info>",
-                composer_json_path.display()
-            ),
-        );
-        for (name, _old, new) in &require_changes {
-            console_writeln!(
-                console,
-                &console_format!("<info> - require.{name}: {new}</info>"),
-            );
-        }
-        for (name, _old, new) in &require_dev_changes {
-            console_writeln!(
-                console,
-                &console_format!("<info> - require-dev.{name}: {new}</info>"),
-            );
-        }
-        // Return exit code 1 when dry-run detects changes (useful for CI to detect un-bumped constraints)
-        return Err(mozart_core::exit_code::bail_silent(
-            mozart_core::exit_code::GENERAL_ERROR,
-        ));
+    if !dry_run && composer.locker().is_locked() && composer.config().lock && change_count > 0 {
+        update_lock_hash(lock_path, &composer_json_path)?;
     }
 
-    // Apply changes to root package
-    for (name, _old, new) in &require_changes {
-        root.require.insert(name.clone(), new.clone());
-    }
-    for (name, _old, new) in &require_dev_changes {
-        root.require_dev.insert(name.clone(), new.clone());
+    if dry_run && change_count > 0 {
+        return Ok(mozart_core::exit_code::GENERAL_ERROR);
     }
 
-    // Write updated composer.json
-    mozart_core::package::write_to_file(&root, &composer_json_path)?;
+    Ok(0)
+}
 
-    // Update the lock file content-hash to match the new composer.json
-    let new_composer_json_content = std::fs::read_to_string(&composer_json_path)?;
+/// Mirrors `BumpCommand::updateFileCleanly`. Returns `Ok(true)` on a clean,
+/// formatting-preserving write; `Ok(false)` when the caller must fall back
+/// to a full structured rewrite of `composer.json`.
+///
+/// Mozart does not yet have a `JsonManipulator` port, so this always returns
+/// `Ok(false)` and the caller falls back. See `docs/known-incompatibilities.md`.
+fn update_file_cleanly(
+    _path: &Path,
+    _updates: &BTreeMap<&'static str, BTreeMap<String, String>>,
+) -> anyhow::Result<bool> {
+    Ok(false)
+}
+
+/// Recompute the lock file's `content-hash` to match `composer_json_path`.
+/// Mirrors `Locker::updateHash`, which `BumpCommand::doBump` calls after a
+/// successful in-place edit so the lockfile stays "fresh" for the next install.
+fn update_lock_hash(lock_path: &Path, composer_json_path: &Path) -> anyhow::Result<()> {
+    let new_composer_json_content = std::fs::read_to_string(composer_json_path)?;
     let new_hash =
         mozart_registry::lockfile::LockFile::compute_content_hash(&new_composer_json_content)?;
-    let mut updated_lock = lock;
-    updated_lock.content_hash = new_hash;
-    updated_lock.write_to_file(&lock_path)?;
-
-    console_writeln!(
-        console,
-        &console_format!(
-            "<info>{} has been updated ({total_changes} changes).</info>",
-            composer_json_path.display()
-        ),
-    );
-
+    let mut lock = mozart_registry::lockfile::LockFile::read_from_file(lock_path)?;
+    lock.content_hash = new_hash;
+    lock.write_to_file(lock_path)?;
     Ok(())
 }
 
-/// Build a map of lowercase package names to (pretty_version, version_normalized) from composer.lock.
-fn build_locked_versions_map(
+fn is_readable(path: &Path) -> bool {
+    std::fs::File::open(path).is_ok()
+}
+
+fn is_writable(path: &Path) -> bool {
+    match std::fs::metadata(path) {
+        Ok(m) => !m.permissions().readonly(),
+        Err(_) => false,
+    }
+}
+
+/// Build a map of lowercase package names to (pretty_version, version_normalized)
+/// from a parsed `composer.lock`.
+fn build_locked_versions_from_lock(
     lock: &mozart_registry::lockfile::LockFile,
 ) -> IndexMap<String, (String, Option<String>)> {
     let mut map: IndexMap<String, (String, Option<String>)> = IndexMap::new();
-
     let all_packages = lock
         .packages
         .iter()
         .chain(lock.packages_dev.as_deref().unwrap_or(&[]));
-
     for pkg in all_packages {
         map.insert(
             pkg.name.to_lowercase(),
             (pkg.version.clone(), pkg.version_normalized.clone()),
         );
     }
+    map
+}
 
+/// Build a map of lowercase package names to (pretty_version, None) from
+/// the local repository (`vendor/composer/installed.json`). Used as the
+/// fallback when no `composer.lock` is present, mirroring Composer's
+/// `getRepositoryManager()->getLocalRepository()` branch.
+fn build_locked_versions_from_local(
+    repo: &LocalRepository,
+) -> IndexMap<String, (String, Option<String>)> {
+    let mut map: IndexMap<String, (String, Option<String>)> = IndexMap::new();
+    for pkg in repo.canonical_packages() {
+        map.insert(
+            pkg.pretty_name().to_lowercase(),
+            (pkg.pretty_version().to_string(), None),
+        );
+    }
     map
 }
 
@@ -241,79 +365,17 @@ fn build_locked_versions_map(
 /// Composer allows arguments like `vendor/pkg:^2.0`, `vendor/pkg=2.0`, or
 /// `vendor/pkg ^2.0`. This function strips everything from the first `:`,
 /// `=`, or ` ` character onward, returning just the package name portion.
+/// Mirrors `Preg::replace('{[:= ].+}', '', $constraint)`.
 fn strip_inline_constraint(arg: &str) -> &str {
     arg.find([':', '=', ' '])
         .map(|pos| &arg[..pos])
         .unwrap_or(arg)
 }
 
-/// Returns true if `name` matches any of the glob patterns in `filter`.
-///
-/// Patterns may contain `*` wildcards (e.g. `psr/*`, `symfony/*`).
-/// Matching is case-insensitive. Exact patterns are also supported.
-fn matches_filter(filter: &[String], name: &str) -> bool {
-    let name_lower = name.to_lowercase();
-    filter.iter().any(|pat| glob_matches(pat, &name_lower))
-}
-
-/// Match a single package name against a glob pattern.
-///
-/// Only `*` wildcards are supported (matches any sequence of characters within
-/// a path segment). Matching is case-insensitive.
-///   - `psr/*`      matches `psr/log`, `psr/container`
-///   - `symfony/*`  matches `symfony/console`, `symfony/http-kernel`
-fn glob_matches(pattern: &str, name: &str) -> bool {
-    // Fast path: no wildcard
-    if !pattern.contains('*') {
-        return pattern == name;
-    }
-    let pat_parts: Vec<&str> = pattern.splitn(2, '/').collect();
-    let name_parts: Vec<&str> = name.splitn(2, '/').collect();
-    if pat_parts.len() != name_parts.len() {
-        return false;
-    }
-    pat_parts
-        .iter()
-        .zip(name_parts.iter())
-        .all(|(pp, np)| glob_segment_matches(pp, np))
-}
-
-/// Match a single path segment against a pattern segment (no `/` involved).
-/// `*` matches any sequence of characters (including empty). Both inputs are
-/// already lowercased before being passed here.
-fn glob_segment_matches(pattern: &str, text: &str) -> bool {
-    glob_segment_matches_inner(pattern.as_bytes(), text.as_bytes())
-}
-
-fn glob_segment_matches_inner(pattern: &[u8], text: &[u8]) -> bool {
-    match (pattern.first(), text.first()) {
-        (None, None) => true,
-        (Some(&b'*'), _) => {
-            glob_segment_matches_inner(&pattern[1..], text)
-                || (!text.is_empty() && glob_segment_matches_inner(pattern, &text[1..]))
-        }
-        (Some(p), Some(t)) if p == t => glob_segment_matches_inner(&pattern[1..], &text[1..]),
-        _ => false,
-    }
-}
-
-/// Returns true if the package name is a platform requirement (php, ext-*, lib-*, etc.).
-fn is_platform_package(name: &str) -> bool {
-    let lower = name.to_lowercase();
-    lower == "php"
-        || lower.starts_with("ext-")
-        || lower.starts_with("lib-")
-        || lower == "php-64bit"
-        || lower == "php-ipv6"
-        || lower == "php-zts"
-        || lower == "php-debug"
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use mozart_registry::lockfile::{LockFile, LockedPackage};
-    use std::collections::BTreeMap;
     use tempfile::tempdir;
 
     fn minimal_lock(packages: Vec<LockedPackage>, packages_dev: Vec<LockedPackage>) -> LockFile {
@@ -393,6 +455,14 @@ mod tests {
         }
     }
 
+    fn quiet_console() -> Console {
+        Console {
+            interactive: false,
+            verbosity: mozart_core::console::Verbosity::Normal,
+            decorated: false,
+        }
+    }
+
     #[tokio::test]
     async fn test_basic_bump_modifies_composer_json() {
         let dir = tempdir().unwrap();
@@ -415,11 +485,7 @@ mod tests {
             dry_run: false,
         };
         let cli = make_cli(dir.path());
-        let console = mozart_core::console::Console {
-            interactive: false,
-            verbosity: mozart_core::console::Verbosity::Normal,
-            decorated: false,
-        };
+        let console = quiet_console();
         execute(&args, &cli, &console).await.unwrap();
 
         let updated = std::fs::read_to_string(dir.path().join("composer.json")).unwrap();
@@ -449,11 +515,7 @@ mod tests {
             dry_run: true,
         };
         let cli = make_cli(dir.path());
-        let console = mozart_core::console::Console {
-            interactive: false,
-            verbosity: mozart_core::console::Verbosity::Normal,
-            decorated: false,
-        };
+        let console = quiet_console();
         let result = execute(&args, &cli, &console).await;
 
         // dry-run with changes returns exit code 1 (for CI usage)
@@ -491,11 +553,7 @@ mod tests {
             dry_run: false,
         };
         let cli = make_cli(dir.path());
-        let console = mozart_core::console::Console {
-            interactive: false,
-            verbosity: mozart_core::console::Verbosity::Normal,
-            decorated: false,
-        };
+        let console = quiet_console();
         execute(&args, &cli, &console).await.unwrap();
 
         // No changes should be made
@@ -532,11 +590,7 @@ mod tests {
             dry_run: false,
         };
         let cli = make_cli(dir.path());
-        let console = mozart_core::console::Console {
-            interactive: false,
-            verbosity: mozart_core::console::Verbosity::Normal,
-            decorated: false,
-        };
+        let console = quiet_console();
         execute(&args, &cli, &console).await.unwrap();
 
         let content = std::fs::read_to_string(dir.path().join("composer.json")).unwrap();
@@ -575,11 +629,7 @@ mod tests {
             dry_run: false,
         };
         let cli = make_cli(dir.path());
-        let console = mozart_core::console::Console {
-            interactive: false,
-            verbosity: mozart_core::console::Verbosity::Normal,
-            decorated: false,
-        };
+        let console = quiet_console();
         execute(&args, &cli, &console).await.unwrap();
 
         let content = std::fs::read_to_string(dir.path().join("composer.json")).unwrap();
@@ -614,11 +664,7 @@ mod tests {
             dry_run: false,
         };
         let cli = make_cli(dir.path());
-        let console = mozart_core::console::Console {
-            interactive: false,
-            verbosity: mozart_core::console::Verbosity::Normal,
-            decorated: false,
-        };
+        let console = quiet_console();
         let result = execute(&args, &cli, &console).await;
 
         // stale lock file should return exit code 2 (ERROR_LOCK_OUTDATED)
@@ -627,16 +673,6 @@ mod tests {
             .downcast_ref::<mozart_core::exit_code::MozartError>()
             .expect("should be MozartError");
         assert_eq!(mozart_err.exit_code, ERROR_LOCK_OUTDATED);
-    }
-
-    #[test]
-    fn test_platform_packages_are_skipped() {
-        assert!(is_platform_package("php"));
-        assert!(is_platform_package("ext-json"));
-        assert!(is_platform_package("ext-mbstring"));
-        assert!(is_platform_package("lib-pcre"));
-        assert!(!is_platform_package("psr/log"));
-        assert!(!is_platform_package("monolog/monolog"));
     }
 
     #[tokio::test]
@@ -661,11 +697,7 @@ mod tests {
             dry_run: false,
         };
         let cli = make_cli(dir.path());
-        let console = mozart_core::console::Console {
-            interactive: false,
-            verbosity: mozart_core::console::Verbosity::Normal,
-            decorated: false,
-        };
+        let console = quiet_console();
         execute(&args, &cli, &console).await.unwrap();
 
         // The lock file content-hash should now match the updated composer.json
@@ -675,6 +707,52 @@ mod tests {
             updated_lock.is_fresh(&updated_composer),
             "Lock file hash should be updated to match new composer.json"
         );
+    }
+
+    #[tokio::test]
+    async fn test_no_lock_falls_back_to_local_repository() {
+        let dir = tempdir().unwrap();
+        let composer_json = r#"{
+    "name": "test/project",
+    "type": "project",
+    "require": {
+        "psr/log": "^1.0"
+    }
+}"#;
+        write_composer_json(dir.path(), composer_json);
+
+        // No composer.lock — instead populate vendor/composer/installed.json.
+        let installed_dir = dir.path().join("vendor/composer");
+        std::fs::create_dir_all(&installed_dir).unwrap();
+        let installed = serde_json::json!({
+            "packages": [
+                {
+                    "name": "psr/log",
+                    "version": "1.1.4",
+                    "version_normalized": "1.1.4.0",
+                }
+            ],
+            "dev": false,
+        });
+        std::fs::write(
+            installed_dir.join("installed.json"),
+            serde_json::to_string_pretty(&installed).unwrap(),
+        )
+        .unwrap();
+
+        let args = BumpArgs {
+            packages: vec![],
+            dev_only: false,
+            no_dev_only: false,
+            dry_run: false,
+        };
+        let cli = make_cli(dir.path());
+        let console = quiet_console();
+        execute(&args, &cli, &console).await.unwrap();
+
+        let content = std::fs::read_to_string(dir.path().join("composer.json")).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
+        assert_eq!(parsed["require"]["psr/log"], "^1.1.4");
     }
 
     #[test]
@@ -696,54 +774,6 @@ mod tests {
     fn test_strip_inline_constraint_no_suffix() {
         assert_eq!(strip_inline_constraint("vendor/pkg"), "vendor/pkg");
         assert_eq!(strip_inline_constraint("psr/log"), "psr/log");
-    }
-
-    #[test]
-    fn test_glob_matches_exact() {
-        assert!(glob_matches("psr/log", "psr/log"));
-        assert!(!glob_matches("psr/log", "psr/container"));
-    }
-
-    #[test]
-    fn test_glob_matches_wildcard_vendor() {
-        assert!(glob_matches("psr/*", "psr/log"));
-        assert!(glob_matches("psr/*", "psr/container"));
-        assert!(!glob_matches("psr/*", "symfony/console"));
-    }
-
-    #[test]
-    fn test_glob_matches_wildcard_suffix() {
-        assert!(glob_matches("monolog/mono*", "monolog/monolog"));
-        assert!(!glob_matches("monolog/mono*", "monolog/other"));
-    }
-
-    #[test]
-    fn test_glob_matches_case_insensitive() {
-        // pattern is lowercased before being stored; name is also lowercased
-        assert!(glob_matches("psr/log", "psr/log"));
-    }
-
-    #[test]
-    fn test_matches_filter_exact() {
-        let filter = vec!["psr/log".to_string()];
-        assert!(matches_filter(&filter, "psr/log"));
-        assert!(!matches_filter(&filter, "psr/container"));
-    }
-
-    #[test]
-    fn test_matches_filter_glob() {
-        let filter = vec!["psr/*".to_string()];
-        assert!(matches_filter(&filter, "psr/log"));
-        assert!(matches_filter(&filter, "psr/container"));
-        assert!(!matches_filter(&filter, "monolog/monolog"));
-    }
-
-    #[test]
-    fn test_matches_filter_multiple_patterns() {
-        let filter = vec!["psr/*".to_string(), "monolog/monolog".to_string()];
-        assert!(matches_filter(&filter, "psr/log"));
-        assert!(matches_filter(&filter, "monolog/monolog"));
-        assert!(!matches_filter(&filter, "symfony/console"));
     }
 
     #[tokio::test]
@@ -775,11 +805,7 @@ mod tests {
             dry_run: false,
         };
         let cli = make_cli(dir.path());
-        let console = mozart_core::console::Console {
-            interactive: false,
-            verbosity: mozart_core::console::Verbosity::Normal,
-            decorated: false,
-        };
+        let console = quiet_console();
         execute(&args, &cli, &console).await.unwrap();
 
         let content = std::fs::read_to_string(dir.path().join("composer.json")).unwrap();
@@ -821,11 +847,7 @@ mod tests {
             dry_run: false,
         };
         let cli = make_cli(dir.path());
-        let console = mozart_core::console::Console {
-            interactive: false,
-            verbosity: mozart_core::console::Verbosity::Normal,
-            decorated: false,
-        };
+        let console = quiet_console();
         execute(&args, &cli, &console).await.unwrap();
 
         let content = std::fs::read_to_string(dir.path().join("composer.json")).unwrap();
@@ -867,11 +889,7 @@ mod tests {
             dry_run: false,
         };
         let cli = make_cli(dir.path());
-        let console = mozart_core::console::Console {
-            interactive: false,
-            verbosity: mozart_core::console::Verbosity::Normal,
-            decorated: false,
-        };
+        let console = quiet_console();
         execute(&args, &cli, &console).await.unwrap();
 
         let content = std::fs::read_to_string(dir.path().join("composer.json")).unwrap();

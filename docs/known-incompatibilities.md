@@ -15,3 +15,12 @@ In typical environments this does not matter; both Composer and Mozart trust the
 - PHP-only ini overrides: `openssl.cafile` / `openssl.capath` configured via `php.ini` affect Composer but have no effect on Mozart.
 
 If you rely on a private CA, set `config.cafile` and `config.capath` in `composer.json` (or the global `$COMPOSER_HOME/config.json`). It works in Mozart too.
+
+
+## `bump` rewrites composer.json without preserving comments / key order
+
+Composer's `bump` command edits `composer.json` through `JsonManipulator`, which keeps unrelated whitespace, comments, and key ordering intact — only the bumped constraint values change in place.
+
+Mozart does not yet have a `JsonManipulator` port. `bump` therefore falls back to a full structured rewrite of `composer.json` (the same path Composer uses when `JsonManipulator` cannot handle the input). User-authored comments and idiosyncratic key orderings are lost on every run; the resulting file is functionally equivalent but reformatted.
+
+This will be addressed by porting `JsonManipulator`, which is also needed by `require`, `remove`, `config`, `init`, and `create-project`.
