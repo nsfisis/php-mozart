@@ -1,7 +1,9 @@
 use clap::Args;
+use mozart_core::composer::Composer;
 use mozart_core::config_validator::{ValidationResult, ValidatorOptions, validate_manifest};
 use mozart_core::console_format;
 use mozart_core::console_writeln;
+use mozart_core::package::RawPackageData;
 use std::path::{Path, PathBuf};
 
 #[derive(Args)]
@@ -44,13 +46,9 @@ fn options_from_args(args: &ValidateArgs) -> ValidatorOptions {
     }
 }
 
-fn should_check_lock(args: &ValidateArgs, manifest: &serde_json::Value) -> bool {
-    let config_lock_enabled = manifest
-        .get("config")
-        .and_then(|c| c.get("lock"))
-        .and_then(|v| v.as_bool())
-        .unwrap_or(true);
-    (!args.no_check_lock && config_lock_enabled) || args.check_lock
+/// Mirrors Composer's `($checkLock && lock-config) || --check-lock` formula.
+fn should_check_lock(args: &ValidateArgs, config_lock: bool) -> bool {
+    (!args.no_check_lock && config_lock) || args.check_lock
 }
 
 pub async fn execute(
@@ -102,21 +100,42 @@ pub async fn execute(
         }
     };
 
+    // Load the Composer project state (optional — used for typed config,
+    // locker, and the repository/installation managers). Mirrors
+    // `ValidateCommand::createComposerInstance($file)`.
+    let composer = Composer::try_load_from_file(&file).ok().flatten();
+
+    // Determine whether to check the lock file using the typed config when
+    // available, falling back to a raw JSON read for paths where the Composer
+    // instance could not be initialised.
+    let config_lock = composer
+        .as_ref()
+        .map(|c| c.config().lock)
+        .unwrap_or_else(|| {
+            json_value
+                .get("config")
+                .and_then(|c| c.get("lock"))
+                .and_then(|v| v.as_bool())
+                .unwrap_or(true)
+        });
+
     // Run manifest validations
     let result = validate_manifest(&json_value, &options_from_args(args));
 
-    // Check lock file freshness
+    // Check lock file freshness and surface missing-requirement diagnostics.
     let mut lock_errors: Vec<String> = Vec::new();
-    let check_lock = should_check_lock(args, &json_value);
+    let check_lock = should_check_lock(args, config_lock);
     if check_lock {
-        check_lock_freshness(&content, &file, &mut lock_errors);
+        let root_package = composer.as_ref().map(|c| c.package());
+        check_lock_freshness(&content, &file, root_package, &mut lock_errors);
     }
 
     // Output results
     let check_publish = !args.no_check_publish;
+    let file_name = file.display().to_string();
     output_result(
         console,
-        &file,
+        &file_name,
         &result,
         check_publish,
         check_lock,
@@ -126,8 +145,10 @@ pub async fn execute(
     // Validate dependencies' composer.json files
     let (dep_errors, dep_warnings) = if args.with_dependencies {
         let vendor_dir = file.parent().unwrap_or(Path::new(".")).join("vendor");
-        if vendor_dir.exists() {
-            validate_dependencies(&vendor_dir, args, console)
+        if let Some(comp) = &composer {
+            validate_dependencies(comp, args, console)
+        } else if vendor_dir.exists() {
+            validate_dependencies_vendor_walk(&vendor_dir, args, console)
         } else {
             console
                 .info("No vendor directory found. Run `mozart install` to install dependencies.");
@@ -159,16 +180,82 @@ pub async fn execute(
     Ok(())
 }
 
+/// Walk the installed packages via `RepositoryManager` + `InstallationManager`,
+/// mirroring Composer's `--with-dependencies` path. Skips metapackages.
 fn validate_dependencies(
+    composer: &Composer,
+    args: &ValidateArgs,
+    console: &mozart_core::console::Console,
+) -> (u32, u32) {
+    let mut dep_errors = 0u32;
+    let mut dep_warnings = 0u32;
+
+    for package in composer
+        .repository_manager()
+        .local_repository()
+        .canonical_packages()
+    {
+        // Mirrors Composer: `if ($package->getType() === 'metapackage') { continue; }`
+        if package.package_type() == Some("metapackage") {
+            continue;
+        }
+
+        let Some(install_path) = composer.installation_manager().get_install_path(package) else {
+            continue;
+        };
+
+        let dep_composer = install_path.join("composer.json");
+        if !dep_composer.exists() {
+            continue;
+        }
+
+        let Ok(dep_content) = std::fs::read_to_string(&dep_composer) else {
+            continue;
+        };
+
+        let dep_result = match serde_json::from_str::<serde_json::Value>(&dep_content) {
+            Ok(json_value) => validate_manifest(&json_value, &options_from_args(args)),
+            Err(_) => {
+                // Invalid JSON — report as error using outputResult
+                let mut err_result = ValidationResult::new();
+                err_result
+                    .errors
+                    .push("composer.json contains invalid JSON".to_string());
+                err_result
+            }
+        };
+
+        if dep_result.has_errors() {
+            dep_errors += dep_result.errors.len() as u32;
+        }
+        if dep_result.has_warnings() {
+            dep_warnings += dep_result.warnings.len() as u32;
+        }
+
+        // Per-dep rendering — same header format as the root file
+        output_result(
+            console,
+            package.pretty_name(),
+            &dep_result,
+            false, // check_publish: false for deps, matching Composer
+            false, // check_lock: no lock checking for deps
+            &[],
+        );
+    }
+
+    (dep_errors, dep_warnings)
+}
+
+/// Fallback vendor walk used when a `Composer` instance is unavailable.
+/// Iterates `vendor/<vendor>/<package>/composer.json` directly.
+fn validate_dependencies_vendor_walk(
     vendor_dir: &Path,
     args: &ValidateArgs,
     console: &mozart_core::console::Console,
 ) -> (u32, u32) {
     let mut dep_errors = 0u32;
     let mut dep_warnings = 0u32;
-    let mut dep_count = 0u32;
 
-    // Walk vendor/<vendor>/<package>/composer.json
     let Ok(vendors) = std::fs::read_dir(vendor_dir) else {
         return (0, 0);
     };
@@ -177,7 +264,6 @@ fn validate_dependencies(
         if !vendor_entry.path().is_dir() {
             continue;
         }
-        // Skip non-package dirs (bin, composer, autoload files, etc.)
         let vendor_name = vendor_entry.file_name();
         let vendor_str = vendor_name.to_string_lossy();
         if vendor_str.starts_with('.') || vendor_str == "bin" || vendor_str == "composer" {
@@ -202,52 +288,43 @@ fn validate_dependencies(
                 continue;
             };
 
-            let Ok(json_value) = serde_json::from_str::<serde_json::Value>(&content) else {
-                dep_errors += 1;
-                let pkg_name =
-                    format!("{}/{}", vendor_str, pkg_entry.file_name().to_string_lossy());
-                console.info(&console_format!(
-                    "<warning>{pkg_name}: composer.json contains invalid JSON</warning>"
-                ));
-                continue;
+            let pkg_name = format!("{}/{}", vendor_str, pkg_entry.file_name().to_string_lossy());
+
+            let dep_result = match serde_json::from_str::<serde_json::Value>(&content) {
+                Ok(json_value) => validate_manifest(&json_value, &options_from_args(args)),
+                Err(_) => {
+                    let mut err_result = ValidationResult::new();
+                    err_result
+                        .errors
+                        .push("composer.json contains invalid JSON".to_string());
+                    err_result
+                }
             };
 
-            let result = validate_manifest(&json_value, &options_from_args(args));
-
-            dep_count += 1;
-
-            if result.has_errors() || result.has_warnings() {
-                let pkg_name =
-                    format!("{}/{}", vendor_str, pkg_entry.file_name().to_string_lossy());
-
-                for e in &result.errors {
-                    console.error(&console_format!("<error>{pkg_name}: {e}</error>"));
-                    dep_errors += 1;
-                }
-                for w in &result.warnings {
-                    console.info(&console_format!("<warning>{pkg_name}: {w}</warning>"));
-                    dep_warnings += 1;
-                }
+            if dep_result.has_errors() {
+                dep_errors += dep_result.errors.len() as u32;
             }
-        }
-    }
+            if dep_result.has_warnings() {
+                dep_warnings += dep_result.warnings.len() as u32;
+            }
 
-    if dep_count > 0 {
-        console.info(&format!(
-            "Validated {} dependenc{}: {} error(s), {} warning(s)",
-            dep_count,
-            if dep_count == 1 { "y" } else { "ies" },
-            dep_errors,
-            dep_warnings
-        ));
+            output_result(console, &pkg_name, &dep_result, false, false, &[]);
+        }
     }
 
     (dep_errors, dep_warnings)
 }
 
+/// Check lock-file freshness and surface missing-requirement diagnostics.
+///
+/// Mirrors Composer's sequence in `ValidateCommand::execute`:
+/// 1. `$locker->isLocked() && !$locker->isFresh()` → push stale-lock error.
+/// 2. `$locker->getMissingRequirementInfo($composer->getPackage(), true)` → push
+///    any missing-requirement bullets when the root package is available.
 fn check_lock_freshness(
     composer_json_content: &str,
     composer_json_path: &Path,
+    root_package: Option<&RawPackageData>,
     lock_errors: &mut Vec<String>,
 ) {
     let lock_path = composer_json_path
@@ -269,6 +346,12 @@ fn check_lock_freshness(
                         .to_string(),
                 );
             }
+            // Surface any missing-requirement diagnostics from the lock file,
+            // mirroring `$locker->getMissingRequirementInfo($composer->getPackage(), true)`.
+            if let Some(pkg) = root_package {
+                let missing = lock.get_missing_requirement_info(pkg, true);
+                lock_errors.extend(missing);
+            }
         }
         Err(e) => {
             lock_errors.push(format!("- The lock file could not be read: {e}"));
@@ -276,16 +359,20 @@ fn check_lock_freshness(
     }
 }
 
+/// Render the validation result for one file/package to the console.
+/// Mirrors Composer's `ValidateCommand::outputResult()`.
+///
+/// `name` is either the file path (root file) or the package's pretty name
+/// (dependency), matching how Composer calls `outputResult($io, $file, …)`
+/// for the root and `outputResult($io, $package->getPrettyName(), …)` for deps.
 fn output_result(
     console: &mozart_core::console::Console,
-    file: &Path,
+    name: &str,
     result: &ValidationResult,
     check_publish: bool,
     check_lock: bool,
     lock_errors: &[String],
 ) {
-    let name = file.display().to_string();
-
     // Print header message
     if result.has_errors() {
         console.error(&console_format!(
@@ -484,7 +571,7 @@ mod tests {
         std::fs::write(&composer_json_path, content).unwrap();
 
         let mut lock_errors: Vec<String> = Vec::new();
-        check_lock_freshness(content, &composer_json_path, &mut lock_errors);
+        check_lock_freshness(content, &composer_json_path, None, &mut lock_errors);
         // No lock file → no errors
         assert!(lock_errors.is_empty());
     }
@@ -518,7 +605,7 @@ mod tests {
         lock.write_to_file(&lock_path).unwrap();
 
         let mut lock_errors: Vec<String> = Vec::new();
-        check_lock_freshness(content, &composer_json_path, &mut lock_errors);
+        check_lock_freshness(content, &composer_json_path, None, &mut lock_errors);
         assert!(
             lock_errors.is_empty(),
             "fresh lock should produce no errors"
@@ -559,7 +646,12 @@ mod tests {
 
         // Now check against modified content (lock is stale)
         let mut lock_errors: Vec<String> = Vec::new();
-        check_lock_freshness(modified_content, &composer_json_path, &mut lock_errors);
+        check_lock_freshness(
+            modified_content,
+            &composer_json_path,
+            None,
+            &mut lock_errors,
+        );
         assert!(
             !lock_errors.is_empty(),
             "stale lock should produce a lock error"
@@ -570,22 +662,19 @@ mod tests {
     #[test]
     fn test_should_check_lock_config_false_disables() {
         let args = make_args();
-        let manifest = serde_json::json!({"config": {"lock": false}});
-        assert!(!should_check_lock(&args, &manifest));
+        assert!(!should_check_lock(&args, false));
     }
 
     #[test]
     fn test_should_check_lock_config_false_overridden_by_flag() {
         let mut args = make_args();
         args.check_lock = true;
-        let manifest = serde_json::json!({"config": {"lock": false}});
-        assert!(should_check_lock(&args, &manifest));
+        assert!(should_check_lock(&args, false));
     }
 
     #[test]
     fn test_should_check_lock_defaults_to_true() {
         let args = make_args();
-        let manifest = serde_json::json!({"name": "vendor/pkg"});
-        assert!(should_check_lock(&args, &manifest));
+        assert!(should_check_lock(&args, true));
     }
 }

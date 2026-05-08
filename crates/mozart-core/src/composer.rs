@@ -644,6 +644,18 @@ impl Composer {
         create_composer(project_dir, &composer_json).map(Some)
     }
 
+    /// Load Composer state keyed on a specific `composer.json` file, deriving
+    /// the project directory from `file.parent()`. Mirrors
+    /// `ValidateCommand::createComposerInstance($file)` — Composer keys
+    /// instances on a file rather than a directory for non-default paths.
+    pub fn try_load_from_file(file: &Path) -> anyhow::Result<Option<Self>> {
+        let project_dir = file
+            .parent()
+            .map(Path::to_path_buf)
+            .unwrap_or_else(|| PathBuf::from("."));
+        Self::try_load(project_dir)
+    }
+
     pub fn project_dir(&self) -> &Path {
         &self.project_dir
     }

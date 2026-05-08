@@ -163,7 +163,7 @@ fn check_license(obj: &serde_json::Map<String, serde_json::Value>, result: &mut 
             arr.iter().collect()
         }
         Some(other) => {
-            result.warnings.push(format!(
+            result.errors.push(format!(
                 "License must be a string or array of strings, got {}.",
                 serde_json::to_string(other).unwrap_or_default()
             ));
@@ -693,14 +693,22 @@ mod tests {
     }
 
     #[test]
-    fn test_validate_license_wrong_type_warns() {
+    fn test_validate_license_wrong_type_errors() {
         let json = r#"{"name": "vendor/pkg", "license": 42}"#;
         let result = parse_and_validate(json, &default_options());
         assert!(
-            result.warnings.iter().any(|w| w
+            result.errors.iter().any(|e| e
                 .contains("License must be a string or array of strings")
-                && w.contains("42")),
+                && e.contains("42")),
             "got: {:?}",
+            result.errors
+        );
+        assert!(
+            !result
+                .warnings
+                .iter()
+                .any(|w| w.contains("License must be")),
+            "wrong-type license must not appear as warning, got: {:?}",
             result.warnings
         );
     }
