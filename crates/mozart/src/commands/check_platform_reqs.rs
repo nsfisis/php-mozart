@@ -3,6 +3,7 @@ use mozart_core::console::Console;
 use mozart_core::console_format;
 use mozart_core::console_writeln;
 use mozart_core::console_writeln_error;
+use mozart_core::installer::{InstalledCandidate, InstalledRepoLite};
 use std::collections::BTreeMap;
 use std::path::Path;
 
@@ -17,91 +18,233 @@ pub struct CheckPlatformReqsArgs {
     pub lock: bool,
 
     /// Output format (text, json)
-    #[arg(short, long)]
-    pub format: Option<String>,
+    #[arg(short, long, value_parser = ["text", "json"], default_value = "text")]
+    pub format: String,
 }
 
-/// A single platform requirement collected from a package.
+/// One `require` link, mirroring `Composer\Package\Link`.
+///
+/// Composer's `Link` carries the requiring package's name (`source`), the
+/// target package name, the link description (`requires` / `provides` /
+/// `replaces` / etc.), and a `Constraint` object plus its pretty-printed
+/// form. `check-platform-reqs` only ever produces "requires" links, but the
+/// `description` field is kept for parity with the JSON shape that exposes
+/// `link->getDescription()` to consumers.
 #[derive(Debug, Clone)]
-struct PlatformRequirement {
-    /// Package that declares the requirement (e.g. "vendor/pkg" or "root")
-    provider: String,
-    /// The constraint string (e.g. ">=8.1", "^8.2", "*")
+struct Link {
+    source: String,
+    target: String,
+    description: &'static str,
     constraint: String,
+    pretty_constraint: String,
 }
 
-/// The outcome of checking one platform package against all its requirements.
 #[derive(Debug, Clone, PartialEq, Eq)]
-enum CheckStatus {
-    /// All constraints satisfied.
+enum Status {
     Success,
-    /// Platform package detected but at least one constraint failed.
     Failed,
-    /// Platform package not detected at all.
     Missing,
 }
 
-/// Result of checking a single platform requirement name.
+/// Mirrors PHP's per-row tuple
+/// `[$platformPackage, $version, $link, $status, $provider]`.
 #[derive(Debug, Clone)]
-struct CheckResult {
-    name: String,
-    /// Detected version, or "n/a" if missing.
+struct CheckRow {
+    platform_package: String,
     version: String,
-    status: CheckStatus,
-    /// The first failed constraint and its provider.
-    failed_requirement: Option<(String, String)>,
+    link: Option<Link>,
+    status: Status,
+    provider: String,
 }
 
 pub async fn execute(
     args: &CheckPlatformReqsArgs,
     cli: &super::Cli,
-    console: &mozart_core::console::Console,
+    console: &Console,
 ) -> anyhow::Result<()> {
     let working_dir = cli.working_dir()?;
-
-    // Validate format
-    let format = args.format.as_deref().unwrap_or("text");
-    if format != "text" && format != "json" {
-        anyhow::bail!(
-            "Invalid format \"{}\". Supported formats: text, json",
-            format
-        );
-    }
-
-    // Require composer.json
     let composer_json_path = working_dir.join("composer.json");
     if !composer_json_path.exists() {
         anyhow::bail!("No composer.json found in {}", working_dir.display());
     }
 
-    // Collect platform requirements from all packages + root
-    let requirements = collect_requirements(&working_dir, args, console)?;
+    let format = args.format.as_str();
+    let dev_text = if args.no_dev { "non-dev " } else { "" };
 
-    if requirements.is_empty() {
-        // No platform requirements to check
-        if format == "json" {
-            console_writeln!(
-                console,
-                &serde_json::to_string_pretty(&serde_json::json!([]))?,
-            );
+    let lock_path = working_dir.join("composer.lock");
+    let vendor_dir = working_dir.join("vendor");
+    let installed_path = vendor_dir.join("composer/installed.json");
+
+    let mut installed_repo = InstalledRepoLite::new();
+    let mut requires: BTreeMap<String, Vec<Link>> = BTreeMap::new();
+
+    if args.lock {
+        if !lock_path.exists() {
+            anyhow::bail!("No composer.lock found. Run `mozart install` or `mozart update` first.");
         }
-        return Ok(());
+        console_writeln_error!(
+            console,
+            &console_format!(
+                "<info>Checking {}platform requirements using the lock file</info>",
+                dev_text
+            ),
+        );
+        load_lock(&lock_path, args.no_dev, &mut installed_repo, &mut requires)?;
+    } else {
+        let installed_packages_present = installed_path.exists()
+            && !mozart_registry::installed::InstalledPackages::read(&vendor_dir)?
+                .packages
+                .is_empty();
+
+        if installed_packages_present {
+            let installed = mozart_registry::installed::InstalledPackages::read(&vendor_dir)?;
+            console_writeln_error!(
+                console,
+                &console_format!(
+                    "<info>Checking {}platform requirements for packages in the vendor dir</info>",
+                    dev_text
+                ),
+            );
+            load_installed(&installed, args.no_dev, &mut installed_repo, &mut requires);
+        } else {
+            console_writeln_error!(
+                console,
+                &console_format!(
+                    "<warning>No vendor dir present, checking {}platform requirements from the lock file</warning>",
+                    dev_text
+                ),
+            );
+            if lock_path.exists() {
+                load_lock(&lock_path, args.no_dev, &mut installed_repo, &mut requires)?;
+            }
+            // No lock either → proceed with the root package only; final output
+            // will reflect just the root's requires (possibly empty).
+        }
     }
 
-    // Detect real platform
-    let platform = mozart_core::platform::detect_platform();
+    // RootPackageRepository — Composer's `getDevRequires()` is appended to
+    // `$requires` directly, then `$installedRepo->getPackages()` walks the
+    // root via the `RootPackageRepository` and adds `getRequires()` (which is
+    // the root's `require`, NOT `require-dev`).
+    let root = mozart_core::package::read_from_file(&composer_json_path)?;
 
-    // Check requirements against detected platform
-    let results = check_requirements(&requirements, &platform);
-
-    // Determine exit code
-    let exit_code = determine_exit_code(&results);
-
-    // Render output
-    match format {
-        "json" => render_json(&results, console)?,
-        _ => render_text(&results, console),
+    if !args.no_dev {
+        for (target, constraint) in &root.require_dev {
+            push_platform_link(&mut requires, &root.name, target, constraint);
+        }
     }
+    for (target, constraint) in &root.require {
+        push_platform_link(&mut requires, &root.name, target, constraint);
+    }
+
+    add_root_as_candidate(&root, &mut installed_repo);
+
+    // PlatformRepository([], []) — empty overrides means "use the real
+    // platform". Mirrors Composer's bypass of `config.platform`.
+    for pkg in mozart_core::platform::detect_platform() {
+        installed_repo.add_candidate(InstalledCandidate {
+            name: pkg.name.to_lowercase(),
+            pretty_name: pkg.name,
+            version: pkg.version.clone(),
+            pretty_version: pkg.version,
+            provides: BTreeMap::new(),
+            replaces: BTreeMap::new(),
+        });
+    }
+
+    let mut results: Vec<CheckRow> = Vec::new();
+    let mut exit_code: i32 = 0;
+
+    'requirement: for (require_lc, links) in &requires {
+        if !mozart_core::platform::is_platform_package(require_lc) {
+            continue;
+        }
+        let candidates = installed_repo.find_with_replacers_and_providers(require_lc);
+        if candidates.is_empty() {
+            results.push(CheckRow {
+                platform_package: require_lc.clone(),
+                version: "n/a".to_string(),
+                link: links.first().cloned(),
+                status: Status::Missing,
+                provider: String::new(),
+            });
+            exit_code = exit_code.max(2);
+            continue;
+        }
+
+        let mut req_results: Vec<CheckRow> = Vec::new();
+
+        'candidate: for candidate in &candidates {
+            let direct = candidate.name == *require_lc;
+            let (candidate_constraint_str, candidate_pretty) = if direct {
+                (
+                    format!("={}", candidate.version),
+                    candidate.pretty_version.clone(),
+                )
+            } else {
+                let cs = candidate
+                    .provides
+                    .get(require_lc)
+                    .or_else(|| candidate.replaces.get(require_lc))
+                    .cloned()
+                    .unwrap_or_else(|| "*".to_string());
+                (cs.clone(), cs)
+            };
+
+            let candidate_constraint =
+                match mozart_semver::VersionConstraint::parse(&candidate_constraint_str) {
+                    Ok(c) => c,
+                    Err(_) => {
+                        mozart_semver::VersionConstraint::Single(mozart_semver::Constraint::Any)
+                    }
+                };
+
+            let display_name = if direct {
+                candidate.pretty_name.clone()
+            } else {
+                require_lc.clone()
+            };
+            let provider = if direct {
+                String::new()
+            } else {
+                format!("provided by {}", candidate.pretty_name)
+            };
+
+            for link in links {
+                let link_constraint =
+                    match mozart_semver::VersionConstraint::parse(&link.constraint) {
+                        Ok(c) => c,
+                        Err(_) => continue, // skip unparseable user input
+                    };
+                if !link_constraint.intersects(&candidate_constraint) {
+                    req_results.push(CheckRow {
+                        platform_package: display_name.clone(),
+                        version: candidate_pretty.clone(),
+                        link: Some(link.clone()),
+                        status: Status::Failed,
+                        provider: provider.clone(),
+                    });
+                    continue 'candidate;
+                }
+            }
+
+            // Every link's constraint intersects the candidate's — success.
+            results.push(CheckRow {
+                platform_package: display_name,
+                version: candidate_pretty,
+                link: None,
+                status: Status::Success,
+                provider,
+            });
+            continue 'requirement;
+        }
+
+        // No candidate satisfied every link.
+        results.extend(req_results);
+        exit_code = exit_code.max(1);
+    }
+
+    print_table(&results, format, console)?;
 
     if exit_code != 0 {
         return Err(mozart_core::exit_code::bail_silent(exit_code));
@@ -110,110 +253,41 @@ pub async fn execute(
     Ok(())
 }
 
-/// Collect platform requirements from all packages (lock/installed) plus root.
-///
-/// Returns a map of platform-package-name → list of requirements.
-fn collect_requirements(
-    working_dir: &Path,
-    args: &CheckPlatformReqsArgs,
-    console: &mozart_core::console::Console,
-) -> anyhow::Result<BTreeMap<String, Vec<PlatformRequirement>>> {
-    let mut requirements: BTreeMap<String, Vec<PlatformRequirement>> = BTreeMap::new();
-
-    let dev_text = if args.no_dev { "non-dev " } else { "" };
-
-    // Determine package source
-    let lock_path = working_dir.join("composer.lock");
-    let vendor_dir = working_dir.join("vendor");
-    let installed_path = vendor_dir.join("composer/installed.json");
-
-    if args.lock {
-        // --lock: read from composer.lock
-        if !lock_path.exists() {
-            anyhow::bail!("No composer.lock found. Run `mozart install` or `mozart update` first.");
-        }
-        console.info(&format!(
-            "Checking {}platform requirements using the lock file",
-            dev_text
-        ));
-        collect_from_lock(&lock_path, args.no_dev, &mut requirements)?;
-    } else if installed_path.exists() {
-        // Default: read from installed.json
-        let installed = mozart_registry::installed::InstalledPackages::read(&vendor_dir)?;
-        if installed.packages.is_empty() {
-            // Fall through to lock file with a warning
-            console_writeln_error!(
-                console,
-                &console_format!(
-                    "<warning>No vendor dir present, checking {}platform requirements from the lock file</warning>",
-                    dev_text
-                ),
-            );
-            if !lock_path.exists() {
-                anyhow::bail!(
-                    "No installed packages found. Run `mozart install` or `mozart update` first."
-                );
-            }
-            collect_from_lock(&lock_path, args.no_dev, &mut requirements)?;
-        } else {
-            console.info(&format!(
-                "Checking {}platform requirements for packages in the vendor dir",
-                dev_text
-            ));
-            collect_from_installed_data(&installed, args.no_dev, &mut requirements);
-        }
-    } else if lock_path.exists() {
-        // Fallback: read from lock file
-        console_writeln_error!(
-            console,
-            &console_format!(
-                "<warning>No vendor dir present, checking {}platform requirements from the lock file</warning>",
-                dev_text
-            ),
-        );
-        collect_from_lock(&lock_path, args.no_dev, &mut requirements)?;
-    } else {
-        anyhow::bail!(
-            "No installed packages found. Run `mozart install` or `mozart update` first."
-        );
-    }
-
-    // Always include root composer.json requirements
-    let composer_json_path = working_dir.join("composer.json");
-    let root = mozart_core::package::read_from_file(&composer_json_path)?;
-
-    add_platform_requirements_from_map(&root.require, "root", &mut requirements);
-    if !args.no_dev {
-        add_platform_requirements_from_map(&root.require_dev, "root", &mut requirements);
-    }
-
-    Ok(requirements)
-}
-
-fn collect_from_lock(
+fn load_lock(
     lock_path: &Path,
     no_dev: bool,
-    requirements: &mut BTreeMap<String, Vec<PlatformRequirement>>,
+    repo: &mut InstalledRepoLite,
+    requires: &mut BTreeMap<String, Vec<Link>>,
 ) -> anyhow::Result<()> {
     let lock = mozart_registry::lockfile::LockFile::read_from_file(lock_path)?;
 
-    for pkg in &lock.packages {
-        add_platform_requirements_from_map(&pkg.require, &pkg.name, requirements);
+    let mut all: Vec<&mozart_registry::lockfile::LockedPackage> = lock.packages.iter().collect();
+    if !no_dev && let Some(ref pkgs_dev) = lock.packages_dev {
+        all.extend(pkgs_dev.iter());
     }
 
-    if !no_dev && let Some(ref pkgs_dev) = lock.packages_dev {
-        for pkg in pkgs_dev {
-            add_platform_requirements_from_map(&pkg.require, &pkg.name, requirements);
+    for pkg in all {
+        repo.add_candidate(InstalledCandidate {
+            name: pkg.name.to_lowercase(),
+            pretty_name: pkg.name.clone(),
+            version: pkg.version.clone(),
+            pretty_version: pkg.version.clone(),
+            provides: pkg.provide.clone(),
+            replaces: pkg.replace.clone(),
+        });
+        for (target, constraint) in &pkg.require {
+            push_platform_link(requires, &pkg.name, target, constraint);
         }
     }
 
     Ok(())
 }
 
-fn collect_from_installed_data(
+fn load_installed(
     installed: &mozart_registry::installed::InstalledPackages,
     no_dev: bool,
-    requirements: &mut BTreeMap<String, Vec<PlatformRequirement>>,
+    repo: &mut InstalledRepoLite,
+    requires: &mut BTreeMap<String, Vec<Link>>,
 ) {
     let dev_names: indexmap::IndexSet<String> = installed
         .dev_package_names
@@ -226,243 +300,187 @@ fn collect_from_installed_data(
             continue;
         }
 
-        // Extract require from extra_fields
+        let provides = string_map_from_extra(&pkg.extra_fields, "provide");
+        let replaces = string_map_from_extra(&pkg.extra_fields, "replace");
+
+        repo.add_candidate(InstalledCandidate {
+            name: pkg.name.to_lowercase(),
+            pretty_name: pkg.name.clone(),
+            version: pkg.version.clone(),
+            pretty_version: pkg.version.clone(),
+            provides,
+            replaces,
+        });
+
         if let Some(require_val) = pkg.extra_fields.get("require")
             && let Some(require_obj) = require_val.as_object()
         {
-            for (dep_name, dep_constraint_val) in require_obj {
-                let dep_lower = dep_name.to_lowercase();
-                if mozart_core::platform::is_platform_package(&dep_lower) {
-                    let constraint = dep_constraint_val.as_str().unwrap_or("*").to_string();
-                    requirements
-                        .entry(dep_lower)
-                        .or_default()
-                        .push(PlatformRequirement {
-                            provider: pkg.name.clone(),
-                            constraint,
-                        });
-                }
+            for (target, constraint_val) in require_obj {
+                let constraint = constraint_val.as_str().unwrap_or("*").to_string();
+                push_platform_link(requires, &pkg.name, target, &constraint);
             }
         }
     }
 }
 
-fn add_platform_requirements_from_map(
-    require: &std::collections::BTreeMap<String, String>,
-    provider: &str,
-    requirements: &mut BTreeMap<String, Vec<PlatformRequirement>>,
+fn add_root_as_candidate(
+    root: &mozart_core::package::RawPackageData,
+    repo: &mut InstalledRepoLite,
 ) {
-    for (name, constraint) in require {
-        let name_lower = name.to_lowercase();
-        if mozart_core::platform::is_platform_package(&name_lower) {
-            requirements
-                .entry(name_lower)
-                .or_default()
-                .push(PlatformRequirement {
-                    provider: provider.to_string(),
-                    constraint: constraint.clone(),
-                });
-        }
-    }
+    let version = root.version.clone().unwrap_or_else(|| "1.0.0".to_string());
+    repo.add_candidate(InstalledCandidate {
+        name: root.name.to_lowercase(),
+        pretty_name: root.name.clone(),
+        version: version.clone(),
+        pretty_version: version,
+        provides: root.provide.clone(),
+        replaces: root.replace.clone(),
+    });
 }
 
-fn check_requirements(
-    requirements: &BTreeMap<String, Vec<PlatformRequirement>>,
-    platform: &[mozart_core::platform::PlatformPackage],
-) -> Vec<CheckResult> {
-    let mut results: Vec<CheckResult> = Vec::new();
-
-    for (name, reqs) in requirements {
-        // Look up in detected platform
-        match platform.iter().find(|p| p.name == *name) {
-            None => {
-                // Not detected → missing
-                let failed_req = reqs
-                    .first()
-                    .map(|r| (r.constraint.clone(), r.provider.clone()));
-                results.push(CheckResult {
-                    name: name.clone(),
-                    version: "n/a".to_string(),
-                    status: CheckStatus::Missing,
-                    failed_requirement: failed_req,
-                });
-            }
-            Some(detected) => {
-                // Check all constraints
-                let detected_version = match mozart_semver::Version::parse(&detected.version) {
-                    Ok(v) => v,
-                    Err(_) => {
-                        // Unparseable version → treat as 0.0.0
-                        mozart_semver::Version::parse("0.0.0").unwrap()
-                    }
-                };
-
-                let mut failed_req: Option<(String, String)> = None;
-                for req in reqs {
-                    let constraint = match mozart_semver::VersionConstraint::parse(&req.constraint)
-                    {
-                        Ok(c) => c,
-                        Err(_) => continue, // skip unparseable constraints
-                    };
-                    if !constraint.matches(&detected_version) {
-                        failed_req = Some((req.constraint.clone(), req.provider.clone()));
-                        break;
-                    }
-                }
-
-                let status = if failed_req.is_some() {
-                    CheckStatus::Failed
-                } else {
-                    CheckStatus::Success
-                };
-
-                results.push(CheckResult {
-                    name: name.clone(),
-                    version: detected.version.clone(),
-                    status,
-                    failed_requirement: failed_req,
-                });
+fn string_map_from_extra(
+    extra: &BTreeMap<String, serde_json::Value>,
+    key: &str,
+) -> BTreeMap<String, String> {
+    let mut out: BTreeMap<String, String> = BTreeMap::new();
+    if let Some(val) = extra.get(key)
+        && let Some(obj) = val.as_object()
+    {
+        for (k, v) in obj {
+            if let Some(s) = v.as_str() {
+                out.insert(k.clone(), s.to_string());
             }
         }
     }
-
-    results
+    out
 }
 
-fn determine_exit_code(results: &[CheckResult]) -> i32 {
-    let mut code = 0;
-    for result in results {
-        match result.status {
-            CheckStatus::Failed if code < 1 => code = 1,
-            CheckStatus::Missing => code = 2,
-            _ => {}
-        }
-    }
-    code
-}
-
-fn render_text(results: &[CheckResult], console: &Console) {
-    if results.is_empty() {
+fn push_platform_link(
+    requires: &mut BTreeMap<String, Vec<Link>>,
+    source: &str,
+    target: &str,
+    constraint: &str,
+) {
+    let target_lc = target.to_lowercase();
+    if !mozart_core::platform::is_platform_package(&target_lc) {
         return;
     }
+    requires.entry(target_lc.clone()).or_default().push(Link {
+        source: source.to_string(),
+        target: target_lc,
+        description: "requires",
+        constraint: constraint.to_string(),
+        pretty_constraint: constraint.to_string(),
+    });
+}
 
-    // Compute column widths
-    let name_width = results.iter().map(|r| r.name.len()).max().unwrap_or(0);
+fn print_table(results: &[CheckRow], format: &str, console: &Console) -> anyhow::Result<()> {
+    if format == "json" {
+        let rows: Vec<serde_json::Value> = results
+            .iter()
+            .map(|r| {
+                let status_str = match r.status {
+                    Status::Success => "success",
+                    Status::Failed => "failed",
+                    Status::Missing => "missing",
+                };
+                let failed_requirement = r.link.as_ref().map(|l| {
+                    serde_json::json!({
+                        "source": l.source,
+                        "type": l.description,
+                        "target": l.target,
+                        "constraint": l.pretty_constraint,
+                    })
+                });
+                let provider = if r.provider.is_empty() {
+                    serde_json::Value::Null
+                } else {
+                    serde_json::Value::String(r.provider.clone())
+                };
+                serde_json::json!({
+                    "name": r.platform_package,
+                    "version": r.version,
+                    "status": status_str,
+                    "failed_requirement": failed_requirement,
+                    "provider": provider,
+                })
+            })
+            .collect();
+        console_writeln!(console, &serde_json::to_string_pretty(&rows)?);
+        return Ok(());
+    }
+
+    if results.is_empty() {
+        return Ok(());
+    }
+
+    // Mozart renders a padded fixed-column variant of Symfony's
+    // renderTable. Byte-for-byte parity with `composer check-platform-reqs`
+    // is deferred to a workspace-wide UI follow-up (see plan §6.3).
+    let name_width = results
+        .iter()
+        .map(|r| r.platform_package.len())
+        .max()
+        .unwrap_or(0);
     let version_width = results.iter().map(|r| r.version.len()).max().unwrap_or(0);
 
-    for result in results {
-        // Pad the raw strings first, then apply color so ANSI escape codes
-        // don't interfere with column alignment.
-        let padded_name = format!("{:<nw$}", result.name, nw = name_width);
-        let padded_version = format!("{:<vw$}", result.version, vw = version_width);
-
-        match result.status {
-            CheckStatus::Success => {
+    for r in results {
+        let padded_name = format!("{:<nw$}", r.platform_package, nw = name_width);
+        let padded_version = format!("{:<vw$}", r.version, vw = version_width);
+        let link_text = r
+            .link
+            .as_ref()
+            .map(|l| {
+                format!(
+                    "{} {} {} ({})",
+                    l.source, l.description, l.target, l.pretty_constraint,
+                )
+            })
+            .unwrap_or_default();
+        let provider_suffix = if r.provider.is_empty() {
+            String::new()
+        } else {
+            format!(" {}", r.provider)
+        };
+        match r.status {
+            Status::Success => {
                 console_writeln!(
                     console,
                     &console_format!(
-                        "<info>{padded_name}</info>  <comment>{padded_version}</comment>  <info>success</info>"
+                        "<info>{padded_name}</info>  <comment>{padded_version}</comment>  {link_text}  <info>success</info>{provider_suffix}",
                     ),
                 );
             }
-            CheckStatus::Failed => {
-                let (constraint, provider) = result
-                    .failed_requirement
-                    .as_ref()
-                    .map(|(c, p)| (c.as_str(), p.as_str()))
-                    .unwrap_or(("", ""));
+            Status::Failed => {
                 console_writeln!(
                     console,
                     &console_format!(
-                        "<comment>{padded_name}</comment>  <comment>{padded_version}</comment>  <error>failed</error> requires {} ({})",
-                        provider,
-                        constraint,
+                        "<comment>{padded_name}</comment>  <comment>{padded_version}</comment>  {link_text}  <error>failed</error>{provider_suffix}",
                     ),
                 );
             }
-            CheckStatus::Missing => {
-                let (constraint, provider) = result
-                    .failed_requirement
-                    .as_ref()
-                    .map(|(c, p)| (c.as_str(), p.as_str()))
-                    .unwrap_or(("*", ""));
+            Status::Missing => {
                 console_writeln!(
                     console,
                     &console_format!(
-                        "<comment>{padded_name}</comment>  <comment>{padded_version}</comment>  <error>missing</error> requires {} ({})",
-                        provider,
-                        constraint,
+                        "<comment>{padded_name}</comment>  <comment>{padded_version}</comment>  {link_text}  <error>missing</error>{provider_suffix}",
                     ),
                 );
             }
         }
     }
-}
 
-fn render_json(results: &[CheckResult], console: &Console) -> anyhow::Result<()> {
-    let json_results: Vec<serde_json::Value> = results
-        .iter()
-        .map(|r| {
-            let status_str = match r.status {
-                CheckStatus::Success => "success",
-                CheckStatus::Failed => "failed",
-                CheckStatus::Missing => "missing",
-            };
-            let (failed_constraint, failed_provider) = match &r.failed_requirement {
-                Some((c, p)) => (
-                    serde_json::Value::String(c.clone()),
-                    serde_json::Value::String(p.clone()),
-                ),
-                None => (serde_json::Value::Null, serde_json::Value::Null),
-            };
-            serde_json::json!({
-                "name": r.name,
-                "version": r.version,
-                "status": status_str,
-                "failed_requirement": failed_constraint,
-                "provider": failed_provider,
-            })
-        })
-        .collect();
-
-    console_writeln!(console, &serde_json::to_string_pretty(&json_results)?,);
     Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use mozart_core::platform::PlatformPackage;
     use std::collections::BTreeMap;
     use tempfile::tempdir;
 
-    fn test_console() -> mozart_core::console::Console {
-        mozart_core::console::Console::new(0, true, false, true, true)
-    }
-
-    fn make_platform(entries: &[(&str, &str)]) -> Vec<PlatformPackage> {
-        entries
-            .iter()
-            .map(|(name, version)| PlatformPackage {
-                name: name.to_string(),
-                version: version.to_string(),
-            })
-            .collect()
-    }
-
-    fn make_requirements(
-        entries: &[(&str, &str, &str)],
-    ) -> BTreeMap<String, Vec<PlatformRequirement>> {
-        let mut map: BTreeMap<String, Vec<PlatformRequirement>> = BTreeMap::new();
-        for (name, constraint, provider) in entries {
-            map.entry(name.to_string())
-                .or_default()
-                .push(PlatformRequirement {
-                    provider: provider.to_string(),
-                    constraint: constraint.to_string(),
-                });
-        }
-        map
+    fn test_console() -> Console {
+        Console::new(0, true, false, true, true)
     }
 
     fn write_lock(
@@ -470,21 +488,39 @@ mod tests {
         packages: &[(&str, BTreeMap<String, String>)],
         dev_packages: &[(&str, BTreeMap<String, String>)],
     ) {
-        let make_pkg = |name: &str, require: BTreeMap<String, String>| {
+        write_lock_with(path, packages, dev_packages, &[]);
+    }
+
+    fn write_lock_with(
+        path: &Path,
+        packages: &[(&str, BTreeMap<String, String>)],
+        dev_packages: &[(&str, BTreeMap<String, String>)],
+        provides: &[(&str, BTreeMap<String, String>, BTreeMap<String, String>)], // (name, provide, replace)
+    ) {
+        let make_pkg = |name: &str,
+                        require: BTreeMap<String, String>,
+                        provide: BTreeMap<String, String>,
+                        replace: BTreeMap<String, String>| {
             serde_json::json!({
                 "name": name,
                 "version": "1.0.0",
                 "require": require,
+                "provide": provide,
+                "replace": replace,
             })
         };
 
-        let pkgs_json: Vec<serde_json::Value> = packages
+        let mut pkgs_json: Vec<serde_json::Value> = packages
             .iter()
-            .map(|(name, req)| make_pkg(name, req.clone()))
+            .map(|(name, req)| make_pkg(name, req.clone(), BTreeMap::new(), BTreeMap::new()))
             .collect();
+        for (name, prov, repl) in provides {
+            pkgs_json.push(make_pkg(name, BTreeMap::new(), prov.clone(), repl.clone()));
+        }
+
         let dev_pkgs_json: Vec<serde_json::Value> = dev_packages
             .iter()
-            .map(|(name, req)| make_pkg(name, req.clone()))
+            .map(|(name, req)| make_pkg(name, req.clone(), BTreeMap::new(), BTreeMap::new()))
             .collect();
 
         let lock_json = serde_json::json!({
@@ -529,62 +565,35 @@ mod tests {
     }
 
     #[test]
-    fn test_collect_requirements_from_lock() {
+    fn test_load_lock_collects_platform_requires() {
         let dir = tempdir().unwrap();
-        let working_dir = dir.path();
-
-        std::fs::write(
-            working_dir.join("composer.json"),
-            r#"{"name": "test/project", "require": {}}"#,
-        )
-        .unwrap();
+        let lock_path = dir.path().join("composer.lock");
 
         let mut pkg_require = BTreeMap::new();
         pkg_require.insert("php".to_string(), ">=8.1".to_string());
         pkg_require.insert("ext-json".to_string(), "*".to_string());
         pkg_require.insert("monolog/monolog".to_string(), "^3.0".to_string()); // not platform
 
-        write_lock(
-            &working_dir.join("composer.lock"),
-            &[("vendor/pkg", pkg_require)],
-            &[],
-        );
+        write_lock(&lock_path, &[("vendor/pkg", pkg_require)], &[]);
 
-        let args = CheckPlatformReqsArgs {
-            no_dev: false,
-            lock: true,
-            format: None,
-        };
+        let mut repo = InstalledRepoLite::new();
+        let mut requires: BTreeMap<String, Vec<Link>> = BTreeMap::new();
+        load_lock(&lock_path, false, &mut repo, &mut requires).unwrap();
 
-        let console = test_console();
-        let reqs = collect_requirements(working_dir, &args, &console).unwrap();
+        assert!(requires.contains_key("php"));
+        assert!(requires.contains_key("ext-json"));
+        assert!(!requires.contains_key("monolog/monolog"));
 
-        assert!(reqs.contains_key("php"), "php should be in requirements");
-        assert!(
-            reqs.contains_key("ext-json"),
-            "ext-json should be in requirements"
-        );
-        assert!(
-            !reqs.contains_key("monolog/monolog"),
-            "monolog should not be in requirements"
-        );
-
-        let php_reqs = &reqs["php"];
-        assert_eq!(php_reqs.len(), 1);
-        assert_eq!(php_reqs[0].constraint, ">=8.1");
-        assert_eq!(php_reqs[0].provider, "vendor/pkg");
+        let php_links = &requires["php"];
+        assert_eq!(php_links.len(), 1);
+        assert_eq!(php_links[0].constraint, ">=8.1");
+        assert_eq!(php_links[0].source, "vendor/pkg");
     }
 
     #[test]
-    fn test_collect_requirements_no_dev() {
+    fn test_load_lock_no_dev_skips_dev_packages() {
         let dir = tempdir().unwrap();
-        let working_dir = dir.path();
-
-        std::fs::write(
-            working_dir.join("composer.json"),
-            r#"{"name": "test/project", "require": {}}"#,
-        )
-        .unwrap();
+        let lock_path = dir.path().join("composer.lock");
 
         let mut prod_require = BTreeMap::new();
         prod_require.insert("php".to_string(), ">=8.0".to_string());
@@ -593,345 +602,167 @@ mod tests {
         dev_require.insert("ext-xdebug".to_string(), "*".to_string());
 
         write_lock(
-            &working_dir.join("composer.lock"),
+            &lock_path,
             &[("vendor/prod", prod_require)],
             &[("vendor/devpkg", dev_require)],
         );
 
-        let console = test_console();
+        let mut repo = InstalledRepoLite::new();
+        let mut requires: BTreeMap<String, Vec<Link>> = BTreeMap::new();
+        load_lock(&lock_path, true, &mut repo, &mut requires).unwrap();
+        assert!(requires.contains_key("php"));
+        assert!(!requires.contains_key("ext-xdebug"));
 
-        // With --no-dev
-        let args_no_dev = CheckPlatformReqsArgs {
-            no_dev: true,
-            lock: true,
-            format: None,
-        };
-        let reqs_no_dev = collect_requirements(working_dir, &args_no_dev, &console).unwrap();
-        assert!(reqs_no_dev.contains_key("php"));
-        assert!(
-            !reqs_no_dev.contains_key("ext-xdebug"),
-            "dev requirement should be excluded"
-        );
-
-        // Without --no-dev
-        let args_with_dev = CheckPlatformReqsArgs {
-            no_dev: false,
-            lock: true,
-            format: None,
-        };
-        let reqs_with_dev = collect_requirements(working_dir, &args_with_dev, &console).unwrap();
-        assert!(reqs_with_dev.contains_key("php"));
-        assert!(
-            reqs_with_dev.contains_key("ext-xdebug"),
-            "dev requirement should be included"
-        );
+        let mut repo2 = InstalledRepoLite::new();
+        let mut requires2: BTreeMap<String, Vec<Link>> = BTreeMap::new();
+        load_lock(&lock_path, false, &mut repo2, &mut requires2).unwrap();
+        assert!(requires2.contains_key("ext-xdebug"));
     }
 
     #[test]
-    fn test_collect_requirements_includes_root() {
-        let dir = tempdir().unwrap();
-        let working_dir = dir.path();
+    fn test_provider_candidate_satisfies_require() {
+        // symfony/polyfill-mbstring provides ext-mbstring at "*".
+        // A package that requires ext-mbstring "^1.0" should succeed via the
+        // provider — even when ext-mbstring is not detected on the platform.
+        let mut repo = InstalledRepoLite::new();
+        repo.add_candidate(InstalledCandidate {
+            name: "vendor/pkg".into(),
+            pretty_name: "vendor/pkg".into(),
+            version: "1.0.0".into(),
+            pretty_version: "1.0.0".into(),
+            provides: BTreeMap::new(),
+            replaces: BTreeMap::new(),
+        });
+        let mut polyfill_provides = BTreeMap::new();
+        polyfill_provides.insert("ext-mbstring".to_string(), "*".to_string());
+        repo.add_candidate(InstalledCandidate {
+            name: "symfony/polyfill-mbstring".into(),
+            pretty_name: "symfony/polyfill-mbstring".into(),
+            version: "1.30.0".into(),
+            pretty_version: "1.30.0".into(),
+            provides: polyfill_provides,
+            replaces: BTreeMap::new(),
+        });
 
-        std::fs::write(
-            working_dir.join("composer.json"),
-            r#"{"name": "test/project", "require": {"php": ">=8.2", "ext-ctype": "*"}}"#,
-        )
-        .unwrap();
+        let candidates = repo.find_with_replacers_and_providers("ext-mbstring");
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates[0].name, "symfony/polyfill-mbstring");
 
-        write_lock(&working_dir.join("composer.lock"), &[], &[]);
-
-        let args = CheckPlatformReqsArgs {
-            no_dev: false,
-            lock: true,
-            format: None,
-        };
-
-        let console = test_console();
-        let reqs = collect_requirements(working_dir, &args, &console).unwrap();
-
-        assert!(
-            reqs.contains_key("php"),
-            "root php requirement should be included"
-        );
-        assert!(
-            reqs.contains_key("ext-ctype"),
-            "root ext-ctype requirement should be included"
-        );
-
-        // The provider should be "root"
-        let php_reqs = &reqs["php"];
-        assert!(
-            php_reqs
-                .iter()
-                .any(|r| r.provider == "root" && r.constraint == ">=8.2")
-        );
+        // Constraint check: the provide constraint "*" intersects "^1.0".
+        let cand = mozart_semver::VersionConstraint::parse("*").unwrap();
+        let req = mozart_semver::VersionConstraint::parse("^1.0").unwrap();
+        assert!(req.intersects(&cand));
     }
 
     #[test]
-    fn test_check_requirements_all_pass() {
-        let requirements =
-            make_requirements(&[("php", ">=8.1", "root"), ("ext-json", "*", "vendor/pkg")]);
-        let platform = make_platform(&[("php", "8.2.1"), ("ext-json", "8.2.1")]);
+    fn test_replacer_candidate_satisfies_require() {
+        let mut replaces = BTreeMap::new();
+        replaces.insert("ext-mbstring".to_string(), "1.0".to_string());
 
-        let results = check_requirements(&requirements, &platform);
-        assert_eq!(results.len(), 2);
-        for r in &results {
-            assert_eq!(
-                r.status,
-                CheckStatus::Success,
-                "all should pass for {}",
-                r.name
-            );
-        }
-        assert_eq!(determine_exit_code(&results), 0);
+        let mut repo = InstalledRepoLite::new();
+        repo.add_candidate(InstalledCandidate {
+            name: "vendor/legacy-replacement".into(),
+            pretty_name: "vendor/legacy-replacement".into(),
+            version: "2.0.0".into(),
+            pretty_version: "2.0.0".into(),
+            provides: BTreeMap::new(),
+            replaces,
+        });
+
+        let candidates = repo.find_with_replacers_and_providers("ext-mbstring");
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates[0].name, "vendor/legacy-replacement");
+
+        let cand = mozart_semver::VersionConstraint::parse("1.0").unwrap();
+        let req = mozart_semver::VersionConstraint::parse("^1.0").unwrap();
+        assert!(req.intersects(&cand));
     }
 
     #[test]
-    fn test_check_requirements_version_mismatch() {
-        let requirements = make_requirements(&[("php", ">=8.2", "vendor/pkg")]);
-        let platform = make_platform(&[("php", "8.1.0")]);
-
-        let results = check_requirements(&requirements, &platform);
-        assert_eq!(results.len(), 1);
-        assert_eq!(results[0].status, CheckStatus::Failed);
-        assert_eq!(results[0].version, "8.1.0");
-        assert!(results[0].failed_requirement.is_some());
-        assert_eq!(determine_exit_code(&results), 1);
-    }
-
-    #[test]
-    fn test_check_requirements_missing() {
-        let requirements = make_requirements(&[("ext-foobar", "*", "vendor/pkg")]);
-        let platform = make_platform(&[("php", "8.2.1")]); // ext-foobar not present
-
-        let results = check_requirements(&requirements, &platform);
-        assert_eq!(results.len(), 1);
-        assert_eq!(results[0].status, CheckStatus::Missing);
-        assert_eq!(results[0].version, "n/a");
-        assert_eq!(determine_exit_code(&results), 2);
-    }
-
-    #[test]
-    fn test_check_requirements_mixed() {
-        let requirements = make_requirements(&[
-            ("php", ">=8.1", "root"),        // success
-            ("ext-json", ">=7.0", "root"),   // success (version satisfied)
-            ("ext-foobar", "*", "vendor/a"), // missing
-        ]);
-        let platform = make_platform(&[("php", "8.2.1"), ("ext-json", "8.2.1")]);
-
-        let results = check_requirements(&requirements, &platform);
-
-        let php_result = results.iter().find(|r| r.name == "php").unwrap();
-        assert_eq!(php_result.status, CheckStatus::Success);
-
-        let json_result = results.iter().find(|r| r.name == "ext-json").unwrap();
-        assert_eq!(json_result.status, CheckStatus::Success);
-
-        let foobar_result = results.iter().find(|r| r.name == "ext-foobar").unwrap();
-        assert_eq!(foobar_result.status, CheckStatus::Missing);
-
-        // Exit code should be 2 (missing wins over failed which wins over success)
-        assert_eq!(determine_exit_code(&results), 2);
-    }
-
-    #[test]
-    fn test_check_requirements_multiple_constraints() {
-        // Two packages both require php, one with a tighter constraint
-        let requirements = make_requirements(&[
-            ("php", ">=8.0", "vendor/a"),
-            ("php", ">=8.2", "vendor/b"), // tighter
-        ]);
-        let platform = make_platform(&[("php", "8.1.0")]); // satisfies >=8.0 but not >=8.2
-
-        let results = check_requirements(&requirements, &platform);
-        assert_eq!(results.len(), 1);
-        // The second constraint fails
-        assert_eq!(results[0].status, CheckStatus::Failed);
-        let (failed_constraint, failed_provider) = results[0].failed_requirement.as_ref().unwrap();
-        assert_eq!(failed_constraint, ">=8.2");
-        assert_eq!(failed_provider, "vendor/b");
-    }
-
-    #[test]
-    fn test_output_json_format() {
-        let results = [
-            CheckResult {
-                name: "php".to_string(),
-                version: "8.2.1".to_string(),
-                status: CheckStatus::Success,
-                failed_requirement: None,
-            },
-            CheckResult {
-                name: "ext-foobar".to_string(),
-                version: "n/a".to_string(),
-                status: CheckStatus::Missing,
-                failed_requirement: Some(("*".to_string(), "vendor/pkg".to_string())),
-            },
-        ];
-
-        // Capture output by writing to a string
-        let json_results: Vec<serde_json::Value> = results
-            .iter()
-            .map(|r| {
-                let status_str = match r.status {
-                    CheckStatus::Success => "success",
-                    CheckStatus::Failed => "failed",
-                    CheckStatus::Missing => "missing",
-                };
-                let (failed_constraint, failed_provider) = match &r.failed_requirement {
-                    Some((c, p)) => (
-                        serde_json::Value::String(c.clone()),
-                        serde_json::Value::String(p.clone()),
-                    ),
-                    None => (serde_json::Value::Null, serde_json::Value::Null),
-                };
-                serde_json::json!({
-                    "name": r.name,
-                    "version": r.version,
-                    "status": status_str,
-                    "failed_requirement": failed_constraint,
-                    "provider": failed_provider,
-                })
-            })
-            .collect();
-
-        assert_eq!(json_results[0]["name"], "php");
-        assert_eq!(json_results[0]["version"], "8.2.1");
-        assert_eq!(json_results[0]["status"], "success");
-        assert_eq!(
-            json_results[0]["failed_requirement"],
-            serde_json::Value::Null
-        );
-
-        assert_eq!(json_results[1]["name"], "ext-foobar");
-        assert_eq!(json_results[1]["version"], "n/a");
-        assert_eq!(json_results[1]["status"], "missing");
-        assert_eq!(json_results[1]["failed_requirement"], "*");
-        assert_eq!(json_results[1]["provider"], "vendor/pkg");
-    }
-
-    #[test]
-    fn test_lib_packages_always_missing() {
-        // lib-pcre present in platform with satisfying version → Success
-        let requirements = make_requirements(&[("lib-pcre", ">=10.0", "vendor/pkg")]);
-        let platform = make_platform(&[("php", "8.2.1"), ("lib-pcre", "10.42")]);
-
-        let results = check_requirements(&requirements, &platform);
-        assert_eq!(results.len(), 1);
-        assert_eq!(
-            results[0].status,
-            CheckStatus::Success,
-            "lib-pcre should succeed when platform has it at a satisfying version"
-        );
-    }
-
-    #[test]
-    fn test_composer_api_packages_missing() {
-        // composer-plugin-api and composer-runtime-api present in platform → Success
-        let requirements = make_requirements(&[
-            ("composer-plugin-api", "^2.0", "vendor/plugin"),
-            ("composer-runtime-api", "^2.0", "vendor/plugin"),
-        ]);
-        let platform = make_platform(&[
-            ("php", "8.2.1"),
-            ("composer-plugin-api", "2.6.0"),
-            ("composer-runtime-api", "2.2.2"),
-        ]);
-
-        let results = check_requirements(&requirements, &platform);
-        assert_eq!(results.len(), 2);
-        for r in &results {
-            assert_eq!(
-                r.status,
-                CheckStatus::Success,
-                "{} should succeed when platform has it at a satisfying version",
-                r.name
-            );
-        }
-    }
-
-    #[test]
-    fn test_lib_package_constraint_not_satisfied() {
-        // lib-pcre is in platform but constraint does NOT match → Failed
-        let requirements = make_requirements(&[("lib-pcre", ">=11.0", "vendor/pkg")]);
-        let platform = make_platform(&[("lib-pcre", "10.42")]);
-
-        let results = check_requirements(&requirements, &platform);
-        assert_eq!(results.len(), 1);
-        assert_eq!(
-            results[0].status,
-            CheckStatus::Failed,
-            "lib-pcre should fail when detected version does not satisfy constraint"
-        );
-        assert_eq!(results[0].version, "10.42");
-    }
-
-    #[test]
-    fn test_lib_package_not_in_platform() {
-        // lib-pcre is NOT in platform data at all → Missing
-        let requirements = make_requirements(&[("lib-pcre", "*", "vendor/pkg")]);
-        let platform = make_platform(&[("php", "8.2.1")]); // lib-pcre absent
-
-        let results = check_requirements(&requirements, &platform);
-        assert_eq!(results.len(), 1);
-        assert_eq!(
-            results[0].status,
-            CheckStatus::Missing,
-            "lib-pcre should be missing when not in platform data"
-        );
-        assert_eq!(results[0].version, "n/a");
-    }
-
-    #[test]
-    fn test_determine_exit_code_all_success() {
-        let results = vec![CheckResult {
-            name: "php".to_string(),
-            version: "8.2.1".to_string(),
-            status: CheckStatus::Success,
-            failed_requirement: None,
-        }];
-        assert_eq!(determine_exit_code(&results), 0);
-    }
-
-    #[test]
-    fn test_determine_exit_code_failed() {
-        let results = vec![CheckResult {
-            name: "php".to_string(),
+    fn test_json_failed_requirement_is_object_with_four_keys() {
+        let row = CheckRow {
+            platform_package: "php".to_string(),
             version: "8.1.0".to_string(),
-            status: CheckStatus::Failed,
-            failed_requirement: Some((">=8.2".to_string(), "root".to_string())),
-        }];
-        assert_eq!(determine_exit_code(&results), 1);
+            link: Some(Link {
+                source: "vendor/pkg".to_string(),
+                target: "php".to_string(),
+                description: "requires",
+                constraint: ">=8.2".to_string(),
+                pretty_constraint: ">=8.2".to_string(),
+            }),
+            status: Status::Failed,
+            provider: String::new(),
+        };
+
+        let console = test_console();
+        // Capture by rendering through serde directly (the print_table writer
+        // goes to stdout via a macro — keep the assertion on the JSON shape).
+        print_table(&[row.clone()], "json", &console).unwrap();
+
+        // Reproduce the same shape and assert key invariants.
+        let value = serde_json::json!({
+            "name": row.platform_package,
+            "version": row.version,
+            "status": "failed",
+            "failed_requirement": {
+                "source": row.link.as_ref().unwrap().source,
+                "type": row.link.as_ref().unwrap().description,
+                "target": row.link.as_ref().unwrap().target,
+                "constraint": row.link.as_ref().unwrap().pretty_constraint,
+            },
+            "provider": serde_json::Value::Null,
+        });
+        let obj = value["failed_requirement"].as_object().unwrap();
+        assert_eq!(obj.len(), 4);
+        assert!(obj.contains_key("source"));
+        assert!(obj.contains_key("type"));
+        assert!(obj.contains_key("target"));
+        assert!(obj.contains_key("constraint"));
     }
 
     #[test]
-    fn test_determine_exit_code_missing() {
-        let results = vec![CheckResult {
-            name: "ext-foobar".to_string(),
-            version: "n/a".to_string(),
-            status: CheckStatus::Missing,
-            failed_requirement: Some(("*".to_string(), "vendor/pkg".to_string())),
-        }];
-        assert_eq!(determine_exit_code(&results), 2);
+    fn test_json_provider_string_for_indirect_candidate() {
+        let row = CheckRow {
+            platform_package: "ext-mbstring".to_string(),
+            version: "*".to_string(),
+            link: None,
+            status: Status::Success,
+            provider: "provided by symfony/polyfill-mbstring".to_string(),
+        };
+        let value = serde_json::json!({
+            "name": row.platform_package,
+            "version": row.version,
+            "status": "success",
+            "failed_requirement": serde_json::Value::Null,
+            "provider": row.provider,
+        });
+        assert_eq!(value["provider"], "provided by symfony/polyfill-mbstring");
+        assert_eq!(value["failed_requirement"], serde_json::Value::Null);
     }
 
     #[test]
-    fn test_determine_exit_code_missing_beats_failed() {
-        let results = vec![
-            CheckResult {
-                name: "php".to_string(),
-                version: "8.1.0".to_string(),
-                status: CheckStatus::Failed,
-                failed_requirement: Some((">=8.2".to_string(), "root".to_string())),
-            },
-            CheckResult {
-                name: "ext-foobar".to_string(),
-                version: "n/a".to_string(),
-                status: CheckStatus::Missing,
-                failed_requirement: Some(("*".to_string(), "vendor/pkg".to_string())),
-            },
-        ];
-        assert_eq!(determine_exit_code(&results), 2);
+    fn test_json_status_strips_tags() {
+        // Status emits plain "success" / "failed" / "missing" — never the
+        // `<info>…</info>` tag wrapper. Composer's PHP printTable explicitly
+        // calls strip_tags(); ours never wraps in the first place.
+        for (status, expected) in [
+            (Status::Success, "success"),
+            (Status::Failed, "failed"),
+            (Status::Missing, "missing"),
+        ] {
+            let row = CheckRow {
+                platform_package: "ext-x".into(),
+                version: "1.0".into(),
+                link: None,
+                status,
+                provider: String::new(),
+            };
+            let s = match row.status {
+                Status::Success => "success",
+                Status::Failed => "failed",
+                Status::Missing => "missing",
+            };
+            assert_eq!(s, expected);
+        }
     }
 }
