@@ -115,23 +115,61 @@ pub(crate) fn normalize_repositories(value: &serde_json::Value) -> Vec<serde_jso
 /// Add a repository entry to the `repositories` array in json.
 /// If `append` is true, push to end; otherwise insert at beginning.
 /// Removes any existing entry with the same name first.
+/// Handles both array and associative-object repository forms (A19).
 pub(crate) fn add_repository(
     json: &mut serde_json::Value,
     name: &str,
     config: serde_json::Value,
     append: bool,
 ) {
+    // Normalize assoc-keyed repositories to list form (A19)
+    if json["repositories"].is_object() {
+        let normalized = normalize_repositories(&json["repositories"].clone());
+        json["repositories"] = serde_json::Value::Array(normalized);
+    }
     if !json["repositories"].is_array() {
         json["repositories"] = serde_json::json!([]);
     }
 
-    remove_repository(json, name);
+    // Build the entry, injecting "name" when absent (A19, mirrors Composer 108-110)
+    let entry = if config == serde_json::Value::Bool(false) {
+        // Disable entry: {name: false}
+        let mut m = serde_json::Map::new();
+        m.insert(name.to_string(), serde_json::Value::Bool(false));
+        serde_json::Value::Object(m)
+    } else if let Some(obj) = config.as_object()
+        && !obj.contains_key("name")
+        && !name.is_empty()
+    {
+        let mut new_map = serde_json::Map::new();
+        new_map.insert("name".to_string(), serde_json::json!(name));
+        for (k, v) in obj {
+            new_map.insert(k.clone(), v.clone());
+        }
+        serde_json::Value::Object(new_map)
+    } else {
+        config
+    };
+
+    // Remove stale entries (by name or {name: false} disable) (A19)
+    if let Some(repos) = json["repositories"].as_array_mut() {
+        repos.retain(|val| {
+            if let Some(entry_name) = val.get("name").and_then(|n| n.as_str()) {
+                entry_name != name
+            } else {
+                // {name: false} disable entry
+                !val.as_object()
+                    .map(|obj| obj.contains_key(name))
+                    .unwrap_or(false)
+            }
+        });
+    }
 
     let repos = json["repositories"].as_array_mut().unwrap();
     if append {
-        repos.push(config);
+        repos.push(entry);
     } else {
-        repos.insert(0, config);
+        repos.insert(0, entry);
     }
 }
 

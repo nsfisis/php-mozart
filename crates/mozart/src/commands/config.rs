@@ -72,6 +72,12 @@ enum ConfigValueType {
     Integer,
     /// Single string value (any string accepted)
     Str,
+    /// File path string: accepts "null" to clear; validates existence
+    FilePath,
+    /// Directory path string: accepts "null" to clear; validates existence
+    DirPath,
+    /// Size string: integer with optional k/m/g suffix (e.g. "10MiB")
+    SizeString,
     /// One of a fixed set of string values
     Enum(&'static [&'static str]),
     /// Special: bool or a specific string (e.g. "stash" for discard-changes)
@@ -99,7 +105,7 @@ fn config_value_type(key: &str) -> Option<ConfigValueType> {
         "cache-repo-dir" => Some(ConfigValueType::Str),
         "cache-vcs-dir" => Some(ConfigValueType::Str),
         "cache-files-ttl" => Some(ConfigValueType::Integer),
-        "cache-files-maxsize" => Some(ConfigValueType::Str),
+        "cache-files-maxsize" => Some(ConfigValueType::SizeString),
         "cache-read-only" => Some(ConfigValueType::Bool),
         "cache-ttl" => Some(ConfigValueType::Integer),
         "bin-compat" => Some(ConfigValueType::Enum(&["auto", "full", "proxy", "symlink"])),
@@ -123,8 +129,8 @@ fn config_value_type(key: &str) -> Option<ConfigValueType> {
         "disable-tls" => Some(ConfigValueType::Bool),
         "github-expose-hostname" => Some(ConfigValueType::Bool),
         "data-dir" => Some(ConfigValueType::Str),
-        "cafile" => Some(ConfigValueType::Str),
-        "capath" => Some(ConfigValueType::Str),
+        "cafile" => Some(ConfigValueType::FilePath),
+        "capath" => Some(ConfigValueType::DirPath),
         "gitlab-protocol" => Some(ConfigValueType::Enum(&["git", "http", "https"])),
         // store-auths accepts true/false/prompt
         "store-auths" => Some(ConfigValueType::BoolOrEnum(&["prompt"])),
@@ -196,6 +202,39 @@ fn validate_and_normalize(
             }
             Ok(serde_json::json!(value))
         }
+        ConfigValueType::FilePath => {
+            if value == "null" {
+                return Ok(serde_json::Value::Null);
+            }
+            if !std::path::Path::new(value).exists() {
+                return Err(anyhow!("\"{value}\" does not exist for \"{key}\""));
+            }
+            Ok(serde_json::json!(value))
+        }
+        ConfigValueType::DirPath => {
+            if value == "null" {
+                return Ok(serde_json::Value::Null);
+            }
+            if !std::path::Path::new(value).is_dir() {
+                return Err(anyhow!(
+                    "\"{value}\" is not a directory or does not exist for \"{key}\""
+                ));
+            }
+            Ok(serde_json::json!(value))
+        }
+        ConfigValueType::SizeString => {
+            // Mirrors Composer's regex: /^\s*([0-9.]+)\s*(?:([kmg])(?:i?b)?)?\s*$/i
+            let re =
+                regex::Regex::new(r"(?i)^\s*[0-9]+(\.[0-9]*)?\s*(?:[kmg](?:i?b)?)?\s*$").unwrap();
+            if re.is_match(value) {
+                Ok(serde_json::json!(value))
+            } else {
+                Err(anyhow!(
+                    "Invalid size string \"{value}\" for \"{key}\". \
+                     Expected a number with optional k/m/g suffix, e.g. \"10MiB\""
+                ))
+            }
+        }
         ConfigValueType::Enum(variants) => {
             let lower = value.to_lowercase();
             if variants.contains(&lower.as_str()) {
@@ -223,12 +262,9 @@ fn validate_and_normalize(
                 ))
             }
         }
-        ConfigValueType::StringArray | ConfigValueType::EnumArray(_) => {
-            // validate_and_normalize_multi should be used for these
-            Err(anyhow!(
-                "\"{key}\" is a multi-value setting. Provide one or more values."
-            ))
-        }
+        ConfigValueType::StringArray | ConfigValueType::EnumArray(_) => Err(anyhow!(
+            "\"{key}\" is a multi-value setting. Provide one or more values."
+        )),
     }
 }
 
@@ -387,7 +423,7 @@ pub async fn execute(
     if is_write {
         // 4a. Validate: cannot combine --unset with setting values
         if args.unset && !args.setting_value.is_empty() {
-            anyhow::bail!("You cannot combine a setting value with --unset");
+            anyhow::bail!("You can not combine a setting value with --unset");
         }
         return execute_write(args, cli, &config_file_path);
     }
@@ -397,14 +433,34 @@ pub async fn execute(
 }
 
 fn execute_editor(args: &ConfigArgs, cli: &super::Cli) -> anyhow::Result<()> {
-    let file_path = resolve_config_file_path(args, cli)?;
+    // A8: --auth opens auth.json instead of the config file
+    let file_path = if args.auth {
+        if args.global {
+            composer_home().join("auth.json")
+        } else {
+            cli.working_dir()?.join("auth.json")
+        }
+    } else {
+        resolve_config_file_path(args, cli)?
+    };
 
+    // A7: Composer-compatible editor fallback chain
     #[cfg(target_os = "windows")]
-    let default_editor = "notepad";
+    let editor = std::env::var("EDITOR").unwrap_or_else(|_| "notepad".to_string());
     #[cfg(not(target_os = "windows"))]
-    let default_editor = "vi";
-
-    let editor = std::env::var("EDITOR").unwrap_or_else(|_| default_editor.to_string());
+    let editor = {
+        if let Ok(ed) = std::env::var("EDITOR") {
+            ed
+        } else {
+            let candidates = ["editor", "vim", "vi", "nano", "pico", "ed"];
+            candidates
+                .iter()
+                .find(|&&cand| find_in_path(cand))
+                .copied()
+                .unwrap_or("vi")
+                .to_string()
+        }
+    };
 
     let status = std::process::Command::new(&editor)
         .arg(&file_path)
@@ -419,6 +475,18 @@ fn execute_editor(args: &ConfigArgs, cli: &super::Cli) -> anyhow::Result<()> {
     }
 
     Ok(())
+}
+
+/// Check whether `name` exists as an executable file anywhere on PATH.
+fn find_in_path(name: &str) -> bool {
+    if let Ok(path_var) = std::env::var("PATH") {
+        for dir in std::env::split_paths(&path_var) {
+            if dir.join(name).is_file() {
+                return true;
+            }
+        }
+    }
+    false
 }
 
 fn execute_write(
@@ -448,7 +516,6 @@ fn execute_unset(json: &mut serde_json::Value, key: &str, args: &ConfigArgs) -> 
     // 1. Repository key
     if let Some(repo_name) = match_repository_key(key) {
         remove_repository(json, repo_name);
-        // If repositories array is empty, remove the key entirely
         if json["repositories"]
             .as_array()
             .map(|a| a.is_empty())
@@ -460,20 +527,44 @@ fn execute_unset(json: &mut serde_json::Value, key: &str, args: &ConfigArgs) -> 
         return Ok(());
     }
 
-    // 2. Dotted config subkeys: preferred-install.X, allow-plugins.X, platform.X
+    // 2. Bare top-level extra / suggest / audit (A5)
+    if key == "extra" || key == "suggest" {
+        if let Some(obj) = json.as_object_mut() {
+            obj.remove(key);
+        }
+        return Ok(());
+    }
+    if key == "audit" {
+        // Mirror Composer 560-564: unset config.audit
+        json_remove_nested(json, "config.audit");
+        return Ok(());
+    }
+
+    // 3. Dotted config subkeys: preferred-install.X, allow-plugins.X, platform.X, audit.X
     if let Some((base, sub)) = split_dotted_config_key(key) {
         let path = format!("config.{base}.{sub}");
         json_remove_nested(json, &path);
         return Ok(());
     }
 
-    // 3. Known top-level config key
+    // 4. Known top-level config key
     if config_value_type(key).is_some() {
+        // A13: disable-tls re-enable message
+        if key == "disable-tls" {
+            let was_disabled = json
+                .get("config")
+                .and_then(|c| c.get("disable-tls"))
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            if was_disabled {
+                eprintln!("You are now running Mozart with SSL/TLS protection enabled.");
+            }
+        }
         json_remove_nested(json, &format!("config.{key}"));
         return Ok(());
     }
 
-    // 4. Package property
+    // 5. Package property
     if CONFIGURABLE_PACKAGE_PROPERTIES.contains(&key) {
         if args.global {
             anyhow::bail!("Package property \"{key}\" cannot be unset in the global config");
@@ -484,9 +575,17 @@ fn execute_unset(json: &mut serde_json::Value, key: &str, args: &ConfigArgs) -> 
         return Ok(());
     }
 
-    // 5. Extra dot-path (extra.X or suggest.X)
-    if key.starts_with("extra.") || key.starts_with("suggest.") {
+    // 6. Extra dot-path (extra.X, suggest.X, or scripts.X) (A3)
+    if key.starts_with("extra.") || key.starts_with("suggest.") || key.starts_with("scripts.") {
         json_remove_nested(json, key);
+        return Ok(());
+    }
+
+    // 7. Top-level fallback: single-segment unknown key (A4)
+    if !key.contains('.') {
+        if let Some(obj) = json.as_object_mut() {
+            obj.remove(key);
+        }
         return Ok(());
     }
 
@@ -498,7 +597,7 @@ fn execute_unset(json: &mut serde_json::Value, key: &str, args: &ConfigArgs) -> 
 /// Split a dotted config subkey like `preferred-install.vendor/*` into
 /// `("preferred-install", "vendor/*")` for the supported dotted config keys.
 fn split_dotted_config_key(key: &str) -> Option<(&str, &str)> {
-    for base in &["preferred-install", "allow-plugins", "platform"] {
+    for base in &["preferred-install", "allow-plugins", "platform", "audit"] {
         if let Some(suffix) = key.strip_prefix(&format!("{base}."))
             && !suffix.is_empty()
         {
@@ -534,6 +633,17 @@ fn execute_set(
                     );
                 }
                 let normalized = validate_and_normalize(key, &values[0], &vtype)?;
+                // A6: disable-tls user-visible warning
+                if key == "disable-tls" {
+                    let was_enabled = !json
+                        .get("config")
+                        .and_then(|c| c.get("disable-tls"))
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(false);
+                    if normalized == serde_json::json!(true) && was_enabled {
+                        eprintln!("You are now running Mozart with SSL/TLS protection disabled.");
+                    }
+                }
                 ensure_config_object(json);
                 json["config"][key] = normalized;
                 return Ok(());
@@ -542,46 +652,59 @@ fn execute_set(
     }
 
     // 2. Dotted config subkeys: preferred-install.X, allow-plugins.X, platform.X
+    //    audit.X (except audit.ignore / audit.ignore-abandoned which are handled below)
     if let Some((base, sub)) = split_dotted_config_key(key) {
-        if values.len() != 1 {
-            anyhow::bail!(
-                "Expected exactly one value for \"{key}\", got {}",
-                values.len()
-            );
-        }
-        let value = &values[0];
-        ensure_config_object(json);
-
-        match base {
-            "preferred-install" => {
-                let lower = value.to_lowercase();
-                if !["auto", "source", "dist"].contains(&lower.as_str()) {
-                    anyhow::bail!(
-                        "Invalid value \"{value}\" for \"{key}\". Must be one of: auto, source, dist"
-                    );
-                }
-                json_set_nested(
-                    json,
-                    &format!("config.{base}.{sub}"),
-                    serde_json::json!(lower),
+        // audit.ignore and audit.ignore-abandoned need JSON/merge support; skip here
+        if base == "audit" && (sub == "ignore" || sub == "ignore-abandoned") {
+            // fall through to the dedicated audit.ignore handler below
+        } else {
+            if values.len() != 1 {
+                anyhow::bail!(
+                    "Expected exactly one value for \"{key}\", got {}",
+                    values.len()
                 );
             }
-            "allow-plugins" => {
-                let normalized = normalize_bool(key, value)?;
-                json_set_nested(json, &format!("config.{base}.{sub}"), normalized);
+            let value = &values[0];
+            ensure_config_object(json);
+
+            match base {
+                "preferred-install" => {
+                    let lower = value.to_lowercase();
+                    if !["auto", "source", "dist"].contains(&lower.as_str()) {
+                        anyhow::bail!(
+                            "Invalid value \"{value}\" for \"{key}\". Must be one of: auto, source, dist"
+                        );
+                    }
+                    json_set_nested(
+                        json,
+                        &format!("config.{base}.{sub}"),
+                        serde_json::json!(lower),
+                    );
+                }
+                "allow-plugins" => {
+                    let normalized = normalize_bool(key, value)?;
+                    json_set_nested(json, &format!("config.{base}.{sub}"), normalized);
+                }
+                "platform" => {
+                    let val = if value == "false" {
+                        serde_json::json!(false)
+                    } else {
+                        serde_json::json!(value)
+                    };
+                    json_set_nested(json, &format!("config.{base}.{sub}"), val);
+                }
+                "audit" => {
+                    // Other audit.X sub-keys (not ignore/ignore-abandoned) — simple set
+                    json_set_nested(
+                        json,
+                        &format!("config.{base}.{sub}"),
+                        serde_json::json!(value),
+                    );
+                }
+                _ => unreachable!(),
             }
-            "platform" => {
-                // value "false" → false (disable), otherwise string
-                let val = if value == "false" {
-                    serde_json::json!(false)
-                } else {
-                    serde_json::json!(value)
-                };
-                json_set_nested(json, &format!("config.{base}.{sub}"), val);
-            }
-            _ => unreachable!(),
+            return Ok(());
         }
-        return Ok(());
     }
 
     // 3. Package property
@@ -617,7 +740,41 @@ fn execute_set(
         return Ok(());
     }
 
-    // 4. Repository key
+    // 4. Repository key (including repositories.<name>.url sub-path — A16)
+    // Check for repositories.<name>.url pattern first
+    for prefix in &["repositories.", "repos.", "repo."] {
+        if let Some(rest) = key.strip_prefix(prefix)
+            && let Some(dot_pos) = rest.find('.')
+        {
+            let repo_name = &rest[..dot_pos];
+            let field = &rest[dot_pos + 1..];
+            if field == "url" {
+                if values.len() != 1 {
+                    anyhow::bail!("Expected exactly one value for \"{key}\"");
+                }
+                let url = &values[0];
+                // Find entry by name and update its url
+                if let Some(repos) = json["repositories"].as_array_mut() {
+                    let found = repos.iter_mut().any(|entry| {
+                        if entry.get("name").and_then(|n| n.as_str()) == Some(repo_name) {
+                            entry["url"] = serde_json::json!(url);
+                            true
+                        } else {
+                            false
+                        }
+                    });
+                    if !found {
+                        anyhow::bail!("Repository \"{repo_name}\" not found");
+                    }
+                } else {
+                    anyhow::bail!("Repository \"{repo_name}\" not found");
+                }
+                return Ok(());
+            }
+            break;
+        }
+    }
+
     if let Some(repo_name) = match_repository_key(key) {
         match values.len() {
             2 => {
@@ -625,7 +782,6 @@ fn execute_set(
                 let repo_type = &values[0];
                 let repo_url = &values[1];
                 let entry = serde_json::json!({
-                    "name": repo_name,
                     "type": repo_type,
                     "url": repo_url,
                 });
@@ -634,11 +790,8 @@ fn execute_set(
             1 => {
                 let v = &values[0];
                 if v == "false" {
-                    // Disable a repository
-                    let entry = serde_json::json!({ repo_name: false });
-                    add_repository(json, repo_name, entry, args.append);
+                    add_repository(json, repo_name, serde_json::Value::Bool(false), args.append);
                 } else {
-                    // Try to parse as JSON
                     let parsed: serde_json::Value = serde_json::from_str(v)
                         .map_err(|_| anyhow!("Invalid JSON for repository config: {v}"))?;
                     add_repository(json, repo_name, parsed, args.append);
@@ -646,7 +799,7 @@ fn execute_set(
             }
             0 => {
                 anyhow::bail!(
-                    "At least one value (type url, false, or JSON) is required for repository \"{repo_name}\""
+                    "You must pass the type and a url. Example: php composer.phar config repositories.foo vcs https://bar.com"
                 );
             }
             _ => {
@@ -673,7 +826,6 @@ fn execute_set(
         };
 
         if args.merge {
-            // Read existing value at path and merge
             let existing = get_nested(json, &format!("extra.{sub}")).cloned();
             let merged = merge_json_values(existing.as_ref(), &new_value)?;
             json_set_nested(json, &format!("extra.{sub}"), merged);
@@ -689,7 +841,6 @@ fn execute_set(
             anyhow::bail!("A value (reason) is required for \"{key}\"");
         }
         let reason = values.join(" ");
-        // Ensure suggest object exists
         if !json["suggest"].is_object() {
             json_set_nested(json, "suggest", serde_json::json!({}));
         }
@@ -701,8 +852,76 @@ fn execute_set(
         return Ok(());
     }
 
+    // 7. audit.ignore / audit.ignore-abandoned (A2)
+    if key == "audit.ignore" || key == "audit.ignore-abandoned" {
+        let sub = key.strip_prefix("audit.").unwrap();
+        if values.is_empty() {
+            anyhow::bail!("A value is required for \"{key}\"");
+        }
+        let raw_value = &values[0];
+
+        let new_value: serde_json::Value = if args.json {
+            serde_json::from_str(raw_value)
+                .map_err(|_| anyhow!("Invalid JSON value for \"{key}\": {raw_value}"))?
+        } else {
+            serde_json::json!(raw_value)
+        };
+
+        if args.merge {
+            let existing = get_nested(json, &format!("config.audit.{sub}")).cloned();
+            match (&existing, &new_value) {
+                (Some(serde_json::Value::Array(_)), serde_json::Value::Object(_))
+                | (Some(serde_json::Value::Object(_)), serde_json::Value::Array(_)) => {
+                    anyhow::bail!(
+                        "Could not merge audit.{sub}: cannot merge an array with an object"
+                    );
+                }
+                _ => {}
+            }
+            let merged = merge_json_values(existing.as_ref(), &new_value)?;
+            ensure_config_object(json);
+            json_set_nested(json, &format!("config.audit.{sub}"), merged);
+        } else {
+            ensure_config_object(json);
+            json_set_nested(json, &format!("config.audit.{sub}"), new_value);
+        }
+        return Ok(());
+    }
+
+    // 8. scripts.X (A3)
+    if let Some(script_name) = key.strip_prefix("scripts.") {
+        if values.is_empty() {
+            anyhow::bail!("A value is required for \"{key}\"");
+        }
+        let val = if values.len() == 1 {
+            serde_json::json!(&values[0])
+        } else {
+            serde_json::Value::Array(values.iter().map(|v| serde_json::json!(v)).collect())
+        };
+        json_set_nested(json, &format!("scripts.{script_name}"), val);
+        return Ok(());
+    }
+
+    // 9. Auth key stub (A1) — full implementation deferred to JsonConfigSource
+    let auth_prefixes = [
+        "bitbucket-oauth.",
+        "github-oauth.",
+        "gitlab-oauth.",
+        "gitlab-token.",
+        "http-basic.",
+        "custom-headers.",
+        "bearer.",
+        "forgejo-token.",
+    ];
+    if auth_prefixes.iter().any(|p| key.starts_with(p)) {
+        anyhow::bail!(
+            "Auth credentials must be stored in auth.json \
+             (auth.json support is not yet fully implemented in Mozart)"
+        );
+    }
+
     Err(anyhow!(
-        "Setting \"{key}\" does not exist or is not supported"
+        "Setting \"{key}\" does not exist or is not supported by this command"
     ))
 }
 
@@ -738,8 +957,9 @@ fn merge_json_values(
             Ok(serde_json::Value::Array(merged))
         }
         (Some(serde_json::Value::Object(old)), serde_json::Value::Object(new)) => {
-            let mut merged = old.clone();
-            for (k, v) in new {
+            // Mirrors PHP `+` operator semantics: existing keys win
+            let mut merged = new.clone();
+            for (k, v) in old {
                 merged.insert(k.clone(), v.clone());
             }
             Ok(serde_json::Value::Object(merged))
@@ -786,14 +1006,9 @@ fn execute_read(
     }
 
     match &args.setting_key {
+        // A9: Mirror Composer 220-223: silently return 0 when no setting-key given
         None => {
-            console.error(
-                "No command specified. Use --list to show all config values, \
-                     or provide a setting key.",
-            );
-            return Err(mozart_core::exit_code::bail_silent(
-                mozart_core::exit_code::GENERAL_ERROR,
-            ));
+            return Ok(());
         }
         Some(key) => {
             // 1. Repository query
@@ -1413,10 +1628,11 @@ mod tests {
 
     #[test]
     fn test_unset_nonexistent_key() {
+        // A4: unknown top-level single-segment key is silently removed (mirrors Composer 920-924)
         let mut json = make_empty_json();
         let args = make_config_args_default();
         let result = execute_unset(&mut json, "unknown-key-xyz", &args);
-        assert!(result.is_err());
+        assert!(result.is_ok());
     }
 
     #[test]
@@ -1756,5 +1972,236 @@ mod tests {
         let v = read_json_file(path, false).unwrap();
         assert!(v.is_object());
         assert!(v.get("config").is_none());
+    }
+
+    // --- A2: audit.ignore / audit.ignore-abandoned ---
+
+    #[test]
+    fn test_set_audit_ignore_simple() {
+        let mut json = make_empty_json();
+        let mut args = make_config_args_default();
+        args.json = true;
+        execute_set(
+            &mut json,
+            "audit.ignore",
+            &[r#"["CVE-2024-AAAA"]"#.to_string()],
+            &args,
+        )
+        .unwrap();
+        assert_eq!(
+            json["config"]["audit"]["ignore"],
+            serde_json::json!(["CVE-2024-AAAA"])
+        );
+    }
+
+    #[test]
+    fn test_set_audit_ignore_merge_arrays() {
+        let mut json = serde_json::json!({"config": {"audit": {"ignore": ["CVE-2024-AAAA"]}}});
+        let mut args = make_config_args_default();
+        args.json = true;
+        args.merge = true;
+        execute_set(
+            &mut json,
+            "audit.ignore",
+            &[r#"["CVE-2024-XXXX"]"#.to_string()],
+            &args,
+        )
+        .unwrap();
+        assert_eq!(
+            json["config"]["audit"]["ignore"],
+            serde_json::json!(["CVE-2024-AAAA", "CVE-2024-XXXX"])
+        );
+    }
+
+    #[test]
+    fn test_set_audit_ignore_merge_list_object_error() {
+        let mut json = serde_json::json!({"config": {"audit": {"ignore": ["CVE-2024-AAAA"]}}});
+        let mut args = make_config_args_default();
+        args.json = true;
+        args.merge = true;
+        let result = execute_set(
+            &mut json,
+            "audit.ignore",
+            &[r#"{"pkg/name": "reason"}"#.to_string()],
+            &args,
+        );
+        assert!(result.is_err());
+    }
+
+    // --- A3: scripts.X ---
+
+    #[test]
+    fn test_set_scripts_single() {
+        let mut json = make_empty_json();
+        let args = make_config_args_default();
+        execute_set(
+            &mut json,
+            "scripts.post-install-cmd",
+            &["echo done".to_string()],
+            &args,
+        )
+        .unwrap();
+        assert_eq!(
+            json["scripts"]["post-install-cmd"],
+            serde_json::json!("echo done")
+        );
+    }
+
+    #[test]
+    fn test_set_scripts_multi() {
+        let mut json = make_empty_json();
+        let args = make_config_args_default();
+        execute_set(
+            &mut json,
+            "scripts.post-install-cmd",
+            &["echo a".to_string(), "echo b".to_string()],
+            &args,
+        )
+        .unwrap();
+        assert_eq!(
+            json["scripts"]["post-install-cmd"],
+            serde_json::json!(["echo a", "echo b"])
+        );
+    }
+
+    #[test]
+    fn test_unset_scripts() {
+        let mut json = serde_json::json!({"scripts": {"post-install-cmd": "echo done"}});
+        let args = make_config_args_default();
+        execute_unset(&mut json, "scripts.post-install-cmd", &args).unwrap();
+        assert!(json["scripts"].get("post-install-cmd").is_none());
+    }
+
+    // --- A4: top-level --unset fallback ---
+
+    #[test]
+    fn test_unset_unknown_top_level_key_succeeds() {
+        let mut json = serde_json::json!({"my-custom-field": "value"});
+        let args = make_config_args_default();
+        execute_unset(&mut json, "my-custom-field", &args).unwrap();
+        assert!(json.get("my-custom-field").is_none());
+    }
+
+    // --- A5: bare extra / suggest / audit ---
+
+    #[test]
+    fn test_unset_extra_bare() {
+        let mut json = serde_json::json!({"extra": {"key": "value"}});
+        let args = make_config_args_default();
+        execute_unset(&mut json, "extra", &args).unwrap();
+        assert!(json.get("extra").is_none());
+    }
+
+    #[test]
+    fn test_unset_suggest_bare() {
+        let mut json = serde_json::json!({"suggest": {"vendor/pkg": "reason"}});
+        let args = make_config_args_default();
+        execute_unset(&mut json, "suggest", &args).unwrap();
+        assert!(json.get("suggest").is_none());
+    }
+
+    #[test]
+    fn test_unset_audit_bare() {
+        let mut json = serde_json::json!({"config": {"audit": {"abandoned": "report"}}});
+        let args = make_config_args_default();
+        execute_unset(&mut json, "audit", &args).unwrap();
+        assert!(json["config"].get("audit").is_none());
+    }
+
+    // --- A10: cache-files-maxsize validation ---
+
+    #[test]
+    fn test_cache_files_maxsize_valid() {
+        for v in &["512M", "512MB", "512MiB", "1g", "1GiB", "100", "1.5k"] {
+            let result =
+                validate_and_normalize("cache-files-maxsize", v, &ConfigValueType::SizeString);
+            assert!(result.is_ok(), "expected ok for {v}");
+        }
+    }
+
+    #[test]
+    fn test_cache_files_maxsize_invalid() {
+        let result =
+            validate_and_normalize("cache-files-maxsize", "abc", &ConfigValueType::SizeString);
+        assert!(result.is_err());
+    }
+
+    // --- A14: merge_json_values existing-wins ---
+
+    #[test]
+    fn test_merge_objects_existing_wins() {
+        // Composer PHP `+` semantics: existing keys take precedence
+        let existing = serde_json::json!({"a": 1, "b": 2});
+        let new_val = serde_json::json!({"a": 99, "c": 3});
+        let result = merge_json_values(Some(&existing), &new_val).unwrap();
+        assert_eq!(result["a"], serde_json::json!(1)); // existing wins
+        assert_eq!(result["b"], serde_json::json!(2));
+        assert_eq!(result["c"], serde_json::json!(3)); // new key added
+    }
+
+    // --- A11: cafile / capath null clearing ---
+
+    #[test]
+    fn test_cafile_null_clears() {
+        let result = validate_and_normalize("cafile", "null", &ConfigValueType::FilePath);
+        assert_eq!(result.unwrap(), serde_json::Value::Null);
+    }
+
+    #[test]
+    fn test_capath_null_clears() {
+        let result = validate_and_normalize("capath", "null", &ConfigValueType::DirPath);
+        assert_eq!(result.unwrap(), serde_json::Value::Null);
+    }
+
+    // --- A16: repositories.<name>.url ---
+
+    #[test]
+    fn test_set_repository_url() {
+        let mut json = serde_json::json!({
+            "repositories": [{"name": "foo", "type": "vcs", "url": "https://old.com"}]
+        });
+        let args = make_config_args_default();
+        execute_set(
+            &mut json,
+            "repositories.foo.url",
+            &["https://new.com".to_string()],
+            &args,
+        )
+        .unwrap();
+        assert_eq!(
+            json["repositories"][0]["url"],
+            serde_json::json!("https://new.com")
+        );
+    }
+
+    #[test]
+    fn test_set_repository_url_not_found() {
+        let mut json = serde_json::json!({"repositories": []});
+        let args = make_config_args_default();
+        let result = execute_set(
+            &mut json,
+            "repositories.nonexistent.url",
+            &["https://x.com".to_string()],
+            &args,
+        );
+        assert!(result.is_err());
+    }
+
+    // --- A19: add_repository with name injection and assoc-form normalization ---
+
+    #[test]
+    fn test_add_repository_injects_name() {
+        let mut json = make_empty_json();
+        let args = make_config_args_default();
+        // Passing config without "name" field
+        execute_set(
+            &mut json,
+            "repositories.myrepo",
+            &["vcs".to_string(), "https://example.com".to_string()],
+            &args,
+        )
+        .unwrap();
+        let repos = json["repositories"].as_array().unwrap();
+        assert_eq!(repos[0]["name"], serde_json::json!("myrepo"));
     }
 }
