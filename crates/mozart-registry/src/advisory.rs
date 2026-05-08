@@ -230,29 +230,30 @@ impl Auditor {
                 }
 
                 // Check by advisory ID
-                if is_active
-                    && let Some(reason) = ignore_list.get(&adv.advisory_id) {
-                        is_active = false;
-                        ignore_reason = reason.clone();
-                    }
+                if is_active && let Some(reason) = ignore_list.get(&adv.advisory_id) {
+                    is_active = false;
+                    ignore_reason = reason.clone();
+                }
 
                 // Check by severity
                 if is_active
                     && let Some(ref sev) = adv.severity
-                        && let Some(reason) = ignored_severities.get(sev.as_str()) {
-                            is_active = false;
-                            ignore_reason = reason
-                                .clone()
-                                .or_else(|| Some(format!("{sev} severity is ignored")));
-                        }
+                    && let Some(reason) = ignored_severities.get(sev.as_str())
+                {
+                    is_active = false;
+                    ignore_reason = reason
+                        .clone()
+                        .or_else(|| Some(format!("{sev} severity is ignored")));
+                }
 
                 // Check by CVE
                 if is_active
                     && let Some(ref cve) = adv.cve
-                        && let Some(reason) = ignore_list.get(cve.as_str()) {
-                            is_active = false;
-                            ignore_reason = reason.clone();
-                        }
+                    && let Some(reason) = ignore_list.get(cve.as_str())
+                {
+                    is_active = false;
+                    ignore_reason = reason.clone();
+                }
 
                 // Check by source remote IDs
                 if is_active {

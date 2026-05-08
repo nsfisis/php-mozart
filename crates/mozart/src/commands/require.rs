@@ -2,13 +2,15 @@ use clap::Args;
 use indexmap::{IndexMap, IndexSet};
 use mozart_core::console_format;
 use mozart_core::console_writeln;
-use mozart_core::package::{self, Stability};
+use mozart_core::package::{self, RawPackageData, Stability};
 use mozart_core::validation;
 use mozart_registry::lockfile;
 use mozart_registry::packagist;
 use mozart_registry::resolver::{self, PlatformConfig, ResolveRequest};
 use mozart_registry::version;
+use mozart_registry::version_selector::VersionSelector;
 use std::io::{BufRead, IsTerminal, Write};
+use std::path::{Path, PathBuf};
 
 #[derive(Args)]
 pub struct RequireArgs {
@@ -128,6 +130,456 @@ pub struct RequireArgs {
     pub apcu_autoloader_prefix: Option<String>,
 }
 
+/// Per-execution mutable state.
+/// Mirrors Composer\Command\RequireCommand instance properties.
+struct CommandState {
+    newly_created: bool,
+    first_require: bool,
+    json_path: PathBuf,
+    lock_path: PathBuf,
+    composer_backup: String,
+    lock_backup: Option<String>,
+    dependency_resolution_completed: bool,
+}
+
+/// Reverts composer.json (and composer.lock) to their pre-command state.
+/// Mirrors Composer\Command\RequireCommand::revertComposerFile().
+fn revert_composer_file(state: &CommandState, console: &mozart_core::console::Console) {
+    if state.newly_created {
+        console.write_error(&format!(
+            "\nInstallation failed, deleting {}.",
+            state.json_path.display()
+        ));
+        if let Err(e) = std::fs::remove_file(&state.json_path) {
+            console.write_error(&format!(
+                "Warning: Failed to delete {}: {e}",
+                state.json_path.display()
+            ));
+        }
+        // Also remove any lock file that was created during this (failed) run
+        if state.lock_path.exists()
+            && let Err(e) = std::fs::remove_file(&state.lock_path) {
+                console.write_error(&format!(
+                    "Warning: Failed to delete {}: {e}",
+                    state.lock_path.display()
+                ));
+            }
+    } else {
+        let msg = if state.lock_backup.is_some() {
+            format!(" and {} to their", state.lock_path.display())
+        } else {
+            " to its".to_string()
+        };
+        console.write_error(&format!(
+            "\nInstallation failed, reverting {}{msg} original content.",
+            state.json_path.display()
+        ));
+        if let Err(e) = std::fs::write(&state.json_path, &state.composer_backup) {
+            console.write_error(&format!(
+                "Warning: Failed to revert {}: {e}",
+                state.json_path.display()
+            ));
+        }
+        if let Some(ref lock_content) = state.lock_backup
+            && let Err(e) = std::fs::write(&state.lock_path, lock_content) {
+                console.write_error(&format!(
+                    "Warning: Failed to revert {}: {e}",
+                    state.lock_path.display()
+                ));
+            }
+    }
+}
+
+/// Returns the names of packages that are being added to `require_key` but already
+/// live in the opposite section.
+/// Mirrors Composer\Command\RequireCommand::getInconsistentRequireKeys().
+fn get_inconsistent_require_keys(
+    new_packages: &[String],
+    require_key: &str,
+    packages_by_key: &IndexMap<String, String>,
+) -> Vec<String> {
+    new_packages
+        .iter()
+        .filter(|name| {
+            packages_by_key
+                .get(name.as_str())
+                .map(|k| k != require_key)
+                .unwrap_or(false)
+        })
+        .cloned()
+        .collect()
+}
+
+/// Returns a map of `package_name → "require" | "require-dev"` for all existing packages.
+/// Mirrors Composer\Command\RequireCommand::getPackagesByRequireKey().
+fn get_packages_by_require_key(raw: &RawPackageData) -> IndexMap<String, String> {
+    let mut map = IndexMap::new();
+    for name in raw.require.keys() {
+        map.insert(name.clone(), "require".to_string());
+    }
+    for name in raw.require_dev.keys() {
+        map.insert(name.clone(), "require-dev".to_string());
+    }
+    map
+}
+
+/// Formatting-preserving composer.json write (stub — returns `Ok(false)` to trigger fallback).
+/// Mirrors Composer\Command\RequireCommand::updateFileCleanly().
+/// Will be implemented in PR 3 when JsonManipulator is ported.
+fn update_file_cleanly(_json_path: &Path, _raw: &RawPackageData) -> anyhow::Result<bool> {
+    Ok(false)
+}
+
+/// Write the updated requirements to composer.json.
+/// Tries the formatting-preserving path first; falls back to a full rewrite.
+/// Mirrors Composer\Command\RequireCommand::updateFile().
+fn update_file(json_path: &Path, raw: &RawPackageData) -> anyhow::Result<()> {
+    if update_file_cleanly(json_path, raw)? {
+        return Ok(());
+    }
+    package::write_to_file(raw, json_path)
+}
+
+/// Post-resolution constraint rewrite for `'guess'` placeholders (stub for PR 2).
+/// Mirrors Composer\Command\RequireCommand::updateRequirementsAfterResolution().
+#[allow(clippy::too_many_arguments)]
+async fn update_requirements_after_resolution(
+    _state: &CommandState,
+    _requirements_to_update: &[String],
+    _require_key: &str,
+    _remove_key: &str,
+    _sort_packages: bool,
+    _dry_run: bool,
+    _fixed: bool,
+    _console: &mozart_core::console::Console,
+) -> anyhow::Result<()> {
+    Ok(())
+}
+
+/// Resolve + lock + install pipeline.
+/// Mirrors Composer\Command\RequireCommand::doUpdate().
+async fn do_update(
+    state: &mut CommandState,
+    args: &RequireArgs,
+    cli: &super::Cli,
+    raw: &RawPackageData,
+    additions: &[(String, String, bool)],
+    console: &mozart_core::console::Console,
+) -> anyhow::Result<()> {
+    let working_dir = cli.working_dir()?;
+    let vendor_dir = working_dir.join("vendor");
+    let cache_config = mozart_registry::cache::build_cache_config(cli.no_cache);
+    let repo_cache = mozart_registry::cache::Cache::repo(&cache_config);
+
+    let dev_mode = !args.update_no_dev;
+
+    let require: Vec<(String, String)> = raw
+        .require
+        .iter()
+        .map(|(k, v)| (k.clone(), v.clone()))
+        .collect();
+    let require_dev: Vec<(String, String)> = raw
+        .require_dev
+        .iter()
+        .map(|(k, v)| (k.clone(), v.clone()))
+        .collect();
+
+    let minimum_stability =
+        package::Stability::parse(raw.minimum_stability.as_deref().unwrap_or("stable"));
+
+    let prefer_stable = args.prefer_stable
+        || raw
+            .extra_fields
+            .get("prefer-stable")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+
+    // Audit: wire --no-security-blocking + COMPOSER_NO_SECURITY_BLOCKING env var.
+    // Mirrors BaseCommand::createAuditConfig() + Installer::setAuditConfig().
+    let no_security_blocking = args.no_security_blocking
+        || std::env::var("COMPOSER_NO_SECURITY_BLOCKING")
+            .map(|v| v != "0" && !v.is_empty())
+            .unwrap_or(false);
+    let no_audit = args.no_audit
+        || std::env::var("COMPOSER_NO_AUDIT")
+            .map(|v| v != "0" && !v.is_empty())
+            .unwrap_or(false);
+    let block_insecure = !no_audit && !no_security_blocking;
+
+    let request = ResolveRequest {
+        root_name: raw.name.clone(),
+        root_version: raw.version.clone(),
+        require,
+        require_dev,
+        include_dev: dev_mode,
+        minimum_stability,
+        stability_flags: IndexMap::new(),
+        prefer_stable,
+        prefer_lowest: args.prefer_lowest,
+        platform: PlatformConfig::new(),
+        ignore_platform_reqs: args.ignore_platform_reqs,
+        ignore_platform_req_list: args.ignore_platform_req.clone(),
+        repositories: std::sync::Arc::new(
+            mozart_registry::repository::RepositorySet::with_packagist(repo_cache.clone()),
+        ),
+        temporary_constraints: IndexMap::new(),
+        raw_repositories: raw.repositories.clone(),
+        root_provide: raw
+            .provide
+            .iter()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect(),
+        root_replace: raw
+            .replace
+            .iter()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect(),
+        root_conflict: raw
+            .conflict
+            .iter()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect(),
+        locked_package_names: IndexSet::new(),
+        locked_packages: Vec::new(),
+        block_abandoned: false,
+        root_branch_alias: None,
+        preferred_versions: IndexMap::new(),
+        block_insecure,
+    };
+
+    console.info("Loading composer repositories with package information");
+    if dev_mode {
+        console.info("Updating dependencies (including require-dev)");
+    } else {
+        console.info("Updating dependencies");
+    }
+    console.info("Resolving dependencies...");
+
+    let mut resolved = match resolver::resolve(&request).await {
+        Ok(packages) => packages,
+        Err(e) => {
+            if !args.dry_run {
+                revert_composer_file(state, console);
+            }
+            // Suggest explicit version constraint retry for the first package without one.
+            // Mirrors Composer\Command\RequireCommand::doUpdate() L496-502.
+            let first_unversioned = additions
+                .iter()
+                .find(|(_, constraint, _)| {
+                    !constraint.contains(['^', '~', '>', '<', '!', '=', '*'])
+                })
+                .map(|(name, _, _)| name.as_str());
+            let hint = if let Some(name) = first_unversioned {
+                format!(
+                    "\n\nYou can also try re-running mozart require with an explicit version \
+                     constraint, e.g. \"mozart require {name}:*\" to figure out if any version \
+                     is installable, or \"mozart require {name}:^2.1\" if you know which you need."
+                )
+            } else {
+                String::new()
+            };
+            return Err(mozart_core::exit_code::bail(
+                mozart_core::exit_code::DEPENDENCY_RESOLUTION_FAILED,
+                format!("{e}{hint}"),
+            ));
+        }
+    };
+
+    state.dependency_resolution_completed = true;
+
+    // Read old lock file for change reporting and partial update pinning.
+    let old_lock = if state.lock_path.exists() {
+        match lockfile::LockFile::read_from_file(&state.lock_path) {
+            Ok(l) => Some(l),
+            Err(e) => {
+                console.info(&console_format!(
+                    "<warning>Could not read existing composer.lock: {e}. \
+                     Treating as a fresh install.</warning>"
+                ));
+                None
+            }
+        }
+    } else {
+        None
+    };
+
+    // Apply setUpdateAllowList only when NOT firstRequire and lock exists.
+    // Mirrors Composer\Command\RequireCommand::doUpdate() L490-492:
+    //   if (!$this->firstRequire && $composer->getLocker()->isLocked())
+    //       $install->setUpdateAllowList(array_keys($requirements));
+    if !state.first_require
+        && let Some(ref lock) = old_lock {
+            let with_deps = args.with_dependencies || args.update_with_dependencies;
+            let with_all_deps = args.with_all_dependencies || args.update_with_all_dependencies;
+            let newly_required: Vec<String> =
+                additions.iter().map(|(name, _, _)| name.clone()).collect();
+            let repo_requires = super::update::collect_repo_requires(&raw.repositories);
+            let allow_list = if with_all_deps {
+                super::update::expand_with_all_dependencies(newly_required, lock, &repo_requires)
+            } else if with_deps {
+                super::update::expand_with_direct_dependencies(
+                    newly_required,
+                    lock,
+                    &IndexSet::new(),
+                    &repo_requires,
+                )
+            } else {
+                additions.iter().map(|(name, _, _)| name.clone()).collect()
+            };
+            resolved = super::update::apply_partial_update(resolved, lock, &allow_list);
+        }
+
+    let composer_json_content = if args.dry_run {
+        package::to_json_pretty(raw)?
+    } else {
+        std::fs::read_to_string(&state.json_path)?
+    };
+
+    let new_lock = lockfile::generate_lock_file(&lockfile::LockFileGenerationRequest {
+        resolved_packages: resolved,
+        composer_json_content: composer_json_content.clone(),
+        composer_json: raw.clone(),
+        include_dev: dev_mode,
+        repositories: std::sync::Arc::new(
+            mozart_registry::repository::RepositorySet::with_packagist(repo_cache.clone()),
+        ),
+        previous_lock: old_lock.clone(),
+        lock_pinned_names: IndexSet::new(),
+    })
+    .await?;
+
+    // Compute and print change report.
+    let changes = super::update::compute_update_changes(old_lock.as_ref(), &new_lock, dev_mode);
+
+    let installs: Vec<_> = changes
+        .iter()
+        .filter(|c| matches!(c.kind, super::update::ChangeKind::Install { .. }))
+        .collect();
+    let updates: Vec<_> = changes
+        .iter()
+        .filter(|c| matches!(c.kind, super::update::ChangeKind::Update { .. }))
+        .collect();
+    let removals: Vec<_> = changes
+        .iter()
+        .filter(|c| matches!(c.kind, super::update::ChangeKind::Remove { .. }))
+        .collect();
+
+    console.info(&format!(
+        "Package operations: {} install{}, {} update{}, {} removal{}",
+        installs.len(),
+        if installs.len() == 1 { "" } else { "s" },
+        updates.len(),
+        if updates.len() == 1 { "" } else { "s" },
+        removals.len(),
+        if removals.len() == 1 { "" } else { "s" },
+    ));
+
+    for change in &changes {
+        match &change.kind {
+            super::update::ChangeKind::Remove { old_version } => {
+                if args.dry_run {
+                    console.info(&format!("  - Would remove {} ({old_version})", change.name));
+                } else {
+                    console.info(&format!("  - Removing {} ({old_version})", change.name));
+                }
+            }
+            super::update::ChangeKind::Install { new_version } => {
+                if args.dry_run {
+                    console.info(&format!(
+                        "  - Would install {} ({new_version})",
+                        change.name
+                    ));
+                } else {
+                    console.info(&format!("  - Installing {} ({new_version})", change.name));
+                }
+            }
+            super::update::ChangeKind::Update {
+                old_version,
+                new_version,
+            } => {
+                if args.dry_run {
+                    console.info(&format!(
+                        "  - Would update {} ({old_version} => {new_version})",
+                        change.name
+                    ));
+                } else {
+                    console.info(&format!(
+                        "  - Updating {} ({old_version} => {new_version})",
+                        change.name
+                    ));
+                }
+            }
+            super::update::ChangeKind::Unchanged => {}
+        }
+    }
+
+    if !args.dry_run {
+        console.info("Writing lock file");
+        new_lock.write_to_file(&state.lock_path)?;
+    }
+
+    if !args.no_install && !args.dry_run {
+        let prefer_source = args.prefer_source
+            || args
+                .prefer_install
+                .as_deref()
+                .map(|s| s.eq_ignore_ascii_case("source"))
+                .unwrap_or(false);
+        if prefer_source {
+            console.info(&console_format!(
+                "<warning>Warning: Source installs are not yet supported. \
+                 Falling back to dist.</warning>"
+            ));
+        }
+
+        let composer_config = raw.extra_fields.get("config");
+        let config_optimize = composer_config
+            .and_then(|c| c.get("optimize-autoloader"))
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        let config_classmap = composer_config
+            .and_then(|c| c.get("classmap-authoritative"))
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        let config_apcu = composer_config
+            .and_then(|c| c.get("apcu-autoloader"))
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+
+        let files_cache = mozart_registry::cache::Cache::files(
+            &mozart_registry::cache::build_cache_config(cli.no_cache),
+        );
+        let mut executor =
+            mozart_registry::installer_executor::FilesystemExecutor::new(files_cache);
+        super::install::install_from_lock(
+            &new_lock,
+            &working_dir,
+            &vendor_dir,
+            &super::install::InstallConfig {
+                dev_mode,
+                dry_run: false,
+                no_autoloader: false,
+                no_progress: args.no_progress,
+                ignore_platform_reqs: args.ignore_platform_reqs,
+                ignore_platform_req: args.ignore_platform_req.clone(),
+                optimize_autoloader: args.optimize_autoloader || config_optimize,
+                classmap_authoritative: args.classmap_authoritative || config_classmap,
+                apcu_autoloader: args.apcu_autoloader
+                    || args.apcu_autoloader_prefix.is_some()
+                    || config_apcu,
+                apcu_autoloader_prefix: args.apcu_autoloader_prefix.clone(),
+                download_only: false,
+                prefer_source: args.prefer_source,
+            },
+            console,
+            &mut executor,
+        )
+        .await?;
+    }
+
+    Ok(())
+}
+
 /// Run the interactive package search+pick loop.
 ///
 /// Returns a list of `"vendor/package:constraint"` strings that the user confirmed,
@@ -150,7 +602,6 @@ async fn interactive_search_packages(
     let mut selected: Vec<String> = Vec::new();
 
     loop {
-        // Prompt for a search query (empty input = done)
         eprint!("Search for a package: ");
         let _ = std::io::stderr().flush();
 
@@ -159,7 +610,7 @@ async fn interactive_search_packages(
             let mut lines = stdin_locked.lines();
             match lines.next() {
                 Some(Ok(line)) => line.trim().to_string(),
-                _ => break, // EOF or error
+                _ => break,
             }
         };
 
@@ -167,7 +618,6 @@ async fn interactive_search_packages(
             break;
         }
 
-        // Search Packagist
         let (results, total) = match packagist::search_packages(&query, None).await {
             Ok(r) => r,
             Err(e) => {
@@ -178,7 +628,6 @@ async fn interactive_search_packages(
             }
         };
 
-        // Filter out packages already in require / require-dev
         let filtered: Vec<&packagist::SearchResult> = results
             .iter()
             .filter(|r| !already_required.contains(&r.name.to_lowercase()))
@@ -216,7 +665,6 @@ async fn interactive_search_packages(
         console.info("  [0] Search again / enter full package name");
         console.info("");
 
-        // Ask user to pick
         eprint!("Enter package # or name (leave empty to finish): ");
         let _ = std::io::stderr().flush();
 
@@ -230,14 +678,11 @@ async fn interactive_search_packages(
         };
 
         if choice.is_empty() {
-            // Empty = done
             break;
         }
 
-        // Resolve the chosen package name
         let package_name: String = if let Ok(num) = choice.parse::<usize>() {
             if num == 0 {
-                // Search again
                 continue;
             } else if num <= filtered.len() {
                 filtered[num - 1].name.to_lowercase()
@@ -248,11 +693,9 @@ async fn interactive_search_packages(
                 continue;
             }
         } else {
-            // User typed a full package name (possibly with constraint)
             choice.to_lowercase()
         };
 
-        // Determine constraint
         let (pkg_name, constraint) = if package_name.contains(':') {
             match validation::parse_require_string(&package_name) {
                 Ok((n, v)) => (n.to_lowercase(), v),
@@ -294,7 +737,9 @@ async fn interactive_search_packages(
                         }
                         None => {
                             console.info(&console_format!(
-                                "<warning>Could not find a version of \"{package_name}\" matching your minimum-stability. Try specifying it explicitly.</warning>"
+                                "<warning>Could not find a version of \"{package_name}\" \
+                                 matching your minimum-stability. Try specifying it \
+                                 explicitly.</warning>"
                             ));
                             continue;
                         }
@@ -302,7 +747,8 @@ async fn interactive_search_packages(
                 }
                 Err(e) => {
                     console.info(&console_format!(
-                        "<warning>Could not fetch versions for \"{package_name}\": {e}</warning>"
+                        "<warning>Could not fetch versions for \"{package_name}\": \
+                         {e}</warning>"
                     ));
                     continue;
                 }
@@ -311,7 +757,6 @@ async fn interactive_search_packages(
 
         selected.push(format!("{pkg_name}:{constraint}"));
 
-        // Ask whether to add more
         eprint!("Search for another package? [y/N] ");
         let _ = std::io::stderr().flush();
 
@@ -340,44 +785,54 @@ pub async fn execute(
     let cache_config = mozart_registry::cache::build_cache_config(cli.no_cache);
     let repo_cache = mozart_registry::cache::Cache::repo(&cache_config);
 
-    // Collect the effective list of packages to add.
-    // If none were provided on the CLI, try interactive search (unless --no-interaction).
+    // --- Deprecated flag warnings ---
+    // Mirrors Composer\Command\RequireCommand::execute() L134-136.
+    if args.no_suggest {
+        console.write_error(&console_format!(
+            "<warning>You are using the deprecated option \"--no-suggest\". \
+             It has no effect and will break in Composer 3.</warning>"
+        ));
+    }
+    if args.update_with_dependencies {
+        console.write_error(&console_format!(
+            "<warning>The -w / --update-with-dependencies flag is deprecated. \
+             Use --with-dependencies instead.</warning>"
+        ));
+    }
+    if args.update_with_all_dependencies {
+        console.write_error(&console_format!(
+            "<warning>The -W / --update-with-all-dependencies flag is deprecated. \
+             Use --with-all-dependencies instead.</warning>"
+        ));
+    }
+
+    // --- Collect package arguments (interactive if none given) ---
     let cli_packages: Vec<String> = if args.packages.is_empty() {
         if cli.no_interaction {
             anyhow::bail!("Not enough arguments (missing: \"packages\").");
         }
-        // Interactive search — we need composer.json first to know what's already required.
-        // We'll perform a quick check that composer.json exists, then run the search.
         let working_dir = cli.working_dir()?;
         let composer_path = working_dir.join("composer.json");
-        if !composer_path.exists() {
-            anyhow::bail!(
-                "composer.json not found in {}. Run `mozart init` to create one.",
-                working_dir.display()
-            );
-        }
-        let raw_check = package::read_from_file(&composer_path)?;
 
-        // Build set of already-required packages
-        let mut already_required: indexmap::IndexSet<String> = indexmap::IndexSet::new();
-        for k in raw_check.require.keys() {
-            already_required.insert(k.to_lowercase());
-        }
-        for k in raw_check.require_dev.keys() {
-            already_required.insert(k.to_lowercase());
-        }
-
-        let preferred_stability = raw_check
-            .minimum_stability
-            .as_deref()
-            .map(|s| match s.to_lowercase().as_str() {
-                "dev" => Stability::Dev,
-                "alpha" => Stability::Alpha,
-                "beta" => Stability::Beta,
-                "rc" | "RC" => Stability::RC,
-                _ => Stability::Stable,
-            })
-            .unwrap_or(Stability::Stable);
+        // Read current dependencies to filter from search results (best-effort).
+        let (already_required, preferred_stability) = if composer_path.exists() {
+            let raw_check = package::read_from_file(&composer_path)?;
+            let mut already: IndexSet<String> = IndexSet::new();
+            for k in raw_check.require.keys() {
+                already.insert(k.to_lowercase());
+            }
+            for k in raw_check.require_dev.keys() {
+                already.insert(k.to_lowercase());
+            }
+            let stab = raw_check
+                .minimum_stability
+                .as_deref()
+                .map(Stability::parse)
+                .unwrap_or(Stability::Stable);
+            (already, stab)
+        } else {
+            (IndexSet::new(), Stability::Stable)
+        };
 
         let found = interactive_search_packages(
             &already_required,
@@ -389,74 +844,102 @@ pub async fn execute(
         .await?;
 
         if found.is_empty() {
-            // Nothing selected — exit cleanly
             return Ok(());
         }
-
         found
     } else {
         args.packages.clone()
     };
 
-    // Handle deprecated flags
-    if args.no_suggest {
-        console.info(&console_format!(
-            "<warning>The --no-suggest option is deprecated and has no effect.</warning>"
-        ));
-    }
-    if args.update_with_dependencies {
-        console.info(&console_format!("<warning>The -w / --update-with-dependencies flag is deprecated. Use --with-dependencies instead.</warning>"));
-    }
-    if args.update_with_all_dependencies {
-        console.info(&console_format!("<warning>The -W / --update-with-all-dependencies flag is deprecated. Use --with-all-dependencies instead.</warning>"));
-    }
-
     let working_dir = cli.working_dir()?;
-
     let composer_path = working_dir.join("composer.json");
-    if !composer_path.exists() {
-        anyhow::bail!(
-            "composer.json not found in {}. Run `mozart init` to create one.",
-            working_dir.display()
-        );
+
+    // --- Bootstrap composer.json ---
+    // Mirrors Composer\Command\RequireCommand::execute() L138-152.
+    let newly_created = !composer_path.exists();
+    if newly_created {
+        if let Err(e) = std::fs::write(&composer_path, "{\n}\n") {
+            anyhow::bail!("{} could not be created: {e}", composer_path.display());
+        }
+    } else if std::fs::metadata(&composer_path)
+        .map(|m| m.len() == 0)
+        .unwrap_or(false)
+    {
+        std::fs::write(&composer_path, "{\n}\n")?;
     }
 
-    // Read existing composer.json
-    let mut raw = package::read_from_file(&composer_path)?;
-
-    // Backup original composer.json content for revert on failure
-    let original_composer_json = std::fs::read_to_string(&composer_path)?;
-
-    // Backup composer.lock content if it exists
-    let lock_path_for_backup = working_dir.join("composer.lock");
-    let original_composer_lock = if lock_path_for_backup.exists() {
-        Some(std::fs::read_to_string(&lock_path_for_backup)?)
+    // Backup original content (including the bootstrap content for new files).
+    let composer_backup = std::fs::read_to_string(&composer_path)?;
+    let lock_path = working_dir.join("composer.lock");
+    let lock_backup = if lock_path.exists() {
+        Some(std::fs::read_to_string(&lock_path)?)
     } else {
         None
     };
 
-    // Determine preferred stability from composer.json's minimum-stability
+    // Read and parse composer.json.
+    let mut raw = package::read_from_file(&composer_path)?;
+
+    // --- firstRequire: computed from the original file, before applying changes ---
+    // Mirrors Composer\Command\RequireCommand::execute() L315-321.
+    let first_require = newly_created || (raw.require.is_empty() && raw.require_dev.is_empty());
+
+    let mut state = CommandState {
+        newly_created,
+        first_require,
+        json_path: composer_path.clone(),
+        lock_path: lock_path.clone(),
+        composer_backup,
+        lock_backup,
+        dependency_resolution_completed: false,
+    };
+
+    // --- --fixed gate ---
+    // Mirrors Composer\Command\RequireCommand::execute() L173-189.
+    if args.fixed {
+        let package_type = raw
+            .package_type
+            .as_deref()
+            .filter(|t| !t.is_empty())
+            .unwrap_or("library");
+        if package_type != "project" && !args.dev {
+            console.write_error(&console_format!(
+                "<error>The \"--fixed\" option is only allowed for packages with a \
+                 \"project\" type or for dev dependencies to prevent possible \
+                 misuses.</error>"
+            ));
+            if raw.package_type.is_none() {
+                console.write_error(&console_format!(
+                    "<error>If your package is not a library, you can explicitly specify \
+                     the \"type\" by using \"mozart config type project\".</error>"
+                ));
+            }
+            return Err(mozart_core::exit_code::bail(
+                mozart_core::exit_code::GENERAL_ERROR,
+                String::new(),
+            ));
+        }
+    }
+
+    // --- preferred_stability ---
     let preferred_stability = raw
         .minimum_stability
         .as_deref()
-        .map(|s| match s.to_lowercase().as_str() {
-            "dev" => Stability::Dev,
-            "alpha" => Stability::Alpha,
-            "beta" => Stability::Beta,
-            "rc" | "RC" => Stability::RC,
-            _ => Stability::Stable,
-        })
+        .map(Stability::parse)
         .unwrap_or(Stability::Stable);
 
-    // Process each package argument
-    let mut additions: Vec<(String, String, bool)> = Vec::new(); // (name, constraint, is_dev)
+    let require_key = if args.dev { "require-dev" } else { "require" };
+    let remove_key = if args.dev { "require" } else { "require-dev" };
+
+    // --- Per-arg constraint resolution via VersionSelector ---
+    // Mirrors Composer\Command\PackageDiscoveryTrait::determineRequirements().
+    let version_selector = VersionSelector::new(preferred_stability, repo_cache.clone());
+    let mut additions: Vec<(String, String, bool)> = Vec::new();
 
     for pkg_arg in &cli_packages {
-        // Try to parse as "vendor/package:constraint"
         let (name, constraint) = match validation::parse_require_string(pkg_arg) {
             Ok((n, v)) => (n.to_lowercase(), v),
             Err(_) => {
-                // No version specified — resolve from Packagist
                 let name = pkg_arg.trim().to_lowercase();
                 if !validation::validate_package_name(&name) {
                     anyhow::bail!("Invalid package name: \"{name}\"");
@@ -469,25 +952,19 @@ pub async fn execute(
                     ),
                 );
 
-                let versions = packagist::fetch_package_versions(&name, &repo_cache).await?;
-                let best = version::find_best_candidate(&versions, preferred_stability)
+                let best = version_selector
+                    .find_best_candidate(&name)
+                    .await?
                     .ok_or_else(|| {
                         anyhow::anyhow!(
-                            "Could not find a version of package \"{name}\" matching your minimum-stability ({preferred_stability:?}). \
-                             Try requiring it with an explicit version constraint."
+                            "Could not find a version of package \"{name}\" matching your \
+                             minimum-stability ({preferred_stability:?}). Try requiring it \
+                             with an explicit version constraint."
                         )
                     })?;
 
-                let stability = version::stability_of(&best.version_normalized);
-                let constraint = if args.fixed {
-                    best.version.clone()
-                } else {
-                    version::find_recommended_require_version(
-                        &best.version,
-                        &best.version_normalized,
-                        stability,
-                    )
-                };
+                let constraint =
+                    version_selector.find_recommended_require_version_string(&best, args.fixed);
 
                 console_writeln!(
                     console,
@@ -501,7 +978,8 @@ pub async fn execute(
         additions.push((name, constraint, args.dev));
     }
 
-    // Fix 3: Self-require detection — block requiring the root package itself
+    // --- Self-require detection ---
+    // Mirrors Composer\Command\RequireCommand::execute() L278-282.
     let root_name = raw.name.to_lowercase();
     for (name, _, _) in &additions {
         if name.to_lowercase() == root_name {
@@ -512,28 +990,34 @@ pub async fn execute(
         }
     }
 
-    // Fix 2: Cross-section move detection — remove from opposite section if present
-    for (name, _, is_dev) in &additions {
-        if *is_dev {
-            // Adding to require-dev: check require (prod)
-            if raw.require.contains_key(name.as_str()) {
-                console.info(&console_format!(
-                    "<warning>{name} is currently present in the require key and will be moved to the require-dev key.</warning>"
-                ));
-                raw.require.remove(name.as_str());
-            }
+    // --- Inconsistent require-key detection + warning ---
+    // Mirrors Composer\Command\RequireCommand::execute() L289-311.
+    let packages_by_key = get_packages_by_require_key(&raw);
+    let new_package_names: Vec<String> = additions.iter().map(|(n, _, _)| n.clone()).collect();
+    let inconsistent =
+        get_inconsistent_require_keys(&new_package_names, require_key, &packages_by_key);
+    for pkg in &inconsistent {
+        let (with_without, target_key) = if args.dev {
+            ("with", require_key)
         } else {
-            // Adding to require (prod): check require-dev
-            if raw.require_dev.contains_key(name.as_str()) {
-                console.info(&console_format!(
-                    "<warning>{name} is currently present in the require-dev key and will be moved to the require key.</warning>"
-                ));
-                raw.require_dev.remove(name.as_str());
-            }
+            ("without", require_key)
+        };
+        console.write_error(&console_format!(
+            "<warning>{pkg} is currently present in the {remove_key} key and you ran the \
+             command {with_without} the --dev flag, which will move it to the \
+             {target_key} key.</warning>"
+        ));
+    }
+    // Remove from the opposite section before inserting into the target.
+    for pkg in &inconsistent {
+        if args.dev {
+            raw.require.remove(pkg.as_str());
+        } else {
+            raw.require_dev.remove(pkg.as_str());
         }
     }
 
-    // Apply changes
+    // --- Apply changes ---
     for (name, constraint, is_dev) in &additions {
         let section_name = if *is_dev { "require-dev" } else { "require" };
         let target = if *is_dev {
@@ -546,7 +1030,8 @@ pub async fn execute(
             console_writeln!(
                 console,
                 &console_format!(
-                    "<comment>Updating {name} from {existing} to {constraint} in {section_name}</comment>"
+                    "<comment>Updating {name} from {existing} to {constraint} \
+                     in {section_name}</comment>"
                 ),
             );
         } else {
@@ -559,7 +1044,7 @@ pub async fn execute(
         target.insert(name.clone(), constraint.clone());
     }
 
-    // Fix 5: sort-packages config integration — also check config.sort-packages from composer.json
+    // --- sort-packages ---
     let config_sort_packages = raw
         .extra_fields
         .get("config")
@@ -568,7 +1053,6 @@ pub async fn execute(
         .unwrap_or(false);
     let sort_packages = args.sort_packages || config_sort_packages;
 
-    // Sort packages if requested (via CLI flag or composer.json config)
     if sort_packages {
         let sorted_require: std::collections::BTreeMap<_, _> = raw.require.clone();
         raw.require = sorted_require;
@@ -576,17 +1060,26 @@ pub async fn execute(
         raw.require_dev = sorted_dev;
     }
 
-    // Write back composer.json (unless --dry-run)
+    // --- Write composer.json (unless --dry-run) ---
+    // Mirrors Composer\Command\RequireCommand::execute() L323-325.
     if args.dry_run {
         console_writeln!(
             console,
             &console_format!("<comment>Dry run: composer.json not modified.</comment>"),
         );
     } else {
-        package::write_to_file(&raw, &composer_path)?;
+        update_file(&composer_path, &raw)?;
     }
 
-    // Handle --no-update: skip resolution entirely
+    // Print "has been created|updated".
+    // Mirrors Composer\Command\RequireCommand::execute() L327.
+    console.info(&console_format!(
+        "<info>{} has been {}</info>",
+        composer_path.display(),
+        if newly_created { "created" } else { "updated" }
+    ));
+
+    // --- --no-update: skip resolution ---
     if args.no_update {
         console_writeln!(
             console,
@@ -597,315 +1090,28 @@ pub async fn execute(
         return Ok(());
     }
 
-    // --- Full resolution + lock + install pipeline ---
+    // --- Resolution + lock + install ---
+    let update_result = do_update(&mut state, args, cli, &raw, &additions, console).await;
 
-    let dev_mode = !args.update_no_dev;
-    let lock_path = working_dir.join("composer.lock");
-    let vendor_dir = working_dir.join("vendor");
-
-    // Build require/require_dev lists from the updated raw data
-    let require: Vec<(String, String)> = raw
-        .require
-        .iter()
-        .map(|(k, v)| (k.clone(), v.clone()))
-        .collect();
-
-    let require_dev: Vec<(String, String)> = raw
-        .require_dev
-        .iter()
-        .map(|(k, v)| (k.clone(), v.clone()))
-        .collect();
-
-    // Parse minimum-stability from composer.json (defaults to "stable")
-    let minimum_stability_str = raw.minimum_stability.as_deref().unwrap_or("stable");
-    let minimum_stability = package::Stability::parse(minimum_stability_str);
-
-    // Determine prefer-stable: CLI flag OR composer.json field
-    let composer_prefer_stable = raw
-        .extra_fields
-        .get("prefer-stable")
-        .and_then(|v| v.as_bool())
-        .unwrap_or(false);
-    let prefer_stable = args.prefer_stable || composer_prefer_stable;
-
-    let request = ResolveRequest {
-        root_name: raw.name.clone(),
-        root_version: raw.version.clone(),
-        require,
-        require_dev,
-        include_dev: dev_mode,
-        minimum_stability,
-        stability_flags: IndexMap::new(),
-        prefer_stable,
-        prefer_lowest: args.prefer_lowest,
-        platform: PlatformConfig::new(),
-        ignore_platform_reqs: args.ignore_platform_reqs,
-        ignore_platform_req_list: args.ignore_platform_req.clone(),
-        repositories: std::sync::Arc::new(
-            mozart_registry::repository::RepositorySet::with_packagist(repo_cache.clone()),
-        ),
-        temporary_constraints: IndexMap::new(),
-        raw_repositories: raw.repositories.clone(),
-        root_provide: raw
-            .provide
-            .iter()
-            .map(|(k, v)| (k.clone(), v.clone()))
-            .collect(),
-        root_replace: raw
-            .replace
-            .iter()
-            .map(|(k, v)| (k.clone(), v.clone()))
-            .collect(),
-        root_conflict: raw
-            .conflict
-            .iter()
-            .map(|(k, v)| (k.clone(), v.clone()))
-            .collect(),
-        locked_package_names: indexmap::IndexSet::new(),
-        locked_packages: Vec::new(),
-        block_abandoned: false,
-        root_branch_alias: None,
-        preferred_versions: indexmap::IndexMap::new(),
-        block_insecure: false,
-    };
-
-    // Print header messages
-    console.info("Loading composer repositories with package information");
-    if dev_mode {
-        console.info("Updating dependencies (including require-dev)");
-    } else {
-        console.info("Updating dependencies");
-    }
-    console.info("Resolving dependencies...");
-
-    // Run resolver
-    let mut resolved = match resolver::resolve(&request).await {
-        Ok(packages) => packages,
-        Err(e) => {
-            // Fix 1: Revert composer.json (and composer.lock) on failure
-            if !args.dry_run {
-                console.write_error(
-                    "Installation failed, reverting ./composer.json to its original content.",
-                );
-                if let Err(revert_err) = std::fs::write(&composer_path, &original_composer_json) {
-                    console.write_error(&format!(
-                        "Warning: Failed to revert composer.json: {revert_err}"
-                    ));
-                }
-                if let Some(ref lock_content) = original_composer_lock
-                    && let Err(revert_err) = std::fs::write(&lock_path_for_backup, lock_content)
-                {
-                    console.write_error(&format!(
-                        "Warning: Failed to revert composer.lock: {revert_err}"
-                    ));
-                }
-            }
-            return Err(mozart_core::exit_code::bail(
-                mozart_core::exit_code::DEPENDENCY_RESOLUTION_FAILED,
-                e.to_string(),
-            ));
-        }
-    };
-
-    // Read old lock file (if any) for change reporting and partial update
-    let old_lock = if lock_path.exists() {
-        match lockfile::LockFile::read_from_file(&lock_path) {
-            Ok(l) => Some(l),
-            Err(e) => {
-                console.info(&console_format!("<warning>Could not read existing composer.lock: {}. Treating as a fresh install.</warning>", e));
-                None
-            }
-        }
-    } else {
-        None
-    };
-
-    // Apply --with-dependencies / --with-all-dependencies partial update logic.
-    //
-    // When a lock file exists, pin packages that are NOT in the allow list to their
-    // locked versions to prevent unintended upgrades.
-    let with_deps = args.with_dependencies || args.update_with_dependencies;
-    let with_all_deps = args.with_all_dependencies || args.update_with_all_dependencies;
-
-    if let Some(ref lock) = old_lock {
-        // Build the allow list: newly required package names + (optionally) their deps.
-        let newly_required: Vec<String> =
-            additions.iter().map(|(name, _, _)| name.clone()).collect();
-
-        let repo_requires = super::update::collect_repo_requires(&raw.repositories);
-        let allow_list = if with_all_deps {
-            super::update::expand_with_all_dependencies(newly_required, lock, &repo_requires)
-        } else if with_deps {
-            super::update::expand_with_direct_dependencies(
-                newly_required,
-                lock,
-                &IndexSet::new(),
-                &repo_requires,
-            )
-        } else {
-            // Default for `require`: only the newly added packages are allowed to change.
-            additions.iter().map(|(name, _, _)| name.clone()).collect()
-        };
-
-        resolved = super::update::apply_partial_update(resolved, lock, &allow_list);
+    // Mirrors Composer's `finally` block: cleanup newly-created file on dry-run.
+    if args.dry_run && state.newly_created {
+        let _ = std::fs::remove_file(&state.json_path);
     }
 
-    // Get the composer.json content string for content-hash computation.
-    // For --dry-run, serialize from memory; otherwise re-read the file we just wrote.
-    let composer_json_content = if args.dry_run {
-        package::to_json_pretty(&raw)?
-    } else {
-        std::fs::read_to_string(&composer_path)?
-    };
+    update_result?;
 
-    // Generate new lock file
-    let new_lock = lockfile::generate_lock_file(&lockfile::LockFileGenerationRequest {
-        resolved_packages: resolved,
-        composer_json_content: composer_json_content.clone(),
-        composer_json: raw.clone(),
-        include_dev: dev_mode,
-        repositories: std::sync::Arc::new(
-            mozart_registry::repository::RepositorySet::with_packagist(repo_cache.clone()),
-        ),
-        previous_lock: old_lock.clone(),
-        lock_pinned_names: indexmap::IndexSet::new(),
-    })
+    // --- Post-resolution constraint rewrite for 'guess' placeholders (stub, PR 2) ---
+    update_requirements_after_resolution(
+        &state,
+        &[],
+        require_key,
+        remove_key,
+        sort_packages,
+        args.dry_run,
+        args.fixed,
+        console,
+    )
     .await?;
-
-    // Compute and print change report
-    let changes = super::update::compute_update_changes(old_lock.as_ref(), &new_lock, dev_mode);
-
-    let installs: Vec<_> = changes
-        .iter()
-        .filter(|c| matches!(c.kind, super::update::ChangeKind::Install { .. }))
-        .collect();
-    let updates: Vec<_> = changes
-        .iter()
-        .filter(|c| matches!(c.kind, super::update::ChangeKind::Update { .. }))
-        .collect();
-    let removals: Vec<_> = changes
-        .iter()
-        .filter(|c| matches!(c.kind, super::update::ChangeKind::Remove { .. }))
-        .collect();
-
-    console.info(&format!(
-        "Package operations: {} install{}, {} update{}, {} removal{}",
-        installs.len(),
-        if installs.len() == 1 { "" } else { "s" },
-        updates.len(),
-        if updates.len() == 1 { "" } else { "s" },
-        removals.len(),
-        if removals.len() == 1 { "" } else { "s" },
-    ));
-
-    // Print individual change lines
-    for change in &changes {
-        match &change.kind {
-            super::update::ChangeKind::Remove { old_version } => {
-                if args.dry_run {
-                    console.info(&format!(
-                        "  - Would remove {} ({})",
-                        change.name, old_version
-                    ));
-                } else {
-                    console.info(&format!("  - Removing {} ({})", change.name, old_version));
-                }
-            }
-            super::update::ChangeKind::Install { new_version } => {
-                if args.dry_run {
-                    console.info(&format!(
-                        "  - Would install {} ({})",
-                        change.name, new_version
-                    ));
-                } else {
-                    console.info(&format!("  - Installing {} ({})", change.name, new_version));
-                }
-            }
-            super::update::ChangeKind::Update {
-                old_version,
-                new_version,
-            } => {
-                if args.dry_run {
-                    console.info(&format!(
-                        "  - Would update {} ({} => {})",
-                        change.name, old_version, new_version
-                    ));
-                } else {
-                    console.info(&format!(
-                        "  - Updating {} ({} => {})",
-                        change.name, old_version, new_version
-                    ));
-                }
-            }
-            super::update::ChangeKind::Unchanged => {}
-        }
-    }
-
-    // Write lock file (unless --dry-run)
-    if !args.dry_run {
-        console.info("Writing lock file");
-        new_lock.write_to_file(&lock_path)?;
-    }
-
-    // Install packages (unless --no-install or --dry-run)
-    if !args.no_install && !args.dry_run {
-        // Warn about prefer-source (not yet supported)
-        let prefer_source = args.prefer_source
-            || args
-                .prefer_install
-                .as_deref()
-                .map(|s| s.eq_ignore_ascii_case("source"))
-                .unwrap_or(false);
-        if prefer_source {
-            console.info(&console_format!("<warning>Warning: Source installs are not yet supported. Falling back to dist.</warning>"));
-        }
-
-        // Fix 6: Read autoloader config settings from composer.json as defaults
-        let composer_config = raw.extra_fields.get("config");
-        let config_optimize = composer_config
-            .and_then(|c| c.get("optimize-autoloader"))
-            .and_then(|v| v.as_bool())
-            .unwrap_or(false);
-        let config_classmap = composer_config
-            .and_then(|c| c.get("classmap-authoritative"))
-            .and_then(|v| v.as_bool())
-            .unwrap_or(false);
-        let config_apcu = composer_config
-            .and_then(|c| c.get("apcu-autoloader"))
-            .and_then(|v| v.as_bool())
-            .unwrap_or(false);
-
-        let cache_config = mozart_registry::cache::build_cache_config(cli.no_cache);
-        let files_cache = mozart_registry::cache::Cache::files(&cache_config);
-        let mut executor =
-            mozart_registry::installer_executor::FilesystemExecutor::new(files_cache);
-        super::install::install_from_lock(
-            &new_lock,
-            &working_dir,
-            &vendor_dir,
-            &super::install::InstallConfig {
-                dev_mode,
-                dry_run: false,       // dry_run already handled above
-                no_autoloader: false, // always generate autoloader
-                no_progress: args.no_progress,
-                ignore_platform_reqs: args.ignore_platform_reqs,
-                ignore_platform_req: args.ignore_platform_req.clone(),
-                // Fix 6: merge CLI flags with composer.json config defaults
-                optimize_autoloader: args.optimize_autoloader || config_optimize,
-                classmap_authoritative: args.classmap_authoritative || config_classmap,
-                // Fix 4: pass APCu flags through from CLI args (plus Fix 6: config default)
-                apcu_autoloader: args.apcu_autoloader
-                    || args.apcu_autoloader_prefix.is_some()
-                    || config_apcu,
-                apcu_autoloader_prefix: args.apcu_autoloader_prefix.clone(),
-                download_only: false,
-                prefer_source: args.prefer_source,
-            },
-            console,
-            &mut executor,
-        )
-        .await?;
-    }
 
     Ok(())
 }
@@ -977,14 +1183,11 @@ mod tests {
         raw.require_dev
             .insert("a/dev".to_string(), "^2.0".to_string());
 
-        // Simulate sort_packages logic from execute()
-        // BTreeMap is already sorted, so cloning it preserves order.
         let sorted_require: BTreeMap<String, String> = raw.require.clone();
         raw.require = sorted_require;
         let sorted_dev: BTreeMap<String, String> = raw.require_dev.clone();
         raw.require_dev = sorted_dev;
 
-        // Verify sorted order
         let require_keys: Vec<_> = raw.require.keys().collect();
         assert_eq!(require_keys, vec!["a/package", "m/package", "z/package"]);
 
@@ -1000,7 +1203,6 @@ mod tests {
             make_locked_package("monolog/monolog", "3.8.0"),
         ]);
 
-        // No old lock: all should be Install
         let changes = super::super::update::compute_update_changes(None, &new_lock, false);
         assert_eq!(changes.len(), 2);
         for change in &changes {
@@ -1019,20 +1221,99 @@ mod tests {
     /// Verify the dry-run path does not write lock file.
     #[test]
     fn test_no_update_skips_lock_generation() {
-        // This test exercises the logic: when no_update=true, we return early.
-        // We simulate this by ensuring no lock path is touched when no_update is set.
-        // Since this involves the full execute() which requires network+filesystem,
-        // we verify the logic through the simulated early-return path.
-
         let dir = tempfile::tempdir().unwrap();
         let lock_path = dir.path().join("composer.lock");
-
-        // Lock file should NOT exist after a --no-update run (since we never create it)
         assert!(!lock_path.exists());
+    }
 
-        // No lock was written — the flag triggers an early return
-        // The test verifies no_update path does not write a lock.
-        // The real behavior is tested via integration tests (marked #[ignore]).
+    #[test]
+    fn test_require_dry_run_modifies_nothing() {
+        use tempfile::tempdir;
+
+        let dir = tempdir().unwrap();
+        let composer_path = dir.path().join("composer.json");
+        let lock_path = dir.path().join("composer.lock");
+        let vendor_dir = dir.path().join("vendor");
+
+        let original_content = r#"{"name": "test/project", "require": {}}"#;
+        std::fs::write(&composer_path, original_content).unwrap();
+
+        assert_eq!(
+            std::fs::read_to_string(&composer_path).unwrap(),
+            original_content
+        );
+        assert!(
+            !lock_path.exists(),
+            "Lock file should not be created by dry run"
+        );
+        assert!(
+            !vendor_dir.exists(),
+            "Vendor dir should not be created by dry run"
+        );
+    }
+
+    /// Verify firstRequire is true when require and require-dev are both empty.
+    #[test]
+    fn test_first_require_empty_sections() {
+        use mozart_core::package::RawPackageData;
+
+        let raw = RawPackageData::new("test/project".to_string());
+        let first_require = raw.require.is_empty() && raw.require_dev.is_empty();
+        assert!(
+            first_require,
+            "firstRequire should be true when both sections are empty"
+        );
+    }
+
+    /// Verify firstRequire is false when require is non-empty.
+    #[test]
+    fn test_first_require_non_empty_require() {
+        use mozart_core::package::RawPackageData;
+
+        let mut raw = RawPackageData::new("test/project".to_string());
+        raw.require
+            .insert("some/pkg".to_string(), "^1.0".to_string());
+        let first_require = raw.require.is_empty() && raw.require_dev.is_empty();
+        assert!(
+            !first_require,
+            "firstRequire should be false when require is non-empty"
+        );
+    }
+
+    /// Verify get_packages_by_require_key returns correct section for each package.
+    #[test]
+    fn test_get_packages_by_require_key() {
+        use mozart_core::package::RawPackageData;
+
+        let mut raw = RawPackageData::new("test/project".to_string());
+        raw.require
+            .insert("vendor/a".to_string(), "^1.0".to_string());
+        raw.require_dev
+            .insert("vendor/b".to_string(), "^2.0".to_string());
+
+        let map = get_packages_by_require_key(&raw);
+        assert_eq!(map.get("vendor/a"), Some(&"require".to_string()));
+        assert_eq!(map.get("vendor/b"), Some(&"require-dev".to_string()));
+        assert_eq!(map.get("vendor/c"), None);
+    }
+
+    /// Verify get_inconsistent_require_keys returns packages in the opposite section.
+    #[test]
+    fn test_get_inconsistent_require_keys() {
+        let mut packages_by_key = IndexMap::new();
+        packages_by_key.insert("vendor/a".to_string(), "require".to_string());
+        packages_by_key.insert("vendor/b".to_string(), "require-dev".to_string());
+
+        // Adding vendor/a to require-dev while it's in require → inconsistent
+        let new_pkgs = vec!["vendor/a".to_string(), "vendor/c".to_string()];
+        let inconsistent =
+            get_inconsistent_require_keys(&new_pkgs, "require-dev", &packages_by_key);
+        assert_eq!(inconsistent, vec!["vendor/a"]);
+
+        // Adding vendor/b to require while it's in require-dev → inconsistent
+        let new_pkgs2 = vec!["vendor/b".to_string()];
+        let inconsistent2 = get_inconsistent_require_keys(&new_pkgs2, "require", &packages_by_key);
+        assert_eq!(inconsistent2, vec!["vendor/b"]);
     }
 
     #[tokio::test]
@@ -1182,41 +1463,12 @@ mod tests {
         .await
         .expect("Lock file generation should succeed");
 
-        // Simulate --no-install: write lock but don't install
         new_lock.write_to_file(&lock_path).unwrap();
 
         assert!(lock_path.exists(), "Lock file should be written");
         assert!(
             !vendor_dir.exists(),
             "Vendor dir should NOT exist with --no-install"
-        );
-    }
-
-    #[test]
-    fn test_require_dry_run_modifies_nothing() {
-        use tempfile::tempdir;
-
-        let dir = tempdir().unwrap();
-        let composer_path = dir.path().join("composer.json");
-        let lock_path = dir.path().join("composer.lock");
-        let vendor_dir = dir.path().join("vendor");
-
-        let original_content = r#"{"name": "test/project", "require": {}}"#;
-        std::fs::write(&composer_path, original_content).unwrap();
-
-        // After --dry-run: composer.json, lock, vendor all unchanged
-        // (The execute() function with dry_run=true won't write any files)
-        assert_eq!(
-            std::fs::read_to_string(&composer_path).unwrap(),
-            original_content
-        );
-        assert!(
-            !lock_path.exists(),
-            "Lock file should not be created by dry run"
-        );
-        assert!(
-            !vendor_dir.exists(),
-            "Vendor dir should not be created by dry run"
         );
     }
 }

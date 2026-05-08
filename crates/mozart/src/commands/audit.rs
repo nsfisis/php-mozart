@@ -169,10 +169,9 @@ fn load_locked_packages(working_dir: &Path, no_dev: bool) -> anyhow::Result<Vec<
     let mut all_packages: Vec<&mozart_registry::lockfile::LockedPackage> =
         lock.packages.iter().collect();
 
-    if !no_dev
-        && let Some(ref pkgs_dev) = lock.packages_dev {
-            all_packages.extend(pkgs_dev.iter());
-        }
+    if !no_dev && let Some(ref pkgs_dev) = lock.packages_dev {
+        all_packages.extend(pkgs_dev.iter());
+    }
 
     let packages = all_packages
         .iter()

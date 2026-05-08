@@ -15,3 +15,4 @@ pub mod repository_filter;
 pub mod resolver;
 pub mod vcs_bridge;
 pub mod version;
+pub mod version_selector;
