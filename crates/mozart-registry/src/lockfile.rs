@@ -3,6 +3,7 @@ use crate::repository::RepositorySet;
 use crate::resolver::ResolvedPackage;
 use indexmap::IndexMap;
 use indexmap::IndexSet;
+use mozart_core::installer::HasSuggests;
 use mozart_core::package::{RawPackageData, to_json_pretty};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, VecDeque};
@@ -132,6 +133,19 @@ pub struct LockedPackage {
     /// Catch-all for extra fields we don't explicitly model
     #[serde(flatten)]
     pub extra_fields: BTreeMap<String, serde_json::Value>,
+}
+
+impl HasSuggests for LockedPackage {
+    fn pretty_name(&self) -> &str {
+        &self.name
+    }
+
+    fn suggests(&self) -> Vec<(String, String)> {
+        self.suggest
+            .as_ref()
+            .map(|m| m.iter().map(|(k, v)| (k.clone(), v.clone())).collect())
+            .unwrap_or_default()
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -1,3 +1,4 @@
+use mozart_core::installer::HasSuggests;
 use mozart_core::package::to_json_pretty;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -56,6 +57,24 @@ pub struct InstalledPackageEntry {
 
     #[serde(flatten)]
     pub extra_fields: BTreeMap<String, serde_json::Value>,
+}
+
+impl HasSuggests for InstalledPackageEntry {
+    fn pretty_name(&self) -> &str {
+        &self.name
+    }
+
+    fn suggests(&self) -> Vec<(String, String)> {
+        let Some(val) = self.extra_fields.get("suggest") else {
+            return Vec::new();
+        };
+        let Some(obj) = val.as_object() else {
+            return Vec::new();
+        };
+        obj.iter()
+            .filter_map(|(target, reason)| reason.as_str().map(|r| (target.clone(), r.to_string())))
+            .collect()
+    }
 }
 
 impl Default for InstalledPackages {

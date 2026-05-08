@@ -1168,6 +1168,7 @@ dependencies = [
  "anyhow",
  "colored",
  "dialoguer",
+ "indexmap",
  "mozart-console-macros",
  "mozart-spdx-licenses",
  "regex",

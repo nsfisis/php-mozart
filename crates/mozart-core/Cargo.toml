@@ -9,6 +9,7 @@ mozart-spdx-licenses.workspace = true
 anyhow.workspace = true
 colored.workspace = true
 dialoguer.workspace = true
+indexmap.workspace = true
 regex.workspace = true
 reqwest.workspace = true
 serde.workspace = true

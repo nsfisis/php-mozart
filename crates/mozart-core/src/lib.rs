@@ -1,3 +1,5 @@
+extern crate self as mozart_core;
+
 pub mod composer;
 pub mod config;
 pub mod config_validator;
@@ -5,6 +7,7 @@ pub mod console;
 pub mod exit_code;
 pub mod factory;
 pub mod http;
+pub mod installer;
 pub mod package;
 pub mod package_info;
 pub mod package_sorter;
