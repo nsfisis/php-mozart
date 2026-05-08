@@ -13,6 +13,7 @@ pub mod package_info;
 pub mod package_sorter;
 pub mod platform;
 pub mod repository_utils;
+pub mod script_events;
 pub mod suggest;
 pub mod validation;
 pub mod version_bumper;

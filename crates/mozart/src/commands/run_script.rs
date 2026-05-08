@@ -1,6 +1,7 @@
 use clap::Args;
 use mozart_core::composer::Composer;
-use mozart_core::console_writeln;
+use mozart_core::script_events;
+use mozart_core::{console_writeln, console_writeln_error};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -14,9 +15,9 @@ pub struct RunScriptArgs {
     #[arg(trailing_var_arg = true)]
     pub args: Vec<String>,
 
-    /// Set the script timeout in seconds
+    /// Sets script timeout in seconds, or 0 for never.
     #[arg(long)]
-    pub timeout: Option<u64>,
+    pub timeout: Option<String>,
 
     /// Sets the dev mode
     #[arg(long)]
@@ -31,47 +32,6 @@ pub struct RunScriptArgs {
     pub list: bool,
 }
 
-const ALLOWED_SCRIPT_EVENTS: &[&str] = &[
-    "pre-install-cmd",
-    "post-install-cmd",
-    "pre-update-cmd",
-    "post-update-cmd",
-    "pre-status-cmd",
-    "post-status-cmd",
-    "post-root-package-install",
-    "post-create-project-cmd",
-    "pre-archive-cmd",
-    "post-archive-cmd",
-    "pre-autoload-dump",
-    "post-autoload-dump",
-];
-
-const ALL_SCRIPT_EVENTS: &[&str] = &[
-    "pre-install-cmd",
-    "post-install-cmd",
-    "pre-update-cmd",
-    "post-update-cmd",
-    "pre-status-cmd",
-    "post-status-cmd",
-    "post-root-package-install",
-    "post-create-project-cmd",
-    "pre-archive-cmd",
-    "post-archive-cmd",
-    "pre-autoload-dump",
-    "post-autoload-dump",
-    "pre-dependencies-solving",
-    "post-dependencies-solving",
-    "pre-package-install",
-    "post-package-install",
-    "pre-package-update",
-    "post-package-update",
-    "pre-package-uninstall",
-    "post-package-uninstall",
-    "pre-operations-exec",
-    "pre-pool-create",
-    "pre-file-download",
-];
-
 pub async fn execute(
     args: &RunScriptArgs,
     cli: &super::Cli,
@@ -79,39 +39,45 @@ pub async fn execute(
 ) -> anyhow::Result<()> {
     let working_dir = cli.working_dir()?;
 
-    // RunScriptCommand uses requireComposer in Composer; composer.json must exist.
-    let composer = Composer::require(&working_dir)?;
-
-    let (scripts, descriptions) = load_scripts(&working_dir)?;
-
     if args.list {
+        Composer::require(&working_dir)?;
+        let (scripts, descriptions) = load_scripts(&working_dir)?;
         return list_scripts(&scripts, &descriptions, console);
     }
 
-    if cli.no_scripts {
-        return Ok(());
-    }
-
-    let script_name = match &args.script {
+    let script = match &args.script {
         Some(name) => name.clone(),
-        None => {
-            anyhow::bail!("Missing required argument: script");
-        }
+        None => anyhow::bail!("Missing required argument \"script\""),
     };
 
-    if !ALLOWED_SCRIPT_EVENTS.contains(&script_name.as_str())
-        && ALL_SCRIPT_EVENTS.contains(&script_name.as_str())
+    if !script_events::USER_RUNNABLE.contains(&script.as_str())
+        && script_events::ALL.contains(&script.as_str())
     {
-        anyhow::bail!("Script \"{}\" cannot be run with this command", script_name);
+        anyhow::bail!("Script \"{}\" cannot be run with this command", script);
     }
 
-    if !scripts.contains_key(&script_name) {
-        anyhow::bail!("Script \"{}\" is not defined in this package", script_name);
+    let composer = Composer::require(&working_dir)?;
+    let dev_mode = args.dev || !args.no_dev;
+
+    let (scripts, _descriptions) = load_scripts(&working_dir)?;
+    if !scripts.contains_key(&script) {
+        anyhow::bail!("Script \"{}\" is not defined in this package", script);
     }
 
-    let timeout = match args.timeout {
-        Some(0) => None,
-        Some(secs) => Some(Duration::from_secs(secs)),
+    let timeout = match &args.timeout {
+        Some(s) => {
+            if s.is_empty() || !s.chars().all(|c| c.is_ascii_digit()) {
+                anyhow::bail!(
+                    "Timeout value must be numeric and positive if defined, or 0 for forever"
+                );
+            }
+            let secs: u64 = s.parse()?;
+            if secs == 0 {
+                None
+            } else {
+                Some(Duration::from_secs(secs))
+            }
+        }
         None => {
             let t = composer.config().process_timeout;
             if t != 0 {
@@ -122,8 +88,6 @@ pub async fn execute(
         }
     };
 
-    let dev_mode = !args.no_dev;
-
     // SAFETY: single-threaded at this point; no concurrent env access
     unsafe {
         std::env::set_var("COMPOSER_DEV_MODE", if dev_mode { "1" } else { "0" });
@@ -133,7 +97,7 @@ pub async fn execute(
 
     let mut event_stack: Vec<String> = Vec::new();
     let exit_code = run_script(
-        &script_name,
+        &script,
         &args.args,
         &scripts,
         &working_dir,
@@ -167,7 +131,7 @@ fn load_scripts(
     let mut scripts: BTreeMap<String, Vec<String>> = BTreeMap::new();
     if let Some(scripts_obj) = parsed.get("scripts").and_then(|v| v.as_object()) {
         for (name, value) in scripts_obj {
-            let entries = match value {
+            let listeners = match value {
                 serde_json::Value::String(s) => vec![s.clone()],
                 serde_json::Value::Array(arr) => arr
                     .iter()
@@ -176,7 +140,7 @@ fn load_scripts(
                     .collect(),
                 _ => vec![],
             };
-            scripts.insert(name.clone(), entries);
+            scripts.insert(name.clone(), listeners);
         }
     }
 
@@ -200,18 +164,28 @@ fn list_scripts(
     descriptions: &BTreeMap<String, String>,
     console: &mozart_core::console::Console,
 ) -> anyhow::Result<()> {
-    console_writeln!(console, "scripts:");
+    if scripts.is_empty() {
+        return Ok(());
+    }
+
+    console_writeln_error!(
+        console,
+        &mozart_core::console_format!("<info>scripts:</info>"),
+    );
+
+    let name_width = scripts.keys().map(|n| n.len() + 2).max().unwrap_or(0);
     for name in scripts.keys() {
         let desc = descriptions.get(name).map(|s| s.as_str()).unwrap_or("");
-        console_writeln!(console, &format!("  {}  {}", name, desc));
+        let padded = format!("  {:<w$}", name, w = name_width - 2);
+        console_writeln!(console, &format!("{}  {}", padded, desc));
     }
     Ok(())
 }
 
 #[allow(clippy::too_many_arguments)]
 fn run_script(
-    script_name: &str,
-    additional_args: &[String],
+    script: &str,
+    args: &[String],
     scripts: &BTreeMap<String, Vec<String>>,
     working_dir: &Path,
     bin_dir: &Path,
@@ -221,24 +195,24 @@ fn run_script(
     verbose: u8,
     console: &mozart_core::console::Console,
 ) -> anyhow::Result<i32> {
-    if event_stack.contains(&script_name.to_string()) {
+    if event_stack.contains(&script.to_string()) {
         anyhow::bail!(
             "Circular script reference detected: {} -> {}",
             event_stack.join(" -> "),
-            script_name
+            script
         );
     }
 
-    event_stack.push(script_name.to_string());
+    event_stack.push(script.to_string());
 
-    let entries = scripts.get(script_name).cloned().unwrap_or_default();
+    let listeners = scripts.get(script).cloned().unwrap_or_default();
 
     let mut max_exit_code = 0;
 
-    for entry in &entries {
+    for listener in &listeners {
         let code = run_script_entry(
-            entry,
-            additional_args,
+            listener,
+            args,
             scripts,
             working_dir,
             bin_dir,
@@ -255,7 +229,7 @@ fn run_script(
             event_stack.pop();
             anyhow::bail!(
                 "Script \"{}\" returned a non-zero exit code: {}",
-                script_name,
+                script,
                 code
             );
         }
@@ -268,7 +242,7 @@ fn run_script(
 #[allow(clippy::too_many_arguments)]
 fn run_script_entry(
     entry: &str,
-    additional_args: &[String],
+    args: &[String],
     scripts: &BTreeMap<String, Vec<String>>,
     working_dir: &Path,
     bin_dir: &Path,
@@ -279,11 +253,7 @@ fn run_script_entry(
     console: &mozart_core::console::Console,
 ) -> anyhow::Result<i32> {
     let suppress_additional_args = entry.contains("@no_additional_args");
-    let effective_args: &[String] = if suppress_additional_args {
-        &[]
-    } else {
-        additional_args
-    };
+    let effective_args: &[String] = if suppress_additional_args { &[] } else { args };
 
     let entry = entry.replace("@no_additional_args", "").trim().to_string();
 
@@ -555,10 +525,10 @@ mod tests {
         .unwrap();
 
         let (scripts, _) = load_scripts(dir.path()).unwrap();
-        let entries = scripts.get("test").unwrap();
-        assert_eq!(entries.len(), 2);
-        assert_eq!(entries[0], "echo a");
-        assert_eq!(entries[1], "echo b");
+        let listeners = scripts.get("test").unwrap();
+        assert_eq!(listeners.len(), 2);
+        assert_eq!(listeners[0], "echo a");
+        assert_eq!(listeners[1], "echo b");
     }
 
     #[test]
@@ -571,9 +541,9 @@ mod tests {
         .unwrap();
 
         let (scripts, _) = load_scripts(dir.path()).unwrap();
-        let entries = scripts.get("test").unwrap();
-        assert_eq!(entries.len(), 1);
-        assert_eq!(entries[0], "echo a");
+        let listeners = scripts.get("test").unwrap();
+        assert_eq!(listeners.len(), 1);
+        assert_eq!(listeners[0], "echo a");
     }
 
     #[test]
@@ -612,10 +582,10 @@ mod tests {
         .unwrap();
 
         let (scripts, _) = load_scripts(dir.path()).unwrap();
-        let test_entries = scripts.get("test").unwrap();
-        assert_eq!(test_entries.len(), 1);
-        let post_entries = scripts.get("post-install-cmd").unwrap();
-        assert_eq!(post_entries.len(), 2);
+        let test_listeners = scripts.get("test").unwrap();
+        assert_eq!(test_listeners.len(), 1);
+        let post_listeners = scripts.get("post-install-cmd").unwrap();
+        assert_eq!(post_listeners.len(), 2);
     }
 
     #[test]
@@ -627,7 +597,14 @@ mod tests {
         let mut descriptions = BTreeMap::new();
         descriptions.insert("test".to_string(), "Run tests".to_string());
 
-        // Just verify the function doesn't error
+        let result = list_scripts(&scripts, &descriptions, &test_console());
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_list_scripts_empty_silent() {
+        let scripts: BTreeMap<String, Vec<String>> = BTreeMap::new();
+        let descriptions: BTreeMap<String, String> = BTreeMap::new();
         let result = list_scripts(&scripts, &descriptions, &test_console());
         assert!(result.is_ok());
     }
@@ -820,7 +797,6 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let bin_dir = dir.path().join("vendor/bin");
 
-        // Use @no_additional_args -- extra args should not be forwarded
         let mut scripts = BTreeMap::new();
         scripts.insert(
             "test".to_string(),
@@ -922,7 +898,6 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let bin_dir = dir.path().join("vendor/bin");
 
-        // Run with dev mode true
         let code = run_shell_command(
             "test \"$COMPOSER_DEV_MODE\" = \"1\"",
             dir.path(),
@@ -933,7 +908,6 @@ mod tests {
         .unwrap();
         assert_eq!(code, 0);
 
-        // Run with dev mode false
         let code = run_shell_command(
             "test \"$COMPOSER_DEV_MODE\" = \"0\"",
             dir.path(),
@@ -964,15 +938,15 @@ mod tests {
 
     #[test]
     fn test_internal_event_rejected() {
-        // Internal events are in ALL_SCRIPT_EVENTS but not in ALLOWED_SCRIPT_EVENTS
-        assert!(ALL_SCRIPT_EVENTS.contains(&"pre-package-install"));
-        assert!(ALL_SCRIPT_EVENTS.contains(&"post-package-install"));
-        assert!(ALL_SCRIPT_EVENTS.contains(&"pre-dependencies-solving"));
-        assert!(!ALLOWED_SCRIPT_EVENTS.contains(&"pre-package-install"));
-        assert!(!ALLOWED_SCRIPT_EVENTS.contains(&"post-package-install"));
-        assert!(!ALLOWED_SCRIPT_EVENTS.contains(&"pre-dependencies-solving"));
-        // User-runnable events are in both
-        assert!(ALLOWED_SCRIPT_EVENTS.contains(&"pre-install-cmd"));
-        assert!(ALL_SCRIPT_EVENTS.contains(&"pre-install-cmd"));
+        // Internal events are in script_events::ALL but not in USER_RUNNABLE.
+        assert!(script_events::ALL.contains(&"pre-package-install"));
+        assert!(script_events::ALL.contains(&"post-package-install"));
+        assert!(script_events::ALL.contains(&"pre-operations-exec"));
+        assert!(!script_events::USER_RUNNABLE.contains(&"pre-package-install"));
+        assert!(!script_events::USER_RUNNABLE.contains(&"post-package-install"));
+        assert!(!script_events::USER_RUNNABLE.contains(&"pre-operations-exec"));
+        // User-runnable events are in both.
+        assert!(script_events::USER_RUNNABLE.contains(&"pre-install-cmd"));
+        assert!(script_events::ALL.contains(&"pre-install-cmd"));
     }
 }
