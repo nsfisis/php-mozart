@@ -3,7 +3,7 @@ use mozart_autoload::AutoloadGeneratorExt;
 use mozart_core::composer::{AutoloadDumpOptions, Composer, PlatformRequirementFilter};
 use mozart_core::{console_format, console_writeln};
 
-#[derive(Args)]
+#[derive(Args, Default)]
 pub struct DumpAutoloadArgs {
     /// Optimizes PSR-0 and PSR-4 packages to be loaded with classmaps
     #[arg(short, long)]

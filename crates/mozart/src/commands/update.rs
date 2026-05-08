@@ -7,7 +7,7 @@ use mozart_registry::resolver::{
     self, LockedPackageInfo, PlatformConfig, ResolveRequest, ResolvedPackage,
 };
 
-#[derive(Args)]
+#[derive(Args, Default)]
 pub struct UpdateArgs {
     /// Package(s) to update
     pub packages: Vec<String>,

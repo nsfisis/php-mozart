@@ -12,6 +12,7 @@ use std::collections::BTreeMap;
 use std::io::{BufRead, Write};
 use std::path::Path;
 use std::process::Command;
+use std::sync::OnceLock;
 
 #[derive(Args)]
 pub struct InitArgs {
@@ -111,13 +112,25 @@ pub async fn execute(
 
     package::write_to_file(&composer, &composer_file).context("Failed to write composer.json")?;
 
-    // Create autoload directory if specified
+    let has_dependencies = !composer.require.is_empty() || !composer.require_dev.is_empty();
+
+    // --autoload — create the source folder. When the project has no
+    // dependencies, Composer also runs `dump-autoload` so the autoloader is
+    // immediately usable; failures are downgraded to a warning to mirror
+    // Composer's try/catch around `runDumpAutoloadCommand`.
     if let Some(ref autoload) = composer.autoload {
         for path in autoload.psr4.values() {
             let dir = working_dir.join(path);
             if !dir.exists() {
                 std::fs::create_dir_all(&dir)
                     .with_context(|| format!("Failed to create directory {}", dir.display()))?;
+            }
+        }
+
+        if !has_dependencies {
+            let dump_args = super::dump_autoload::DumpAutoloadArgs::default();
+            if let Err(e) = super::dump_autoload::execute(&dump_args, cli, console).await {
+                console.error(&format!("Could not run dump-autoload. ({e})"));
             }
         }
     }
@@ -131,6 +144,22 @@ pub async fn execute(
             ))
         {
             add_vendor_ignore(&gitignore_path)?;
+        }
+    }
+
+    // Run `composer update` after init when the new project has dependencies
+    // and the user confirms — Composer's L190-193.
+    if console.interactive
+        && has_dependencies
+        && console.confirm(&console_format!(
+            "Would you like to install dependencies now [<comment>yes</comment>]?"
+        ))
+    {
+        let update_args = super::update::UpdateArgs::default();
+        if let Err(e) = super::update::execute(&update_args, cli, console).await {
+            console.error(&format!(
+                "Could not update dependencies. Run `composer update` to see more information. ({e})"
+            ));
         }
     }
 
@@ -278,24 +307,32 @@ async fn build_interactive(
         }
     };
 
-    // Minimum Stability
+    // Minimum Stability — Composer's askAndValidate loops until valid (the
+    // validator throws InvalidArgumentException, Symfony's QuestionHelper
+    // catches it and re-prompts when maxAttempts is null).
     let default_stability = args.stability.clone().unwrap_or_default();
-    let stability_input = console.ask(
-        &console_format!(
-            "Minimum Stability [<comment>{}</comment>]",
-            &default_stability
-        ),
-        &default_stability,
-    );
+    let stability_input = console
+        .ask_validated(
+            &console_format!(
+                "Minimum Stability [<comment>{}</comment>]",
+                &default_stability
+            ),
+            &default_stability,
+            |val| {
+                if val.is_empty() || validation::validate_stability(val) {
+                    Ok(())
+                } else {
+                    Err(format!(
+                        "Invalid minimum stability \"{val}\". Must be empty or one of: dev, alpha, beta, rc, stable"
+                    ))
+                }
+            },
+        )
+        .map_err(|e| anyhow::anyhow!(e))?;
     let minimum_stability = if stability_input.is_empty() {
         None
-    } else if validation::validate_stability(&stability_input) {
-        Some(stability_input.to_lowercase())
     } else {
-        console.error(&format!(
-            "Invalid minimum stability \"{stability_input}\". Using empty."
-        ));
-        None
+        Some(stability_input.to_lowercase())
     };
 
     // Package Type
@@ -313,28 +350,27 @@ async fn build_interactive(
         Some(type_input)
     };
 
-    // License
+    // License — Composer prompts once, then validates outside the prompt and
+    // throws on invalid (no retry loop). See InitCommand::interact L364-372.
     let default_license = args
         .license
         .clone()
         .or_else(|| std::env::var("COMPOSER_DEFAULT_LICENSE").ok())
         .unwrap_or_default();
-    let license = loop {
-        let license_input = console.ask(
-            &console_format!("License [<comment>{}</comment>]", &default_license),
-            &default_license,
+    let license_input = console.ask(
+        &console_format!("License [<comment>{}</comment>]", &default_license),
+        &default_license,
+    );
+    let license = if license_input.is_empty() {
+        None
+    } else if validation::validate_license(&license_input)
+        || license_input.eq_ignore_ascii_case("proprietary")
+    {
+        Some(license_input)
+    } else {
+        bail!(
+            "Invalid license provided: {license_input}. Only SPDX license identifiers (https://spdx.org/licenses/) or \"proprietary\" are accepted."
         );
-        if license_input.is_empty() {
-            break None;
-        } else if validation::validate_license(&license_input)
-            || license_input.eq_ignore_ascii_case("proprietary")
-        {
-            break Some(license_input);
-        } else {
-            console.error(&format!(
-                "Invalid license provided: {license_input}. Only SPDX license identifiers (https://spdx.org/licenses/) or \"proprietary\" are accepted."
-            ));
-        }
     };
 
     // Dependencies
@@ -347,17 +383,25 @@ async fn build_interactive(
     console.info(&console_format!("<info>Define your dependencies.</info>"));
     console.info("");
 
+    // Composer (InitCommand::interact L389-403): if --require was passed,
+    // skip the confirmation; otherwise ask before entering the discovery loop.
     let mut require = parse_requirements(&args.require)?;
-    let interactive_require = interactive_search_packages(
-        "require",
-        &require,
-        preferred_stability,
-        repo_cache,
-        console,
-    )
-    .await?;
-    for (name, constraint) in interactive_require {
-        require.insert(name, constraint);
+    if !require.is_empty()
+        || console.confirm(&console_format!(
+            "Would you like to define your dependencies (require) interactively [<comment>yes</comment>]?"
+        ))
+    {
+        let interactive_require = interactive_search_packages(
+            "require",
+            &require,
+            preferred_stability,
+            repo_cache,
+            console,
+        )
+        .await?;
+        for (name, constraint) in interactive_require {
+            require.insert(name, constraint);
+        }
     }
 
     // Dev Dependencies
@@ -368,42 +412,55 @@ async fn build_interactive(
     console.info("");
 
     let mut require_dev = parse_requirements(&args.require_dev)?;
-    let all_required: BTreeMap<String, String> = require
-        .iter()
-        .chain(require_dev.iter())
-        .map(|(k, v)| (k.clone(), v.clone()))
-        .collect();
-    let interactive_dev = interactive_search_packages(
-        "require-dev",
-        &all_required,
-        preferred_stability,
-        repo_cache,
-        console,
-    )
-    .await?;
-    for (name, constraint) in interactive_dev {
-        require_dev.insert(name, constraint);
+    if !require_dev.is_empty()
+        || console.confirm(&console_format!(
+            "Would you like to define your dev dependencies (require-dev) interactively [<comment>yes</comment>]?"
+        ))
+    {
+        let all_required: BTreeMap<String, String> = require
+            .iter()
+            .chain(require_dev.iter())
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect();
+        let interactive_dev = interactive_search_packages(
+            "require-dev",
+            &all_required,
+            preferred_stability,
+            repo_cache,
+            console,
+        )
+        .await?;
+        for (name, constraint) in interactive_dev {
+            require_dev.insert(name, constraint);
+        }
     }
 
-    // PSR-4 Autoload
+    // PSR-4 Autoload — Composer validates with regex `^[^/][A-Za-z0-9\-_/]+/$`
+    // via askAndValidate (loops until valid). `n`/`no` skips.
     let default_autoload = args.autoload.clone().unwrap_or_else(|| "src/".to_string());
     let namespace = validation::namespace_from_package_name(&name).unwrap_or_default();
-    let autoload_input = console.ask(
-        &console_format!(
-            "Add PSR-4 autoload mapping? Maps namespace \"{namespace}\" to the entered relative path. [<comment>{}</comment>, n to skip]",
+    let autoload_input = console
+        .ask_validated(
+            &console_format!(
+                "Add PSR-4 autoload mapping? Maps namespace \"{namespace}\" to the entered relative path. [<comment>{}</comment>, n to skip]",
+                &default_autoload,
+            ),
             &default_autoload,
-        ),
-        &default_autoload,
-    );
+            |val| {
+                if val == "n" || val == "no" || validation::validate_autoload_path(val) {
+                    Ok(())
+                } else {
+                    Err(format!(
+                        "The src folder name \"{val}\" is invalid. Please add a relative path with tailing forward slash. [A-Za-z0-9_-/]+/"
+                    ))
+                }
+            },
+        )
+        .map_err(|e| anyhow::anyhow!(e))?;
     let autoload = if autoload_input == "n" || autoload_input == "no" {
         None
     } else {
-        let path = if autoload_input.is_empty() {
-            default_autoload
-        } else {
-            autoload_input
-        };
-        build_autoload(&path, &name)
+        build_autoload(&autoload_input, &name)
     };
 
     let repositories = parse_repositories(&args.repository)?;
@@ -651,21 +708,33 @@ fn get_default_author() -> Option<String> {
     }
 }
 
-fn get_git_config_value(key: &str) -> Option<String> {
-    Command::new("git")
-        .args(["config", "--get", key])
-        .output()
-        .ok()
-        .and_then(|output| {
-            if output.status.success() {
-                String::from_utf8(output.stdout)
-                    .ok()
-                    .map(|s| s.trim().to_string())
-                    .filter(|s| !s.is_empty())
-            } else {
-                None
+/// `git config -l` parsed into `key=value` pairs and cached for the life of
+/// the process. Mirrors Composer's `InitCommand::getGitConfig`, which runs
+/// the command once and memoises the parsed map.
+fn get_git_config() -> &'static BTreeMap<String, String> {
+    static GIT_CONFIG: OnceLock<BTreeMap<String, String>> = OnceLock::new();
+    GIT_CONFIG.get_or_init(|| {
+        let mut map = BTreeMap::new();
+        let Ok(output) = Command::new("git").args(["config", "-l"]).output() else {
+            return map;
+        };
+        if !output.status.success() {
+            return map;
+        }
+        let Ok(text) = String::from_utf8(output.stdout) else {
+            return map;
+        };
+        for line in text.lines() {
+            if let Some((key, value)) = line.split_once('=') {
+                map.insert(key.to_string(), value.to_string());
             }
-        })
+        }
+        map
+    })
+}
+
+fn get_git_config_value(key: &str) -> Option<String> {
+    get_git_config().get(key).cloned().filter(|v| !v.is_empty())
 }
 
 fn parse_requirements(reqs: &[String]) -> anyhow::Result<BTreeMap<String, String>> {
@@ -685,39 +754,58 @@ fn build_autoload(path: &str, package_name: &str) -> Option<RawAutoload> {
     Some(RawAutoload { psr4 })
 }
 
+/// Parse `--repository` arguments. Mirrors
+/// `Composer\Repository\RepositoryFactory::configFromString`:
+///
+/// * `http(s)://...` → `{type: composer, url: $repo}`.
+/// * `{...}` → JSON object parsed verbatim into a repository config.
+/// * `*.json` file path → composer-type repo file (deferred; not yet supported).
+/// * anything else → reject with an error matching Composer's wording.
 fn parse_repositories(repos: &[String]) -> anyhow::Result<Vec<RawRepository>> {
     let mut result = Vec::new();
     for repo in repos {
-        if repo.starts_with('{') {
-            // JSON format
-            let parsed: serde_json::Value =
-                serde_json::from_str(repo).context("Invalid repository JSON")?;
-            let repo_type = parsed["type"].as_str().unwrap_or("vcs").to_string();
-            let url = parsed["url"]
-                .as_str()
-                .ok_or_else(|| anyhow::anyhow!("Repository JSON must contain a 'url' field"))?
-                .to_string();
-            result.push(RawRepository {
-                repo_type,
-                url: Some(url),
-                package: None,
-                only: None,
-                exclude: None,
-                canonical: None,
-                security_advisories: None,
-            });
+        let parsed: serde_json::Value = if repo.starts_with("http") {
+            serde_json::json!({ "type": "composer", "url": repo })
+        } else if repo.starts_with('{') {
+            serde_json::from_str(repo).context("Invalid repository JSON")?
         } else {
-            // Plain URL
-            result.push(RawRepository {
-                repo_type: "vcs".to_string(),
-                url: Some(repo.clone()),
-                package: None,
-                only: None,
-                exclude: None,
-                canonical: None,
-                security_advisories: None,
-            });
-        }
+            bail!(
+                "Invalid repository url ({repo}) given. Has to be a .json file, an http url or a JSON object."
+            );
+        };
+
+        let repo_type = parsed
+            .get("type")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| anyhow::anyhow!("Repository JSON must contain a 'type' field"))?
+            .to_string();
+        let url = parsed
+            .get("url")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+        let package = parsed.get("package").cloned();
+        let only = parsed.get("only").and_then(|v| v.as_array()).map(|a| {
+            a.iter()
+                .filter_map(|x| x.as_str().map(String::from))
+                .collect()
+        });
+        let exclude = parsed.get("exclude").and_then(|v| v.as_array()).map(|a| {
+            a.iter()
+                .filter_map(|x| x.as_str().map(String::from))
+                .collect()
+        });
+        let canonical = parsed.get("canonical").and_then(|v| v.as_bool());
+        let security_advisories = parsed.get("security-advisories").cloned();
+
+        result.push(RawRepository {
+            repo_type,
+            url,
+            package,
+            only,
+            exclude,
+            canonical,
+            security_advisories,
+        });
     }
     Ok(result)
 }
@@ -745,4 +833,53 @@ fn add_vendor_ignore(gitignore_path: &Path) -> anyhow::Result<()> {
     contents.push_str("/vendor/\n");
     std::fs::write(gitignore_path, contents)?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_repositories_http_url_yields_composer_type() {
+        let repos = parse_repositories(&["https://repo.example.com".to_string()]).unwrap();
+        assert_eq!(repos.len(), 1);
+        assert_eq!(repos[0].repo_type, "composer");
+        assert_eq!(repos[0].url.as_deref(), Some("https://repo.example.com"));
+    }
+
+    #[test]
+    fn parse_repositories_http_scheme_also_matches() {
+        let repos = parse_repositories(&["http://example.com".to_string()]).unwrap();
+        assert_eq!(repos[0].repo_type, "composer");
+    }
+
+    #[test]
+    fn parse_repositories_json_object_preserved() {
+        let repos = parse_repositories(&[
+            r#"{"type":"vcs","url":"https://github.com/acme/repo"}"#.to_string()
+        ])
+        .unwrap();
+        assert_eq!(repos[0].repo_type, "vcs");
+        assert_eq!(
+            repos[0].url.as_deref(),
+            Some("https://github.com/acme/repo")
+        );
+    }
+
+    #[test]
+    fn parse_repositories_unknown_form_is_error() {
+        let err = parse_repositories(&["not-a-url-or-json".to_string()]).unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("Has to be a .json file, an http url or a JSON object"),
+            "{err}",
+        );
+    }
+
+    #[test]
+    fn parse_repositories_json_without_type_is_error() {
+        let err =
+            parse_repositories(&[r#"{"url":"https://example.com"}"#.to_string()]).unwrap_err();
+        assert!(err.to_string().contains("'type'"), "{err}");
+    }
 }

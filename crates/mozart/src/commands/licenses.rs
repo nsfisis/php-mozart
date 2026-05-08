@@ -1,40 +1,76 @@
 use clap::Args;
-use indexmap::IndexSet;
+use indexmap::IndexMap;
+use mozart_core::composer::Composer;
 use mozart_core::console::Console;
+use mozart_core::console::hyperlink;
 use mozart_core::console_format;
 use mozart_core::console_writeln;
+use mozart_core::package_info;
+use mozart_core::package_info::PackageUrls;
+use mozart_core::package_sorter::sort_packages_alphabetically;
+use mozart_core::repository_utils;
+use mozart_core::repository_utils::Required;
 use serde::Serialize;
-use std::path::Path;
+use std::collections::BTreeMap;
 
 #[derive(Args)]
 pub struct LicensesArgs {
-    /// Output format (text, json, summary)
+    /// Format of the output: text, json or summary
     #[arg(short, long)]
     pub format: Option<String>,
 
-    /// Disables listing of require-dev packages
+    /// Disables search in require-dev packages.
     #[arg(long)]
     pub no_dev: bool,
 
-    /// List packages from the lock file
+    /// Shows licenses from the lock file instead of what's currently installed.
     #[arg(long)]
     pub locked: bool,
 }
 
+/// Unified view over an installed or locked package, carrying the
+/// fields the `licenses` command renders. Mirrors the slice of
+/// `CompletePackageInterface` consumed by `LicensesCommand` — name,
+/// version, license, requires, and the URL bits used to build a
+/// `<href>` link in the text output.
 struct LicenseEntry {
+    pretty_name: String,
     name: String,
     version: String,
     licenses: Vec<String>,
+    requires: BTreeMap<String, String>,
+    support_source: Option<String>,
+    source_url: Option<String>,
+    homepage: Option<String>,
+}
+
+impl Required for LicenseEntry {
+    fn package_name(&self) -> &str {
+        &self.name
+    }
+    fn requires(&self) -> &BTreeMap<String, String> {
+        &self.requires
+    }
+}
+
+impl PackageUrls for LicenseEntry {
+    fn support_source(&self) -> Option<&str> {
+        self.support_source.as_deref()
+    }
+    fn source_url(&self) -> Option<&str> {
+        self.source_url.as_deref()
+    }
+    fn homepage(&self) -> Option<&str> {
+        self.homepage.as_deref()
+    }
 }
 
 pub async fn execute(
     args: &LicensesArgs,
     cli: &super::Cli,
-    console: &mozart_core::console::Console,
+    console: &Console,
 ) -> anyhow::Result<()> {
     let working_dir = cli.working_dir()?;
-
-    // Validate format
     let format = args.format.as_deref().unwrap_or("text");
     if format != "text" && format != "json" && format != "summary" {
         anyhow::bail!(
@@ -43,150 +79,190 @@ pub async fn execute(
         );
     }
 
-    // Load root package
-    let composer_json_path = working_dir.join("composer.json");
-    if !composer_json_path.exists() {
-        anyhow::bail!("No composer.json found in {}", working_dir.display());
-    }
-    let root = mozart_core::package::read_from_file(&composer_json_path)?;
+    let composer = Composer::require(&working_dir)?;
 
-    let root_name = root.name.clone();
+    // TODO(plugins): dispatch CommandEvent for `licenses`.
+
+    let root = composer.package();
+
+    // RawPackageData stores `license` as `Option<String>` only, so we
+    // re-parse the composer.json to also accept the array form Composer
+    // recognises via `RootPackageLoader`'s `(array) $config['license']`
+    // coercion. Track widening `RawPackageData::license` separately.
+    let root_licenses = read_root_licenses(&working_dir.join("composer.json"))?;
+    let root_pretty_name = root.name.clone();
     let root_version = root
-        .extra_fields
-        .get("version")
-        .and_then(|v| v.as_str())
-        .unwrap_or("No version set")
-        .to_string();
+        .version
+        .clone()
+        .unwrap_or_else(|| "No version set".to_string());
 
-    // Parse root license as Vec<String>: composer.json allows either a string or an array.
-    let root_licenses: Vec<String> = {
-        // Read the raw JSON value so we can handle both string and array forms.
-        let raw_json = std::fs::read_to_string(&composer_json_path)?;
-        let raw_value: serde_json::Value = serde_json::from_str(&raw_json)?;
-        match raw_value.get("license") {
-            Some(serde_json::Value::String(s)) => vec![s.clone()],
-            Some(serde_json::Value::Array(arr)) => arr
-                .iter()
-                .filter_map(|v| v.as_str())
-                .map(|s| s.to_string())
-                .collect(),
-            _ => vec![],
-        }
-    };
-
-    // Load dependency entries
-    let entries = if args.locked {
-        load_locked_licenses(&working_dir, args.no_dev)?
+    let mut entries = if args.locked {
+        load_locked_entries(&working_dir, args.no_dev)?
     } else {
-        load_installed_licenses(&working_dir, args.no_dev)?
+        load_installed_entries(&working_dir, &root.require, args.no_dev)?
     };
 
-    // Render output
+    sort_packages_alphabetically(&mut entries, |e| e.name.as_str());
+
     match format {
-        "json" => render_json(&root_name, &root_version, &root_licenses, &entries, console)?,
+        "json" => render_json(
+            &root_pretty_name,
+            &root_version,
+            &root_licenses,
+            &entries,
+            console,
+        )?,
         "summary" => render_summary(&entries, console),
-        _ => render_text(&root_name, &root_version, &root_licenses, &entries, console),
+        _ => render_text(
+            &root_pretty_name,
+            &root_version,
+            &root_licenses,
+            &entries,
+            console,
+        ),
     }
 
     Ok(())
 }
 
-fn load_installed_licenses(working_dir: &Path, no_dev: bool) -> anyhow::Result<Vec<LicenseEntry>> {
+fn read_root_licenses(composer_json_path: &std::path::Path) -> anyhow::Result<Vec<String>> {
+    let raw = std::fs::read_to_string(composer_json_path)?;
+    let value: serde_json::Value = serde_json::from_str(&raw)?;
+    Ok(match value.get("license") {
+        Some(serde_json::Value::String(s)) => vec![s.clone()],
+        Some(serde_json::Value::Array(arr)) => arr
+            .iter()
+            .filter_map(|v| v.as_str())
+            .map(String::from)
+            .collect(),
+        _ => Vec::new(),
+    })
+}
+
+fn load_installed_entries(
+    working_dir: &std::path::Path,
+    root_requires: &BTreeMap<String, String>,
+    no_dev: bool,
+) -> anyhow::Result<Vec<LicenseEntry>> {
     let vendor_dir = working_dir.join("vendor");
     let installed = mozart_registry::installed::InstalledPackages::read(&vendor_dir)?;
 
-    let dev_names: IndexSet<String> = installed
-        .dev_package_names
-        .iter()
-        .map(|n| n.to_lowercase())
-        .collect();
+    let entries: Vec<LicenseEntry> = installed.packages.iter().map(installed_to_entry).collect();
 
-    let mut entries: Vec<LicenseEntry> = installed
-        .packages
-        .iter()
-        .filter(|p| {
-            if no_dev && dev_names.contains(&p.name.to_lowercase()) {
-                return false;
+    if no_dev {
+        // Mirrors Composer's `--no-dev` branch in `LicensesCommand`:
+        // `RepositoryUtils::filterRequiredPackages($repo->getPackages(), $root)`
+        // — root's `require` only, transitively. Dev-only requires of
+        // the root, and packages reachable only through them, drop out.
+        let kept = repository_utils::filter_required_packages(&entries, root_requires, None);
+        let mut out = Vec::with_capacity(kept.len());
+        // We can't `entries[idx].clone()` without Clone; rebuild from
+        // owned `entries` by index in two passes.
+        let mut by_idx: Vec<Option<LicenseEntry>> = entries.into_iter().map(Some).collect();
+        for idx in kept {
+            if let Some(e) = by_idx[idx].take() {
+                out.push(e);
             }
-            true
-        })
-        .map(|p| LicenseEntry {
-            name: p.name.clone(),
-            version: p.version.clone(),
-            licenses: extract_installed_licenses(p),
-        })
-        .collect();
-
-    entries.sort_by_key(|a| a.name.to_lowercase());
-    Ok(entries)
+        }
+        Ok(out)
+    } else {
+        Ok(entries)
+    }
 }
 
-fn load_locked_licenses(working_dir: &Path, no_dev: bool) -> anyhow::Result<Vec<LicenseEntry>> {
+fn load_locked_entries(
+    working_dir: &std::path::Path,
+    no_dev: bool,
+) -> anyhow::Result<Vec<LicenseEntry>> {
     let lock_path = working_dir.join("composer.lock");
     if !lock_path.exists() {
         anyhow::bail!(
             "Valid composer.json and composer.lock files are required to run this command with --locked"
         );
     }
-
     let lock = mozart_registry::lockfile::LockFile::read_from_file(&lock_path)?;
 
-    let mut all_packages: Vec<&mozart_registry::lockfile::LockedPackage> =
-        lock.packages.iter().collect();
-
+    // Mirrors `Locker::getLockedRepository(!$noDev)`: the prod-only call
+    // returns just `packages`, the dev-included call returns the union.
+    let mut entries: Vec<LicenseEntry> = lock.packages.iter().map(locked_to_entry).collect();
     if !no_dev && let Some(ref pkgs_dev) = lock.packages_dev {
-        all_packages.extend(pkgs_dev.iter());
+        entries.extend(pkgs_dev.iter().map(locked_to_entry));
     }
-
-    let mut entries: Vec<LicenseEntry> = all_packages
-        .iter()
-        .map(|p| LicenseEntry {
-            name: p.name.clone(),
-            version: p.version.clone(),
-            licenses: p.license.clone().unwrap_or_default(),
-        })
-        .collect();
-
-    entries.sort_by_key(|a| a.name.to_lowercase());
     Ok(entries)
 }
 
-fn extract_installed_licenses(
-    pkg: &mozart_registry::installed::InstalledPackageEntry,
-) -> Vec<String> {
-    pkg.extra_fields
+fn installed_to_entry(pkg: &mozart_registry::installed::InstalledPackageEntry) -> LicenseEntry {
+    let licenses = pkg
+        .extra_fields
         .get("license")
         .and_then(|v| v.as_array())
         .map(|arr| {
             arr.iter()
                 .filter_map(|v| v.as_str())
-                .map(|s| s.to_string())
+                .map(String::from)
                 .collect()
         })
-        .unwrap_or_default()
+        .unwrap_or_default();
+
+    let requires = pkg
+        .extra_fields
+        .get("require")
+        .and_then(|v| v.as_object())
+        .map(|obj| {
+            obj.iter()
+                .filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_string())))
+                .collect()
+        })
+        .unwrap_or_default();
+
+    let support_source = pkg
+        .support
+        .as_ref()
+        .and_then(|s| s.get("source"))
+        .and_then(|s| s.as_str())
+        .map(String::from);
+
+    let source_url = pkg
+        .source
+        .as_ref()
+        .and_then(|s| s.get("url"))
+        .and_then(|s| s.as_str())
+        .map(String::from);
+
+    LicenseEntry {
+        pretty_name: pkg.name.clone(),
+        name: pkg.name.to_lowercase(),
+        version: pkg.version.clone(),
+        licenses,
+        requires,
+        support_source,
+        source_url,
+        homepage: pkg.homepage.clone(),
+    }
 }
 
-fn count_licenses(entries: &[LicenseEntry]) -> Vec<(String, usize)> {
-    let mut counts: std::collections::BTreeMap<String, usize> = std::collections::BTreeMap::new();
+fn locked_to_entry(pkg: &mozart_registry::lockfile::LockedPackage) -> LicenseEntry {
+    let support_source = pkg
+        .support
+        .as_ref()
+        .and_then(|s| s.get("source"))
+        .and_then(|s| s.as_str())
+        .map(String::from);
 
-    for entry in entries {
-        if entry.licenses.is_empty() {
-            *counts.entry("none".to_string()).or_insert(0) += 1;
-        } else {
-            for lic in &entry.licenses {
-                *counts.entry(lic.clone()).or_insert(0) += 1;
-            }
-        }
+    LicenseEntry {
+        pretty_name: pkg.name.clone(),
+        name: pkg.name.to_lowercase(),
+        version: pkg.version.clone(),
+        licenses: pkg.license.clone().unwrap_or_default(),
+        requires: pkg.require.clone(),
+        support_source,
+        source_url: pkg.source.as_ref().map(|s| s.url.clone()),
+        homepage: pkg.homepage.clone(),
     }
-
-    let mut result: Vec<(String, usize)> = counts.into_iter().collect();
-    // Sort by count descending, then by name ascending for stability
-    result.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
-    result
 }
 
 fn render_text(
-    root_name: &str,
+    root_pretty_name: &str,
     root_version: &str,
     root_licenses: &[String],
     entries: &[LicenseEntry],
@@ -199,7 +275,7 @@ fn render_text(
     };
     console_writeln!(
         console,
-        &console_format!("Name: <comment>{root_name}</comment>"),
+        &console_format!("Name: <comment>{root_pretty_name}</comment>"),
     );
     console_writeln!(
         console,
@@ -218,7 +294,7 @@ fn render_text(
 
     let name_width = entries
         .iter()
-        .map(|e| e.name.len())
+        .map(|e| e.pretty_name.len())
         .max()
         .unwrap_or(0)
         .max("Name".len());
@@ -246,14 +322,18 @@ fn render_text(
         } else {
             entry.licenses.join(", ")
         };
+        let padded_name = format!("{:<nw$}", entry.pretty_name, nw = name_width);
+        let name_cell = match package_info::view_source_or_homepage_url(entry) {
+            Some(url) => hyperlink(&url, &padded_name, console.decorated),
+            None => padded_name,
+        };
         console_writeln!(
             console,
             &format!(
-                "{:<nw$}  {:<vw$}  {}",
-                entry.name,
+                "{}  {:<vw$}  {}",
+                name_cell,
                 entry.version,
                 license_str,
-                nw = name_width,
                 vw = version_width
             ),
         );
@@ -261,7 +341,7 @@ fn render_text(
 }
 
 fn render_json(
-    root_name: &str,
+    root_pretty_name: &str,
     root_version: &str,
     root_licenses: &[String],
     entries: &[LicenseEntry],
@@ -280,7 +360,7 @@ fn render_json(
             .map(|l| serde_json::Value::String(l.clone()))
             .collect();
         dependencies.insert(
-            entry.name.clone(),
+            entry.pretty_name.clone(),
             serde_json::json!({
                 "version": entry.version,
                 "license": license_arr,
@@ -289,7 +369,7 @@ fn render_json(
     }
 
     let output = serde_json::json!({
-        "name": root_name,
+        "name": root_pretty_name,
         "version": root_version,
         "license": root_license_arr,
         "dependencies": dependencies,
@@ -304,7 +384,7 @@ fn render_json(
 }
 
 fn render_summary(entries: &[LicenseEntry], console: &Console) {
-    let counts = count_licenses(entries);
+    let counts = tally_licenses(entries);
 
     if counts.is_empty() {
         console_writeln!(console, "No dependencies found.");
@@ -356,132 +436,133 @@ fn render_summary(entries: &[LicenseEntry], console: &Console) {
     console_writeln!(console, &format!(" {} {}", border_col1, border_col2),);
 }
 
+/// Mirror of `LicensesCommand::execute`'s `summary` accumulator.
+///
+/// PHP iterates the (already alphabetically sorted) packages, increments
+/// `$usedLicenses[$name]++`, then `arsort()` — descending by count,
+/// ties resolved in the array's existing order (which is first-seen).
+/// `IndexMap` preserves first-seen order; sorting it with a stable
+/// `sort_by` reproduces PHP's tie-break exactly.
+fn tally_licenses(entries: &[LicenseEntry]) -> Vec<(String, usize)> {
+    let mut counts: IndexMap<String, usize> = IndexMap::new();
+    for entry in entries {
+        if entry.licenses.is_empty() {
+            *counts.entry("none".to_string()).or_insert(0) += 1;
+        } else {
+            for lic in &entry.licenses {
+                *counts.entry(lic.clone()).or_insert(0) += 1;
+            }
+        }
+    }
+    let mut result: Vec<(String, usize)> = counts.into_iter().collect();
+    result.sort_by_key(|(_, count)| std::cmp::Reverse(*count));
+    result
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::collections::BTreeMap;
 
-    fn make_installed_pkg(
-        name: &str,
-        version: &str,
-        extra: BTreeMap<String, serde_json::Value>,
-    ) -> mozart_registry::installed::InstalledPackageEntry {
-        mozart_registry::installed::InstalledPackageEntry {
-            name: name.to_string(),
-            version: version.to_string(),
-            version_normalized: None,
-            source: None,
-            dist: None,
-            package_type: None,
-            install_path: None,
-            autoload: None,
-            aliases: vec![],
+    fn entry(name: &str, licenses: &[&str]) -> LicenseEntry {
+        LicenseEntry {
+            pretty_name: name.to_string(),
+            name: name.to_lowercase(),
+            version: "1.0.0".to_string(),
+            licenses: licenses.iter().map(|s| s.to_string()).collect(),
+            requires: BTreeMap::new(),
+            support_source: None,
+            source_url: None,
             homepage: None,
-            support: None,
-            extra_fields: extra,
         }
     }
 
     #[test]
-    fn test_extract_installed_licenses_present() {
-        let mut extra = BTreeMap::new();
-        extra.insert("license".to_string(), serde_json::json!(["MIT"]));
-        let pkg = make_installed_pkg("vendor/pkg", "1.0.0", extra);
-        assert_eq!(extract_installed_licenses(&pkg), vec!["MIT"]);
-    }
-
-    #[test]
-    fn test_extract_installed_licenses_multiple() {
-        let mut extra = BTreeMap::new();
-        extra.insert(
-            "license".to_string(),
-            serde_json::json!(["MIT", "Apache-2.0"]),
-        );
-        let pkg = make_installed_pkg("vendor/pkg", "1.0.0", extra);
-        let result = extract_installed_licenses(&pkg);
-        assert_eq!(result, vec!["MIT", "Apache-2.0"]);
-    }
-
-    #[test]
-    fn test_extract_installed_licenses_absent() {
-        let pkg = make_installed_pkg("vendor/pkg", "1.0.0", BTreeMap::new());
-        assert!(extract_installed_licenses(&pkg).is_empty());
-    }
-
-    #[test]
-    fn test_extract_installed_licenses_none_value() {
-        let mut extra = BTreeMap::new();
-        extra.insert("license".to_string(), serde_json::Value::Null);
-        let pkg = make_installed_pkg("vendor/pkg", "1.0.0", extra);
-        assert!(extract_installed_licenses(&pkg).is_empty());
-    }
-
-    #[test]
-    fn test_count_licenses() {
+    fn tally_licenses_orders_by_count_then_first_seen() {
+        // First MIT entry comes before Apache-2.0; tie-break must keep
+        // MIT first when their counts collide.
         let entries = vec![
-            LicenseEntry {
-                name: "a/a".to_string(),
-                version: "1.0.0".to_string(),
-                licenses: vec!["MIT".to_string()],
-            },
-            LicenseEntry {
-                name: "b/b".to_string(),
-                version: "1.0.0".to_string(),
-                licenses: vec!["MIT".to_string()],
-            },
-            LicenseEntry {
-                name: "c/c".to_string(),
-                version: "1.0.0".to_string(),
-                licenses: vec!["Apache-2.0".to_string()],
-            },
+            entry("a/a", &["MIT"]),
+            entry("b/b", &["Apache-2.0"]),
+            entry("c/c", &["BSD-3-Clause"]),
         ];
+        let counts = tally_licenses(&entries);
+        // All three at count 1 — input order preserved.
+        assert_eq!(
+            counts,
+            vec![
+                ("MIT".to_string(), 1),
+                ("Apache-2.0".to_string(), 1),
+                ("BSD-3-Clause".to_string(), 1),
+            ]
+        );
+    }
 
-        let counts = count_licenses(&entries);
-        assert_eq!(counts.len(), 2);
-        // MIT should come first (count=2)
+    #[test]
+    fn tally_licenses_count_descending() {
+        let entries = vec![
+            entry("a/a", &["Apache-2.0"]),
+            entry("b/b", &["MIT"]),
+            entry("c/c", &["MIT"]),
+        ];
+        let counts = tally_licenses(&entries);
         assert_eq!(counts[0], ("MIT".to_string(), 2));
         assert_eq!(counts[1], ("Apache-2.0".to_string(), 1));
     }
 
     #[test]
-    fn test_count_licenses_empty() {
-        let entries: Vec<LicenseEntry> = vec![];
-        let counts = count_licenses(&entries);
-        assert!(counts.is_empty());
+    fn tally_licenses_empty() {
+        assert!(tally_licenses(&[]).is_empty());
     }
 
     #[test]
-    fn test_count_licenses_no_license() {
-        let entries = vec![LicenseEntry {
-            name: "a/a".to_string(),
-            version: "1.0.0".to_string(),
-            licenses: vec![],
-        }];
-        let counts = count_licenses(&entries);
-        assert_eq!(counts.len(), 1);
-        assert_eq!(counts[0], ("none".to_string(), 1));
+    fn tally_licenses_no_license_counts_as_none() {
+        let entries = vec![entry("a/a", &[])];
+        let counts = tally_licenses(&entries);
+        assert_eq!(counts, vec![("none".to_string(), 1)]);
     }
 
     #[test]
-    fn test_load_installed_licenses_basic() {
-        use tempfile::tempdir;
+    fn read_root_licenses_string_form() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("composer.json");
+        std::fs::write(&path, r#"{"name": "test/p", "license": "MIT"}"#).unwrap();
+        assert_eq!(read_root_licenses(&path).unwrap(), vec!["MIT"]);
+    }
 
-        let dir = tempdir().unwrap();
-        let working_dir = dir.path();
-        let vendor_dir = working_dir.join("vendor");
-
-        // Write composer.json (required by execute, but not needed for load_installed_licenses)
+    #[test]
+    fn read_root_licenses_array_form() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("composer.json");
         std::fs::write(
-            working_dir.join("composer.json"),
-            r#"{"name": "test/project"}"#,
+            &path,
+            r#"{"name": "test/p", "license": ["MIT", "Apache-2.0"]}"#,
         )
         .unwrap();
+        assert_eq!(
+            read_root_licenses(&path).unwrap(),
+            vec!["MIT", "Apache-2.0"]
+        );
+    }
 
-        // Build installed packages
-        let mut installed = mozart_registry::installed::InstalledPackages::new();
+    #[test]
+    fn read_root_licenses_absent() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("composer.json");
+        std::fs::write(&path, r#"{"name": "test/p"}"#).unwrap();
+        assert!(read_root_licenses(&path).unwrap().is_empty());
+    }
+
+    #[test]
+    fn installed_to_entry_extracts_require_and_license() {
+        use mozart_registry::installed::InstalledPackageEntry;
         let mut extra = BTreeMap::new();
         extra.insert("license".to_string(), serde_json::json!(["MIT"]));
-        installed.upsert(mozart_registry::installed::InstalledPackageEntry {
+        extra.insert(
+            "require".to_string(),
+            serde_json::json!({"psr/log": "^1.0"}),
+        );
+        let pkg = InstalledPackageEntry {
             name: "monolog/monolog".to_string(),
             version: "3.0.0".to_string(),
             version_normalized: None,
@@ -494,39 +575,61 @@ mod tests {
             homepage: None,
             support: None,
             extra_fields: extra,
-        });
-
-        installed.write(&vendor_dir).unwrap();
-
-        let entries = load_installed_licenses(working_dir, false).unwrap();
-        assert_eq!(entries.len(), 1);
-        assert_eq!(entries[0].name, "monolog/monolog");
-        assert_eq!(entries[0].version, "3.0.0");
-        assert_eq!(entries[0].licenses, vec!["MIT"]);
+        };
+        let e = installed_to_entry(&pkg);
+        assert_eq!(e.licenses, vec!["MIT"]);
+        assert_eq!(e.requires.get("psr/log").map(String::as_str), Some("^1.0"));
     }
 
     #[test]
-    fn test_load_installed_licenses_no_dev() {
-        use tempfile::tempdir;
+    fn installed_to_entry_pulls_support_source_and_source_url() {
+        use mozart_registry::installed::InstalledPackageEntry;
+        let pkg = InstalledPackageEntry {
+            name: "vendor/pkg".to_string(),
+            version: "1.0.0".to_string(),
+            version_normalized: None,
+            source: Some(serde_json::json!({"type": "git", "url": "https://example.com/repo.git"})),
+            dist: None,
+            package_type: None,
+            install_path: None,
+            autoload: None,
+            aliases: vec![],
+            homepage: Some("https://example.com/".to_string()),
+            support: Some(serde_json::json!({"source": "https://github.com/v/p"})),
+            extra_fields: BTreeMap::new(),
+        };
+        let e = installed_to_entry(&pkg);
+        assert_eq!(e.support_source.as_deref(), Some("https://github.com/v/p"));
+        assert_eq!(
+            e.source_url.as_deref(),
+            Some("https://example.com/repo.git")
+        );
+        assert_eq!(e.homepage.as_deref(), Some("https://example.com/"));
+        // PackageInfo helpers should pick support source first.
+        assert_eq!(
+            package_info::view_source_or_homepage_url(&e).as_deref(),
+            Some("https://github.com/v/p"),
+        );
+    }
 
-        let dir = tempdir().unwrap();
+    #[test]
+    fn no_dev_filters_to_root_require_closure() {
+        // Set up: root requires a/a only. b/b is in installed but not
+        // reachable; should be dropped under --no-dev.
+        let dir = tempfile::tempdir().unwrap();
         let working_dir = dir.path();
         let vendor_dir = working_dir.join("vendor");
 
         std::fs::write(
             working_dir.join("composer.json"),
-            r#"{"name": "test/project"}"#,
+            r#"{"name": "test/project", "require": {"a/a": "*"}}"#,
         )
         .unwrap();
 
         let mut installed = mozart_registry::installed::InstalledPackages::new();
-
-        // Production package
-        let mut extra_prod = BTreeMap::new();
-        extra_prod.insert("license".to_string(), serde_json::json!(["MIT"]));
         installed.upsert(mozart_registry::installed::InstalledPackageEntry {
-            name: "monolog/monolog".to_string(),
-            version: "3.0.0".to_string(),
+            name: "a/a".to_string(),
+            version: "1.0.0".to_string(),
             version_normalized: None,
             source: None,
             dist: None,
@@ -536,15 +639,11 @@ mod tests {
             aliases: vec![],
             homepage: None,
             support: None,
-            extra_fields: extra_prod,
+            extra_fields: BTreeMap::new(),
         });
-
-        // Dev package
-        let mut extra_dev = BTreeMap::new();
-        extra_dev.insert("license".to_string(), serde_json::json!(["BSD-3-Clause"]));
         installed.upsert(mozart_registry::installed::InstalledPackageEntry {
-            name: "phpunit/phpunit".to_string(),
-            version: "10.0.0".to_string(),
+            name: "b/b".to_string(),
+            version: "1.0.0".to_string(),
             version_normalized: None,
             source: None,
             dist: None,
@@ -554,41 +653,35 @@ mod tests {
             aliases: vec![],
             homepage: None,
             support: None,
-            extra_fields: extra_dev,
+            extra_fields: BTreeMap::new(),
         });
-        installed
-            .dev_package_names
-            .push("phpunit/phpunit".to_string());
-
         installed.write(&vendor_dir).unwrap();
 
-        // With --no-dev: only production package
-        let entries = load_installed_licenses(working_dir, true).unwrap();
-        assert_eq!(entries.len(), 1);
-        assert_eq!(entries[0].name, "monolog/monolog");
+        let mut root_req = BTreeMap::new();
+        root_req.insert("a/a".to_string(), "*".to_string());
 
-        // Without --no-dev: both packages
-        let entries_all = load_installed_licenses(working_dir, false).unwrap();
-        assert_eq!(entries_all.len(), 2);
+        let kept = load_installed_entries(working_dir, &root_req, true).unwrap();
+        let names: Vec<&str> = kept.iter().map(|e| e.name.as_str()).collect();
+        assert_eq!(names, vec!["a/a"]);
+
+        // Without --no-dev: both packages are listed.
+        let all = load_installed_entries(working_dir, &root_req, false).unwrap();
+        assert_eq!(all.len(), 2);
     }
 
     #[test]
-    fn test_load_locked_licenses_basic() {
+    fn locked_no_dev_drops_packages_dev() {
         use mozart_registry::lockfile::{LockFile, LockedPackage};
-        use tempfile::tempdir;
-
-        let dir = tempdir().unwrap();
+        let dir = tempfile::tempdir().unwrap();
         let working_dir = dir.path();
-
         std::fs::write(
             working_dir.join("composer.json"),
             r#"{"name": "test/project"}"#,
         )
         .unwrap();
-
         let lock = LockFile {
             readme: LockFile::default_readme(),
-            content_hash: "abc123".to_string(),
+            content_hash: "abc".to_string(),
             packages: vec![LockedPackage {
                 name: "psr/log".to_string(),
                 version: "3.0.0".to_string(),
@@ -648,87 +741,14 @@ mod tests {
             platform_dev: serde_json::json!({}),
             plugin_api_version: Some("2.6.0".to_string()),
         };
-
         lock.write_to_file(&working_dir.join("composer.lock"))
             .unwrap();
 
-        // With --no-dev: only production packages
-        let entries = load_locked_licenses(working_dir, true).unwrap();
-        assert_eq!(entries.len(), 1);
-        assert_eq!(entries[0].name, "psr/log");
-        assert_eq!(entries[0].licenses, vec!["MIT"]);
+        let prod = load_locked_entries(working_dir, true).unwrap();
+        assert_eq!(prod.len(), 1);
+        assert_eq!(prod[0].name, "psr/log");
 
-        // Without --no-dev: both packages
-        let entries_all = load_locked_licenses(working_dir, false).unwrap();
-        assert_eq!(entries_all.len(), 2);
-    }
-
-    #[test]
-    fn test_root_license_array_in_json() {
-        use tempfile::tempdir;
-
-        let dir = tempdir().unwrap();
-        let working_dir = dir.path();
-        let composer_json_path = working_dir.join("composer.json");
-
-        // Write a composer.json where "license" is an array
-        std::fs::write(
-            &composer_json_path,
-            r#"{"name": "test/project", "license": ["MIT", "Apache-2.0"]}"#,
-        )
-        .unwrap();
-
-        let raw_json = std::fs::read_to_string(&composer_json_path).unwrap();
-        let raw_value: serde_json::Value = serde_json::from_str(&raw_json).unwrap();
-
-        let root_licenses: Vec<String> = match raw_value.get("license") {
-            Some(serde_json::Value::String(s)) => vec![s.clone()],
-            Some(serde_json::Value::Array(arr)) => arr
-                .iter()
-                .filter_map(|v| v.as_str())
-                .map(|s| s.to_string())
-                .collect(),
-            _ => vec![],
-        };
-
-        assert_eq!(root_licenses, vec!["MIT", "Apache-2.0"]);
-    }
-
-    #[test]
-    fn test_render_json_root_license_is_array() {
-        let entries: Vec<LicenseEntry> = vec![];
-
-        // Single license string becomes a one-element array in JSON output
-        let root_licenses = ["MIT".to_string()];
-        let root_license_arr: Vec<serde_json::Value> = root_licenses
-            .iter()
-            .map(|s| serde_json::Value::String(s.clone()))
-            .collect();
-        let output = serde_json::json!({
-            "name": "test/project",
-            "version": "1.0.0",
-            "license": root_license_arr,
-            "dependencies": {},
-        });
-        assert!(output["license"].is_array());
-        assert_eq!(output["license"][0], "MIT");
-
-        // Multiple licenses are also emitted as an array
-        let root_licenses_multi = ["MIT".to_string(), "Apache-2.0".to_string()];
-        let root_license_arr_multi: Vec<serde_json::Value> = root_licenses_multi
-            .iter()
-            .map(|s| serde_json::Value::String(s.clone()))
-            .collect();
-        let output_multi = serde_json::json!({
-            "name": "test/project",
-            "version": "1.0.0",
-            "license": root_license_arr_multi,
-            "dependencies": serde_json::json!({}),
-        });
-        assert!(output_multi["license"].is_array());
-        assert_eq!(output_multi["license"].as_array().unwrap().len(), 2);
-
-        // Ensure the helper produces consistent results for empty entries
-        let _ = entries;
+        let all = load_locked_entries(working_dir, false).unwrap();
+        assert_eq!(all.len(), 2);
     }
 }
