@@ -32,14 +32,18 @@ impl AuditFormat {
             Self::Summary => FORMAT_SUMMARY,
         }
     }
+}
 
-    pub fn from_str(s: &str) -> Option<Self> {
+impl std::str::FromStr for AuditFormat {
+    type Err = ();
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
-            FORMAT_TABLE => Some(Self::Table),
-            FORMAT_PLAIN => Some(Self::Plain),
-            FORMAT_JSON => Some(Self::Json),
-            FORMAT_SUMMARY => Some(Self::Summary),
-            _ => None,
+            FORMAT_TABLE => Ok(Self::Table),
+            FORMAT_PLAIN => Ok(Self::Plain),
+            FORMAT_JSON => Ok(Self::Json),
+            FORMAT_SUMMARY => Ok(Self::Summary),
+            _ => Err(()),
         }
     }
 }
@@ -61,13 +65,17 @@ impl AbandonedHandling {
             Self::Fail => ABANDONED_FAIL,
         }
     }
+}
 
-    pub fn from_str(s: &str) -> Option<Self> {
+impl std::str::FromStr for AbandonedHandling {
+    type Err = ();
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
-            ABANDONED_IGNORE => Some(Self::Ignore),
-            ABANDONED_REPORT => Some(Self::Report),
-            ABANDONED_FAIL => Some(Self::Fail),
-            _ => None,
+            ABANDONED_IGNORE => Ok(Self::Ignore),
+            ABANDONED_REPORT => Ok(Self::Report),
+            ABANDONED_FAIL => Ok(Self::Fail),
+            _ => Err(()),
         }
     }
 }
@@ -182,7 +190,7 @@ impl AuditConfig {
         let audit_abandoned = audit_val
             .get("abandoned")
             .and_then(|v| v.as_str())
-            .and_then(AbandonedHandling::from_str)
+            .and_then(|s| s.parse::<AbandonedHandling>().ok())
             .unwrap_or_default();
 
         let block_insecure = audit_val

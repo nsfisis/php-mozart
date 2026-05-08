@@ -4,7 +4,7 @@ use clap::Args;
 use indexmap::IndexMap;
 use mozart_core::advisory::{AbandonedHandling, AuditConfig, AuditFormat};
 use mozart_core::composer::Composer;
-use mozart_registry::advisory::{Auditor, PackageInfo};
+use mozart_registry::advisory::{AuditOptions, Auditor, PackageInfo};
 use mozart_registry::cache::{Cache, build_cache_config};
 use mozart_registry::repository::RepositorySet;
 
@@ -50,9 +50,9 @@ pub async fn execute(
 
     // Resolve format: CLI arg > config default (table)
     let format = match args.format.as_deref() {
-        Some(f) => match AuditFormat::from_str(f) {
-            Some(fmt) => fmt,
-            None => anyhow::bail!(
+        Some(f) => match f.parse::<AuditFormat>() {
+            Ok(fmt) => fmt,
+            Err(_) => anyhow::bail!(
                 "Invalid format \"{f}\". Supported formats: table, plain, json, summary"
             ),
         },
@@ -61,9 +61,9 @@ pub async fn execute(
 
     // Resolve --abandoned: CLI > config
     let abandoned = match args.abandoned.as_deref() {
-        Some(s) => match AbandonedHandling::from_str(s) {
-            Some(h) => h,
-            None => anyhow::bail!(
+        Some(s) => match s.parse::<AbandonedHandling>() {
+            Ok(h) => h,
+            Err(_) => anyhow::bail!(
                 "Invalid abandoned value \"{s}\". Supported values: ignore, report, fail"
             ),
         },
@@ -98,13 +98,15 @@ pub async fn execute(
             console,
             &repo_set,
             &packages,
-            format,
-            false,
-            &audit_config.ignore_list_for_audit,
-            abandoned,
-            &ignore_severities,
-            ignore_unreachable,
-            &audit_config.ignore_abandoned_for_audit,
+            &AuditOptions {
+                format,
+                warning_only: false,
+                ignore_list: &audit_config.ignore_list_for_audit,
+                abandoned,
+                ignored_severities: &ignore_severities,
+                ignore_unreachable,
+                ignore_abandoned: &audit_config.ignore_abandoned_for_audit,
+            },
         )
         .await?;
 
@@ -460,14 +462,14 @@ mod tests {
     #[test]
     fn test_invalid_format() {
         let format = "xml";
-        assert!(AuditFormat::from_str(format).is_none());
+        assert!(format.parse::<AuditFormat>().is_err());
     }
 
     #[test]
     fn test_valid_formats() {
         for fmt in &["table", "plain", "json", "summary"] {
             assert!(
-                AuditFormat::from_str(fmt).is_some(),
+                fmt.parse::<AuditFormat>().is_ok(),
                 "format {fmt} should be valid"
             );
         }
@@ -475,14 +477,14 @@ mod tests {
 
     #[test]
     fn test_invalid_abandoned_value() {
-        assert!(AbandonedHandling::from_str("maybe").is_none());
+        assert!("maybe".parse::<AbandonedHandling>().is_err());
     }
 
     #[test]
     fn test_valid_abandoned_values() {
         for value in &["ignore", "report", "fail"] {
             assert!(
-                AbandonedHandling::from_str(value).is_some(),
+                value.parse::<AbandonedHandling>().is_ok(),
                 "abandoned value {value} should be valid"
             );
         }

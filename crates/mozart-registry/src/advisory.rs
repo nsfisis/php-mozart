@@ -66,6 +66,17 @@ pub struct AbandonedPackage {
     pub replacement: Option<String>,
 }
 
+/// Options passed to `Auditor::audit()`.
+pub struct AuditOptions<'a> {
+    pub format: AuditFormat,
+    pub warning_only: bool,
+    pub ignore_list: &'a IndexMap<String, Option<String>>,
+    pub abandoned: AbandonedHandling,
+    pub ignored_severities: &'a IndexMap<String, Option<String>>,
+    pub ignore_unreachable: bool,
+    pub ignore_abandoned: &'a IndexMap<String, Option<String>>,
+}
+
 /// Mirrors `Composer\Advisory\Auditor`.
 pub struct Auditor;
 
@@ -82,34 +93,33 @@ impl Auditor {
         console: &Console,
         repo_set: &RepositorySet,
         packages: &[PackageInfo],
-        format: AuditFormat,
-        warning_only: bool,
-        ignore_list: &IndexMap<String, Option<String>>,
-        abandoned: AbandonedHandling,
-        ignored_severities: &IndexMap<String, Option<String>>,
-        ignore_unreachable: bool,
-        ignore_abandoned: &IndexMap<String, Option<String>>,
+        options: &AuditOptions<'_>,
     ) -> anyhow::Result<u8> {
+        let format = options.format;
         let (all_advisories, unreachable_repos) = repo_set
             .get_matching_security_advisories(
                 packages,
                 format == AuditFormat::Summary,
-                ignore_unreachable,
+                options.ignore_unreachable,
             )
             .await?;
 
         let ProcessedAdvisories {
             advisories,
             ignored_advisories,
-        } = self.process_advisories(all_advisories, ignore_list, ignored_severities);
+        } = self.process_advisories(
+            all_advisories,
+            options.ignore_list,
+            options.ignored_severities,
+        );
 
-        let abandoned_packages = if abandoned == AbandonedHandling::Ignore {
+        let abandoned_packages = if options.abandoned == AbandonedHandling::Ignore {
             vec![]
         } else {
-            self.filter_abandoned_packages(packages, ignore_abandoned)
+            self.filter_abandoned_packages(packages, options.ignore_abandoned)
         };
 
-        let abandoned_count = if abandoned == AbandonedHandling::Fail {
+        let abandoned_count = if options.abandoned == AbandonedHandling::Fail {
             abandoned_packages.len()
         } else {
             0
@@ -159,7 +169,7 @@ impl Auditor {
                 let msg = format!(
                     "Found {active_total} security vulnerability advisor{plurality} affecting {active_pkg_count} package{pkg_plurality}{punctuation}"
                 );
-                if warning_only {
+                if options.warning_only {
                     console_writeln_error!(console, &console_format!("<warning>{msg}</warning>"));
                 } else {
                     console_writeln_error!(console, &console_format!("<error>{msg}</error>"));

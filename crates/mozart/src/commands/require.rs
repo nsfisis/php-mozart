@@ -158,12 +158,13 @@ fn revert_composer_file(state: &CommandState, console: &mozart_core::console::Co
         }
         // Also remove any lock file that was created during this (failed) run
         if state.lock_path.exists()
-            && let Err(e) = std::fs::remove_file(&state.lock_path) {
-                console.write_error(&format!(
-                    "Warning: Failed to delete {}: {e}",
-                    state.lock_path.display()
-                ));
-            }
+            && let Err(e) = std::fs::remove_file(&state.lock_path)
+        {
+            console.write_error(&format!(
+                "Warning: Failed to delete {}: {e}",
+                state.lock_path.display()
+            ));
+        }
     } else {
         let msg = if state.lock_backup.is_some() {
             format!(" and {} to their", state.lock_path.display())
@@ -181,12 +182,13 @@ fn revert_composer_file(state: &CommandState, console: &mozart_core::console::Co
             ));
         }
         if let Some(ref lock_content) = state.lock_backup
-            && let Err(e) = std::fs::write(&state.lock_path, lock_content) {
-                console.write_error(&format!(
-                    "Warning: Failed to revert {}: {e}",
-                    state.lock_path.display()
-                ));
-            }
+            && let Err(e) = std::fs::write(&state.lock_path, lock_content)
+        {
+            console.write_error(&format!(
+                "Warning: Failed to revert {}: {e}",
+                state.lock_path.display()
+            ));
+        }
     }
 }
 
@@ -408,26 +410,27 @@ async fn do_update(
     //   if (!$this->firstRequire && $composer->getLocker()->isLocked())
     //       $install->setUpdateAllowList(array_keys($requirements));
     if !state.first_require
-        && let Some(ref lock) = old_lock {
-            let with_deps = args.with_dependencies || args.update_with_dependencies;
-            let with_all_deps = args.with_all_dependencies || args.update_with_all_dependencies;
-            let newly_required: Vec<String> =
-                additions.iter().map(|(name, _, _)| name.clone()).collect();
-            let repo_requires = super::update::collect_repo_requires(&raw.repositories);
-            let allow_list = if with_all_deps {
-                super::update::expand_with_all_dependencies(newly_required, lock, &repo_requires)
-            } else if with_deps {
-                super::update::expand_with_direct_dependencies(
-                    newly_required,
-                    lock,
-                    &IndexSet::new(),
-                    &repo_requires,
-                )
-            } else {
-                additions.iter().map(|(name, _, _)| name.clone()).collect()
-            };
-            resolved = super::update::apply_partial_update(resolved, lock, &allow_list);
-        }
+        && let Some(ref lock) = old_lock
+    {
+        let with_deps = args.with_dependencies || args.update_with_dependencies;
+        let with_all_deps = args.with_all_dependencies || args.update_with_all_dependencies;
+        let newly_required: Vec<String> =
+            additions.iter().map(|(name, _, _)| name.clone()).collect();
+        let repo_requires = super::update::collect_repo_requires(&raw.repositories);
+        let allow_list = if with_all_deps {
+            super::update::expand_with_all_dependencies(newly_required, lock, &repo_requires)
+        } else if with_deps {
+            super::update::expand_with_direct_dependencies(
+                newly_required,
+                lock,
+                &IndexSet::new(),
+                &repo_requires,
+            )
+        } else {
+            additions.iter().map(|(name, _, _)| name.clone()).collect()
+        };
+        resolved = super::update::apply_partial_update(resolved, lock, &allow_list);
+    }
 
     let composer_json_content = if args.dry_run {
         package::to_json_pretty(raw)?
