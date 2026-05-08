@@ -46,11 +46,15 @@ impl VcsDownloader for HgDownloader {
     }
 
     fn local_changes(&self, target: &Path) -> Result<Option<String>> {
+        if !target.join(".hg").is_dir() {
+            return Ok(None);
+        }
         let output = self.hg_util.execute(&["st"], Some(target))?;
-        if output.stdout.trim().is_empty() {
+        let trimmed = output.stdout.trim();
+        if trimmed.is_empty() {
             Ok(None)
         } else {
-            Ok(Some(output.stdout))
+            Ok(Some(trimmed.to_string()))
         }
     }
 

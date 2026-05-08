@@ -92,20 +92,72 @@ pub struct Composer {
     locker: Locker,
 }
 
-/// Subset of `Composer\Package\PackageInterface` needed by the
-/// installation manager. Today only the fields referenced by
-/// `LibraryInstaller::getInstallPath` (`prettyName`, `targetDir`).
+/// Which source the package was installed from. Mirrors
+/// `PackageInterface::getInstallationSource` ("source" | "dist").
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InstallationSource {
+    Source,
+    Dist,
+}
+
+impl InstallationSource {
+    /// Parse the `installation-source` field from `installed.json`.
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "source" => Some(InstallationSource::Source),
+            "dist" => Some(InstallationSource::Dist),
+            _ => None,
+        }
+    }
+}
+
+/// Source/dist descriptor — mirrors the nested `source`/`dist` objects in
+/// `installed.json`.
+#[derive(Debug, Clone)]
+pub struct PackageReference {
+    pub kind: String,
+    pub url: String,
+    pub reference: Option<String>,
+    pub shasum: Option<String>,
+}
+
+/// Subset of `Composer\Package\PackageInterface` carried through Mozart's
+/// `LocalRepository`. Holds the fields needed by both the installation
+/// manager (`prettyName`, `targetDir`) and the status command
+/// (installation source, source/dist refs, version, extra).
 #[derive(Debug, Clone)]
 pub struct LocalPackage {
     pretty_name: String,
+    pretty_version: String,
     target_dir: Option<String>,
+    package_type: Option<String>,
+    installation_source: Option<InstallationSource>,
+    source: Option<PackageReference>,
+    dist: Option<PackageReference>,
+    extra: serde_json::Value,
 }
 
 impl LocalPackage {
-    pub fn new(pretty_name: String, target_dir: Option<String>) -> Self {
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        pretty_name: String,
+        pretty_version: String,
+        target_dir: Option<String>,
+        package_type: Option<String>,
+        installation_source: Option<InstallationSource>,
+        source: Option<PackageReference>,
+        dist: Option<PackageReference>,
+        extra: serde_json::Value,
+    ) -> Self {
         Self {
             pretty_name,
+            pretty_version,
             target_dir,
+            package_type,
+            installation_source,
+            source,
+            dist,
+            extra,
         }
     }
 
@@ -115,10 +167,50 @@ impl LocalPackage {
         &self.pretty_name
     }
 
+    /// Original-case version string (e.g. `v1.0.0`). Mirrors
+    /// `PackageInterface::getPrettyVersion`.
+    pub fn pretty_version(&self) -> &str {
+        &self.pretty_version
+    }
+
     /// Optional sub-directory inside the install path that holds the
     /// package code. Mirrors `PackageInterface::getTargetDir`.
     pub fn target_dir(&self) -> Option<&str> {
         self.target_dir.as_deref()
+    }
+
+    /// Mirrors `PackageInterface::getType`.
+    pub fn package_type(&self) -> Option<&str> {
+        self.package_type.as_deref()
+    }
+
+    /// Mirrors `PackageInterface::getInstallationSource`.
+    pub fn installation_source(&self) -> Option<InstallationSource> {
+        self.installation_source
+    }
+
+    pub fn source(&self) -> Option<&PackageReference> {
+        self.source.as_ref()
+    }
+
+    pub fn dist(&self) -> Option<&PackageReference> {
+        self.dist.as_ref()
+    }
+
+    /// Mirrors `PackageInterface::getSourceReference`.
+    pub fn source_reference(&self) -> Option<&str> {
+        self.source.as_ref().and_then(|r| r.reference.as_deref())
+    }
+
+    /// Mirrors `PackageInterface::getDistReference`.
+    pub fn dist_reference(&self) -> Option<&str> {
+        self.dist.as_ref().and_then(|r| r.reference.as_deref())
+    }
+
+    /// Raw `extra` field — used by VersionGuesser to read
+    /// `branch-alias`, `non-feature-branches`, etc.
+    pub fn extra(&self) -> &serde_json::Value {
+        &self.extra
     }
 }
 

@@ -168,11 +168,21 @@ fn test_git_downloader() {
     let changes = downloader.local_changes(&target).unwrap();
     assert!(changes.is_none(), "Expected no changes, got: {:?}", changes);
 
-    // Make a local change and detect it
-    std::fs::write(target.join("local_change.txt"), "change").unwrap();
+    // Untracked files alone must NOT count as local changes (matches
+    // Composer's `git status --porcelain --untracked-files=no`).
+    std::fs::write(target.join("untracked.txt"), "untracked").unwrap();
+    let changes = downloader.local_changes(&target).unwrap();
+    assert!(
+        changes.is_none(),
+        "Untracked files should be ignored, got: {:?}",
+        changes
+    );
+
+    // Modifying a tracked file is a local change.
+    std::fs::write(target.join("composer.json"), "{\"name\":\"changed\"}\n").unwrap();
     let changes = downloader.local_changes(&target).unwrap();
     assert!(changes.is_some());
-    assert!(changes.unwrap().contains("local_change.txt"));
+    assert!(changes.unwrap().contains("composer.json"));
 
     // Commit logs
     let logs = downloader.commit_logs("v1.0.0", "v1.1.0", &target).unwrap();
@@ -181,6 +191,62 @@ fn test_git_downloader() {
     // Remove
     downloader.remove(&target).unwrap();
     assert!(!target.exists());
+}
+
+#[test]
+fn test_git_downloader_unpushed_changes() {
+    if !has_git() {
+        eprintln!("Skipping test: git not available");
+        return;
+    }
+
+    let repo_dir = TempDir::new().unwrap();
+    let cache_dir = TempDir::new().unwrap();
+    let install_dir = TempDir::new().unwrap();
+    create_test_repo(repo_dir.path());
+
+    let process = ProcessExecutor::new();
+    let git_util = GitUtil::new(process, cache_dir.path().join("git"));
+    let downloader = GitDownloader::new(git_util);
+
+    let url = repo_dir.path().to_str().unwrap();
+    let target = install_dir.path().join("test-package");
+
+    downloader.download(url, "main", &target).unwrap();
+    downloader.install(url, "main", &target).unwrap();
+
+    // No commits added locally → no unpushed changes.
+    let unpushed = downloader.unpushed_changes(&target).unwrap();
+    assert!(
+        unpushed.is_none(),
+        "Expected no unpushed changes, got: {:?}",
+        unpushed
+    );
+
+    // Commit a local change without pushing.
+    let run = |args: &[&str]| {
+        let output = Command::new(args[0])
+            .args(&args[1..])
+            .current_dir(&target)
+            .env("GIT_AUTHOR_NAME", "Test")
+            .env("GIT_AUTHOR_EMAIL", "test@test.com")
+            .env("GIT_COMMITTER_NAME", "Test")
+            .env("GIT_COMMITTER_EMAIL", "test@test.com")
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "Command failed: {:?}", args);
+    };
+    std::fs::write(target.join("local-only.txt"), "local-only").unwrap();
+    run(&["git", "add", "."]);
+    run(&["git", "commit", "-m", "Local-only commit"]);
+
+    let unpushed = downloader.unpushed_changes(&target).unwrap();
+    assert!(unpushed.is_some(), "Expected unpushed changes");
+    let body = unpushed.unwrap();
+    assert!(
+        body.contains("local-only.txt"),
+        "Expected diff body to mention local-only.txt, got: {body}"
+    );
 }
 
 #[test]

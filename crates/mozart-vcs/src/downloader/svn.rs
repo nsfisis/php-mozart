@@ -1,10 +1,16 @@
 use std::path::Path;
+use std::sync::LazyLock;
 
 use anyhow::Result;
+use regex::Regex;
 
 use crate::util::svn::SvnUtil;
 
 use super::VcsDownloader;
+
+/// Match any non-`X` status line (mirror of Composer's
+/// `{^ *[^X ] +}m`). Ignores externals (`X` prefix).
+static SVN_STATUS_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?m)^ *[^X ] +").unwrap());
 
 /// SVN downloader using checkout/switch.
 pub struct SvnDownloader {
@@ -46,11 +52,16 @@ impl VcsDownloader for SvnDownloader {
     }
 
     fn local_changes(&self, target: &Path) -> Result<Option<String>> {
-        let output = self.svn_util.execute(&["status"], Some(target))?;
-        if output.stdout.trim().is_empty() {
-            Ok(None)
-        } else {
+        if !target.join(".svn").is_dir() {
+            return Ok(None);
+        }
+        let output = self
+            .svn_util
+            .execute(&["status", "--ignore-externals"], Some(target))?;
+        if SVN_STATUS_RE.is_match(&output.stdout) {
             Ok(Some(output.stdout))
+        } else {
+            Ok(None)
         }
     }
 

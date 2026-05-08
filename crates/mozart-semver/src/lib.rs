@@ -954,6 +954,63 @@ fn hyphen_upper_bound(raw: &str) -> Result<VersionConstraint, String> {
     Ok(VersionConstraint::Single(Constraint::LessThan(next)))
 }
 
+/// Normalize a branch name into a normalized "X.Y.Z.W-dev" form, mirroring
+/// `Composer\Semver\VersionParser::normalizeBranch`. Numeric branches like
+/// `1.0` or `2.x` are zero-padded out to four segments with `9999999`
+/// substituted for `x`/`X`/`*`. Any other shape (e.g. `main`, `feat/x`)
+/// becomes `dev-<branch>`.
+pub fn normalize_branch(name: &str) -> String {
+    let trimmed = name.trim();
+
+    let stripped = trimmed
+        .strip_prefix('v')
+        .or_else(|| trimmed.strip_prefix('V'))
+        .unwrap_or(trimmed);
+
+    if stripped.is_empty() {
+        return format!("dev-{name}");
+    }
+
+    let parts: Vec<&str> = stripped.split('.').collect();
+    if parts.len() > 4 {
+        return format!("dev-{name}");
+    }
+
+    if parts[0].is_empty() || !parts[0].chars().all(|c| c.is_ascii_digit()) {
+        return format!("dev-{name}");
+    }
+    for seg in &parts[1..] {
+        if seg.is_empty() {
+            return format!("dev-{name}");
+        }
+        let all_digits = seg.chars().all(|c| c.is_ascii_digit());
+        let single_wildcard =
+            seg.len() == 1 && matches!(seg.chars().next().unwrap(), 'x' | 'X' | '*');
+        if !all_digits && !single_wildcard {
+            return format!("dev-{name}");
+        }
+    }
+
+    let mut out = String::with_capacity(stripped.len() + 32);
+    out.push_str(parts[0]);
+    for i in 1..4 {
+        out.push('.');
+        match parts.get(i) {
+            None => out.push_str("9999999"),
+            Some(seg) => {
+                let first = seg.chars().next().unwrap();
+                if seg.len() == 1 && matches!(first, 'x' | 'X' | '*') {
+                    out.push_str("9999999");
+                } else {
+                    out.push_str(seg);
+                }
+            }
+        }
+    }
+    out.push_str("-dev");
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2345,5 +2402,52 @@ mod tests {
         let a = VersionConstraint::parse(">=1.0 <=2.0").unwrap();
         let b = VersionConstraint::parse(">=2.0 <=3.0").unwrap();
         assert!(a.intersects(&b));
+    }
+
+    #[test]
+    fn test_normalize_branch_numeric_full() {
+        assert_eq!(normalize_branch("1.0.0"), "1.0.0.9999999-dev");
+        assert_eq!(normalize_branch("1.0.0.5"), "1.0.0.5-dev");
+    }
+
+    #[test]
+    fn test_normalize_branch_numeric_short() {
+        assert_eq!(normalize_branch("1"), "1.9999999.9999999.9999999-dev");
+        assert_eq!(normalize_branch("1.0"), "1.0.9999999.9999999-dev");
+    }
+
+    #[test]
+    fn test_normalize_branch_wildcards() {
+        assert_eq!(normalize_branch("2.x"), "2.9999999.9999999.9999999-dev");
+        assert_eq!(normalize_branch("1.0.x"), "1.0.9999999.9999999-dev");
+        assert_eq!(normalize_branch("1.0.X"), "1.0.9999999.9999999-dev");
+        assert_eq!(normalize_branch("1.0.*"), "1.0.9999999.9999999-dev");
+    }
+
+    #[test]
+    fn test_normalize_branch_v_prefix() {
+        assert_eq!(normalize_branch("v1.2"), "1.2.9999999.9999999-dev");
+        assert_eq!(normalize_branch("V2"), "2.9999999.9999999.9999999-dev");
+    }
+
+    #[test]
+    fn test_normalize_branch_non_numeric() {
+        assert_eq!(normalize_branch("master"), "dev-master");
+        assert_eq!(normalize_branch("main"), "dev-main");
+        assert_eq!(normalize_branch("feature/x"), "dev-feature/x");
+        assert_eq!(normalize_branch("1.0-beta"), "dev-1.0-beta");
+    }
+
+    #[test]
+    fn test_normalize_branch_trims_input() {
+        assert_eq!(normalize_branch("  1.0  "), "1.0.9999999.9999999-dev");
+    }
+
+    #[test]
+    fn test_normalize_branch_empty_or_invalid_segments() {
+        assert_eq!(normalize_branch(""), "dev-");
+        assert_eq!(normalize_branch("1."), "dev-1.");
+        assert_eq!(normalize_branch("1.0.0.0.0"), "dev-1.0.0.0.0");
+        assert_eq!(normalize_branch("xx"), "dev-xx");
     }
 }

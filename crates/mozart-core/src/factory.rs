@@ -276,13 +276,68 @@ fn read_local_packages(vendor_dir: &Path) -> anyhow::Result<Vec<LocalPackage>> {
             .and_then(|v| v.as_str())
             .unwrap_or("")
             .to_string();
+        let pretty_version = entry
+            .get("version")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
         let target_dir = entry
             .get("target-dir")
             .and_then(|v| v.as_str())
             .map(|s| s.to_string());
-        out.push(LocalPackage::new(pretty_name, target_dir));
+        let package_type = entry
+            .get("type")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+        let installation_source = entry
+            .get("installation-source")
+            .and_then(|v| v.as_str())
+            .and_then(crate::composer::InstallationSource::parse);
+        let source = read_package_reference(entry.get("source"));
+        let dist = read_package_reference(entry.get("dist"));
+        let extra = entry
+            .get("extra")
+            .cloned()
+            .unwrap_or(serde_json::Value::Null);
+        out.push(LocalPackage::new(
+            pretty_name,
+            pretty_version,
+            target_dir,
+            package_type,
+            installation_source,
+            source,
+            dist,
+            extra,
+        ));
     }
     Ok(out)
+}
+
+fn read_package_reference(
+    value: Option<&serde_json::Value>,
+) -> Option<crate::composer::PackageReference> {
+    let v = value?;
+    let kind = v.get("type").and_then(|x| x.as_str())?.to_string();
+    let url = v
+        .get("url")
+        .and_then(|x| x.as_str())
+        .unwrap_or("")
+        .to_string();
+    let reference = v
+        .get("reference")
+        .and_then(|x| x.as_str())
+        .map(|s| s.to_string());
+    let shasum = v
+        .get("shasum")
+        .and_then(|x| x.as_str())
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string());
+    Some(crate::composer::PackageReference {
+        kind,
+        url,
+        reference,
+        shasum,
+    })
 }
 
 #[cfg(test)]
