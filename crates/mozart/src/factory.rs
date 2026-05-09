@@ -16,7 +16,7 @@ use mozart_core::composer::{
 };
 use mozart_core::config::resolve_references;
 use mozart_core::factory::create_config;
-use mozart_core::package::read_from_file;
+use mozart_core::package::{RootPackageData, read_from_file};
 use mozart_core::repository::download_manager::DownloadManager;
 
 /// Rust port of `Factory::createComposer()`.
@@ -62,7 +62,7 @@ pub fn create_composer(
     }
     resolve_references(&mut config);
 
-    let package = read_from_file(composer_json)?;
+    let package = RootPackageData::from_raw(read_from_file(composer_json)?);
 
     // Mirrors `Factory::createComposer`'s `vendorDir` handling. The
     // value out of `Config::get('vendor-dir')` already had `{$...}`
@@ -321,14 +321,15 @@ mod tests {
             r#"{"name": "acme/app", "require": {"vendor/pkg": "^1.0"}}"#,
         );
 
+        use mozart_core::package::Package;
         let composer = Composer::require(dir.path()).unwrap();
-        assert_eq!(composer.package().name, "acme/app");
+        assert_eq!(composer.package().name(), "acme/app");
         assert_eq!(
             composer
                 .package()
-                .require
+                .requires()
                 .get("vendor/pkg")
-                .map(String::as_str),
+                .map(|l| l.constraint.as_str()),
             Some("^1.0"),
         );
     }

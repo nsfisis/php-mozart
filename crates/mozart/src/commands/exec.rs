@@ -1,6 +1,7 @@
 use crate::composer::Composer;
 use clap::Args;
 use mozart_core::console_writeln;
+use mozart_core::package::Package;
 use std::path::{Path, PathBuf};
 
 #[derive(Args)]
@@ -125,7 +126,7 @@ fn get_binaries(composer: &Composer, bin_dir: &Path) -> Vec<(String, bool)> {
 
     let local_bins: Vec<(String, bool)> = composer
         .package()
-        .bin
+        .binaries()
         .iter()
         .filter_map(|e| Some(PathBuf::from(e).file_name()?.to_string_lossy().into_owned()))
         .map(|e| (e, true))

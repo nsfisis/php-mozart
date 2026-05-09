@@ -4,6 +4,7 @@ use indexmap::IndexMap;
 use mozart_core::console::Console;
 use mozart_core::console::hyperlink;
 use mozart_core::console_writeln;
+use mozart_core::package::Package;
 use mozart_core::package_info;
 use mozart_core::package_info::PackageUrls;
 use mozart_core::package_sorter::sort_packages_alphabetically;
@@ -84,21 +85,24 @@ pub async fn execute(
 
     let root = composer.package();
 
-    // RawPackageData stores `license` as `Option<String>` only, so we
-    // re-parse the composer.json to also accept the array form Composer
-    // recognises via `RootPackageLoader`'s `(array) $config['license']`
-    // coercion. Track widening `RawPackageData::license` separately.
+    // Re-parse composer.json to handle the array form of `license` —
+    // `RawPackageData` only deserializes the string form, so both string
+    // and array values must be read from the raw JSON here.
     let root_licenses = read_root_licenses(&working_dir.join("composer.json"))?;
-    let root_pretty_name = root.name.clone();
-    let root_version = root
-        .version
-        .clone()
-        .unwrap_or_else(|| "No version set".to_string());
+    let root_pretty_name = root.name().to_string();
+    let root_version = {
+        let v = root.pretty_version();
+        if v == "1.0.0+no-version-set" {
+            "No version set".to_string()
+        } else {
+            v.to_string()
+        }
+    };
 
     let mut entries = if args.locked {
         load_locked_entries(&working_dir, args.no_dev)?
     } else {
-        load_installed_entries(&working_dir, &root.require, args.no_dev)?
+        load_installed_entries(&working_dir, root.requires(), args.no_dev)?
     };
 
     sort_packages_alphabetically(&mut entries, |e| e.name.as_str());
@@ -138,9 +142,9 @@ fn read_root_licenses(composer_json_path: &std::path::Path) -> anyhow::Result<Ve
     })
 }
 
-fn load_installed_entries(
+fn load_installed_entries<V>(
     working_dir: &std::path::Path,
-    root_requires: &BTreeMap<String, String>,
+    root_requires: &BTreeMap<String, V>,
     no_dev: bool,
 ) -> anyhow::Result<Vec<LicenseEntry>> {
     let vendor_dir = working_dir.join("vendor");

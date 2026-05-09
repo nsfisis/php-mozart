@@ -686,6 +686,234 @@ pub fn read_from_file(path: &Path) -> anyhow::Result<RawPackageData> {
     Ok(data)
 }
 
+impl RootPackageData {
+    /// Mirrors `Composer\Package\Loader\RootPackageLoader::load()`:
+    /// converts the raw, untyped `RawPackageData` (the parsed-JSON form)
+    /// into the fully typed `RootPackageData`, applying field defaults and
+    /// constructing [`Link`] objects from the raw constraint strings.
+    pub fn from_raw(raw: RawPackageData) -> Self {
+        fn make_links(
+            source: &str,
+            deps: BTreeMap<String, String>,
+            description: &str,
+        ) -> BTreeMap<String, Link> {
+            deps.into_iter()
+                .map(|(target, constraint)| {
+                    let normalized = target.to_lowercase();
+                    let link = Link {
+                        source: source.to_string(),
+                        target: normalized.clone(),
+                        constraint,
+                        pretty_constraint: None,
+                        description: description.to_string(),
+                    };
+                    (normalized, link)
+                })
+                .collect()
+        }
+
+        let pretty_name = raw.name.clone();
+        let name = raw.name.to_lowercase();
+
+        let pretty_version = raw
+            .version
+            .unwrap_or_else(|| "1.0.0+no-version-set".to_string());
+        let version = pretty_version.clone();
+
+        let package_type = raw
+            .package_type
+            .map(|t| t.to_lowercase())
+            .unwrap_or_else(|| "library".to_string());
+
+        let requires = make_links(&name, raw.require, "requires");
+        let dev_requires = make_links(&name, raw.require_dev, "requires (for development)");
+        let conflicts = make_links(&name, raw.conflict, "conflicts");
+        let provides = make_links(&name, raw.provide, "provides");
+        let replaces = make_links(&name, raw.replace, "replaces");
+
+        let autoload = raw
+            .autoload
+            .map(|a| AutoloadRules {
+                psr4: a
+                    .psr4
+                    .into_iter()
+                    .map(|(ns, path)| (ns, vec![path]))
+                    .collect(),
+                ..Default::default()
+            })
+            .unwrap_or_default();
+
+        let extra: BTreeMap<String, serde_json::Value> = raw
+            .extra_fields
+            .get("extra")
+            .and_then(|v| v.as_object())
+            .map(|obj| obj.iter().map(|(k, v)| (k.clone(), v.clone())).collect())
+            .unwrap_or_default();
+
+        let license = raw.license.into_iter().collect();
+
+        let authors = raw
+            .authors
+            .into_iter()
+            .map(|a| Author {
+                name: Some(a.name),
+                email: a.email,
+                homepage: None,
+                role: None,
+            })
+            .collect();
+
+        let repositories = raw
+            .repositories
+            .into_iter()
+            .filter_map(|r| serde_json::to_value(r).ok())
+            .collect();
+
+        let keywords = raw
+            .extra_fields
+            .get("keywords")
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str())
+                    .map(String::from)
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        let scripts: BTreeMap<String, Vec<String>> = raw
+            .extra_fields
+            .get("scripts")
+            .and_then(|v| v.as_object())
+            .map(|obj| {
+                obj.iter()
+                    .map(|(k, v)| {
+                        let handlers = match v {
+                            serde_json::Value::String(s) => vec![s.clone()],
+                            serde_json::Value::Array(arr) => arr
+                                .iter()
+                                .filter_map(|x| x.as_str())
+                                .map(String::from)
+                                .collect(),
+                            _ => vec![],
+                        };
+                        (k.clone(), handlers)
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        let support = raw
+            .extra_fields
+            .get("support")
+            .and_then(|v| v.as_object())
+            .map(|obj| {
+                let get_str = |key: &str| obj.get(key).and_then(|v| v.as_str()).map(String::from);
+                Support {
+                    email: get_str("email"),
+                    issues: get_str("issues"),
+                    forum: get_str("forum"),
+                    wiki: get_str("wiki"),
+                    source: get_str("source"),
+                    docs: get_str("docs"),
+                    irc: get_str("irc"),
+                    chat: get_str("chat"),
+                    rss: get_str("rss"),
+                    security: get_str("security"),
+                }
+            })
+            .unwrap_or_default();
+
+        let funding = raw
+            .extra_fields
+            .get("funding")
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_object())
+                    .map(|obj| Funding {
+                        url: obj.get("url").and_then(|v| v.as_str()).map(String::from),
+                        funding_type: obj.get("type").and_then(|v| v.as_str()).map(String::from),
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        let config: BTreeMap<String, serde_json::Value> = raw
+            .extra_fields
+            .get("config")
+            .and_then(|v| v.as_object())
+            .map(|obj| obj.iter().map(|(k, v)| (k.clone(), v.clone())).collect())
+            .unwrap_or_default();
+
+        let prefer_stable = raw
+            .extra_fields
+            .get("prefer-stable")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+
+        let minimum_stability =
+            Stability::parse(raw.minimum_stability.as_deref().unwrap_or("stable"));
+
+        let package_data = PackageData {
+            name,
+            pretty_name,
+            version,
+            pretty_version,
+            package_type,
+            target_dir: None,
+            source_type: None,
+            source_url: None,
+            source_reference: None,
+            dist_type: None,
+            dist_url: None,
+            dist_reference: None,
+            dist_sha1_checksum: None,
+            release_date: None,
+            extra,
+            binaries: raw.bin,
+            dev: false,
+            stability: Stability::Stable,
+            notification_url: None,
+            requires,
+            conflicts,
+            provides,
+            replaces,
+            dev_requires,
+            suggests: BTreeMap::new(),
+            autoload,
+            dev_autoload: AutoloadRules::default(),
+            is_default_branch: false,
+        };
+
+        let complete_data = CompletePackageData {
+            package: package_data,
+            description: raw.description,
+            homepage: raw.homepage,
+            license,
+            keywords,
+            authors,
+            scripts,
+            support,
+            funding,
+            repositories,
+            abandoned: None,
+            archive_name: None,
+            archive_excludes: Vec::new(),
+        };
+
+        RootPackageData {
+            complete: complete_data,
+            minimum_stability,
+            prefer_stable,
+            stability_flags: BTreeMap::new(),
+            config,
+            references: BTreeMap::new(),
+            aliases: Vec::new(),
+        }
+    }
+}
+
 pub fn to_json_pretty(value: &impl Serialize) -> serde_json::Result<String> {
     let formatter = serde_json::ser::PrettyFormatter::with_indent(b"    ");
     let mut buf = Vec::new();

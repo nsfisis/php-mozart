@@ -4,6 +4,7 @@ use mozart_core::console::Console;
 use mozart_core::console_writeln;
 use mozart_core::console_writeln_error;
 use mozart_core::exit_code;
+use mozart_core::package::Package;
 use mozart_core::repository::browse_repos::{BrowseRepos, CompletePackageView};
 use mozart_core::repository::cache::{Cache, build_cache_config};
 use mozart_core::repository::installed::InstalledPackages;
@@ -42,7 +43,7 @@ pub async fn execute(args: &BrowseArgs, cli: &super::Cli, console: &Console) -> 
                 working_dir.display()
             )
         })?;
-        vec![composer.package().name.clone()]
+        vec![composer.package().name().to_string()]
     } else {
         args.packages.clone()
     };

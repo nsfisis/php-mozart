@@ -8,7 +8,8 @@
 //! `CompletePackageInterface` (`getSupport()['source']`,
 //! `getSourceUrl()`, `getHomepage()`).
 
-use super::super::package::RawPackageData;
+use super::super::package::Package;
+use super::super::package::{CompletePackage, RootPackageData};
 use super::cache::Cache;
 use super::installed::{InstalledPackageEntry, InstalledPackages};
 use super::lockfile::LockedPackage;
@@ -77,19 +78,11 @@ impl From<&PackagistVersion> for CompletePackageView {
     }
 }
 
-/// `RawPackageData` lacks a typed `support` field — the root package's
-/// `support` block lives inside `extra_fields` because the schema is not
-/// yet ported. Read it manually here.
-pub fn view_from_raw(pkg: &RawPackageData) -> CompletePackageView {
+pub fn view_from_root(pkg: &RootPackageData) -> CompletePackageView {
     CompletePackageView {
-        support_source: pkg
-            .extra_fields
-            .get("support")
-            .and_then(|s| s.get("source"))
-            .and_then(|s| s.as_str())
-            .map(str::to_string),
+        support_source: pkg.support().source.clone(),
         source_url: None,
-        homepage: pkg.homepage.clone(),
+        homepage: pkg.homepage().map(str::to_string),
     }
 }
 
@@ -99,9 +92,9 @@ pub fn view_from_raw(pkg: &RawPackageData) -> CompletePackageView {
 pub enum BrowseRepo {
     /// Stand-in for `Composer\Repository\RootPackageRepository` —
     /// a one-package array containing the root composer.json.
-    /// Boxed because `RawPackageData` is much larger than the other
+    /// Boxed because `RootPackageData` is much larger than the other
     /// variants (clippy::large_enum_variant).
-    Root(Box<RawPackageData>),
+    Root(Box<RootPackageData>),
     /// Stand-in for `RepositoryManager::getLocalRepository()` —
     /// the installed.json view of `vendor/`.
     Installed(InstalledPackages),
@@ -116,8 +109,8 @@ impl BrowseRepo {
     pub async fn find_packages(&self, name: &str) -> anyhow::Result<Vec<CompletePackageView>> {
         match self {
             BrowseRepo::Root(pkg) => {
-                if pkg.name.eq_ignore_ascii_case(name) {
-                    Ok(vec![view_from_raw(pkg)])
+                if pkg.name().eq_ignore_ascii_case(name) {
+                    Ok(vec![view_from_root(pkg)])
                 } else {
                     Ok(Vec::new())
                 }
@@ -148,7 +141,7 @@ impl BrowseRepos {
     /// them from `Composer` (when composer.json is present) or skip
     /// them entirely (the `defaultReposWithDefaultManager` fallback).
     pub fn new(
-        root: Option<RawPackageData>,
+        root: Option<RootPackageData>,
         installed: Option<InstalledPackages>,
         packagist_cache: Cache,
     ) -> Self {
@@ -173,6 +166,7 @@ impl BrowseRepos {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::package::RawPackageData;
     use std::collections::BTreeMap;
 
     fn locked(
@@ -267,14 +261,15 @@ mod tests {
     }
 
     #[test]
-    fn view_from_raw_reads_support_via_extra_fields() {
+    fn view_from_root_reads_support_and_homepage() {
         let mut raw = RawPackageData::new("vendor/root".to_string());
         raw.homepage = Some("https://vendor.example.com".to_string());
         raw.extra_fields.insert(
             "support".to_string(),
             serde_json::json!({"source": "https://github.com/vendor/root"}),
         );
-        let view = view_from_raw(&raw);
+        let root = RootPackageData::from_raw(raw);
+        let view = view_from_root(&root);
         assert_eq!(
             view.support_source.as_deref(),
             Some("https://github.com/vendor/root")
@@ -286,7 +281,8 @@ mod tests {
     #[tokio::test]
     async fn root_repo_matches_case_insensitively() {
         let raw = RawPackageData::new("Vendor/Root".to_string());
-        let repo = BrowseRepo::Root(Box::new(raw));
+        let root = RootPackageData::from_raw(raw);
+        let repo = BrowseRepo::Root(Box::new(root));
         assert_eq!(repo.find_packages("vendor/root").await.unwrap().len(), 1);
         assert_eq!(repo.find_packages("other/pkg").await.unwrap().len(), 0);
     }

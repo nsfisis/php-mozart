@@ -3,7 +3,7 @@ use clap::Args;
 use mozart_core::config_validator::{ValidationResult, ValidatorOptions, validate_manifest};
 use mozart_core::console_format;
 use mozart_core::console_writeln;
-use mozart_core::package::RawPackageData;
+use mozart_core::package::RootPackageData;
 use std::path::{Path, PathBuf};
 
 #[derive(Args)]
@@ -324,7 +324,7 @@ fn validate_dependencies_vendor_walk(
 fn check_lock_freshness(
     composer_json_content: &str,
     composer_json_path: &Path,
-    root_package: Option<&RawPackageData>,
+    root_package: Option<&RootPackageData>,
     lock_errors: &mut Vec<String>,
 ) {
     let lock_path = composer_json_path

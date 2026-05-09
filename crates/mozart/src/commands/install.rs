@@ -2,6 +2,7 @@ use clap::Args;
 use indexmap::IndexSet;
 use mozart_core::console;
 use mozart_core::console_format;
+use mozart_core::package::{Package, RootPackage, RootPackageData};
 use mozart_core::repository::installed;
 use mozart_core::repository::installer_executor::{
     Action, ExecuteContext, FilesystemExecutor, InstallerExecutor, PackageOperation,
@@ -151,7 +152,7 @@ impl Default for InstallConfig {
 /// strings combined so a future "swap for SAT-verify" change is a single
 /// function replacement.
 fn verify_lock(
-    root: &mozart_core::package::RawPackageData,
+    root: &RootPackageData,
     lock: &lockfile::LockFile,
     dev_mode: bool,
     ignore_platform_reqs: bool,
@@ -181,7 +182,7 @@ fn verify_lock(
 /// Returns the list of "Root composer.json requires …" diagnostic lines (one
 /// per failing requirement). An empty vec means everything is satisfied.
 fn verify_lock_platform_problems(
-    root: &mozart_core::package::RawPackageData,
+    root: &RootPackageData,
     lock: &lockfile::LockFile,
     dev_mode: bool,
     ignore_platform_reqs: bool,
@@ -260,18 +261,16 @@ fn verify_lock_same_name_problems(lock: &lockfile::LockFile, dev_mode: bool) -> 
 /// must bail with exit-code 2 before any package operations run.
 fn verify_lock_root_require_problems(
     lock: &lockfile::LockFile,
-    root: &mozart_core::package::RawPackageData,
+    root: &RootPackageData,
     dev_mode: bool,
 ) -> Vec<String> {
     use mozart_semver::{Version, VersionConstraint};
 
-    let Some(root_version) = root.version.as_deref() else {
-        return Vec::new();
-    };
-    if root.name.is_empty() || root_version.is_empty() {
+    let root_version = root.pretty_version();
+    if root_version == "1.0.0+no-version-set" || root.name().is_empty() || root_version.is_empty() {
         return Vec::new();
     }
-    let root_name_lower = root.name.to_lowercase();
+    let root_name_lower = root.name().to_string();
     let Ok(parsed_root_version) = Version::parse(root_version) else {
         return Vec::new();
     };
@@ -395,7 +394,7 @@ fn verify_lock_conflict_problems(lock: &lockfile::LockFile, dev_mode: bool) -> V
 /// composer.json overrides the lock on duplicate keys (matching Composer's
 /// "composer.json as source of truth" rule for shared platform reqs).
 fn combine_platform_requirements(
-    root: &mozart_core::package::RawPackageData,
+    root: &RootPackageData,
     lock: &lockfile::LockFile,
     dev_mode: bool,
 ) -> BTreeMap<String, String> {
@@ -416,17 +415,17 @@ fn combine_platform_requirements(
         }
     }
 
-    for (name, constraint) in &root.require {
+    for (name, link) in root.requires() {
         let lower = name.to_lowercase();
         if mozart_core::platform::is_platform_package(&lower) {
-            combined.insert(lower, constraint.clone());
+            combined.insert(lower, link.constraint.clone());
         }
     }
     if dev_mode {
-        for (name, constraint) in &root.require_dev {
+        for (name, link) in root.dev_requires() {
             let lower = name.to_lowercase();
             if mozart_core::platform::is_platform_package(&lower) {
-                combined.insert(lower, constraint.clone());
+                combined.insert(lower, link.constraint.clone());
             }
         }
     }
@@ -991,8 +990,9 @@ pub async fn run(
             ));
         }
 
-        let root_pkg = mozart_core::package::read_from_file(&composer_json_path)?;
-        root_pkg.validate_root_does_not_self_require()?;
+        let raw_pkg = mozart_core::package::read_from_file(&composer_json_path)?;
+        raw_pkg.validate_root_does_not_self_require()?;
+        let root_pkg = RootPackageData::from_raw(raw_pkg);
         let missing = lock.get_missing_requirement_info(&root_pkg, dev_mode);
         if !missing.is_empty() {
             for line in &missing {
@@ -1003,9 +1003,8 @@ pub async fn run(
             // but proceed with what the lock already covers instead of
             // bailing with ERROR_LOCK_FILE_INVALID.
             let allow_missing = root_pkg
-                .extra_fields
-                .get("config")
-                .and_then(|v| v.get("allow-missing-requirements"))
+                .config()
+                .get("allow-missing-requirements")
                 .and_then(|v| v.as_bool())
                 .unwrap_or(false);
             if !allow_missing {
@@ -1432,15 +1431,15 @@ mod tests {
     fn root_with_require(
         require: &[(&str, &str)],
         require_dev: &[(&str, &str)],
-    ) -> mozart_core::package::RawPackageData {
-        let mut root = mozart_core::package::RawPackageData::new("__root__".to_string());
+    ) -> RootPackageData {
+        let mut raw = mozart_core::package::RawPackageData::new("__root__".to_string());
         for (k, v) in require {
-            root.require.insert((*k).to_string(), (*v).to_string());
+            raw.require.insert((*k).to_string(), (*v).to_string());
         }
         for (k, v) in require_dev {
-            root.require_dev.insert((*k).to_string(), (*v).to_string());
+            raw.require_dev.insert((*k).to_string(), (*v).to_string());
         }
-        root
+        RootPackageData::from_raw(raw)
     }
 
     fn lock_with_platform(

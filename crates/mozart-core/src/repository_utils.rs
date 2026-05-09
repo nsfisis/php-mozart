@@ -36,10 +36,10 @@ pub trait Required {
 ///
 /// The returned vector preserves the order in which packages were
 /// discovered, matching PHP's `$bucket[] = $candidate;` push pattern.
-pub fn filter_required_packages<P>(
+pub fn filter_required_packages<P, V>(
     packages: &[P],
-    requirer_requires: &std::collections::BTreeMap<String, String>,
-    requirer_dev_requires: Option<&std::collections::BTreeMap<String, String>>,
+    requirer_requires: &std::collections::BTreeMap<String, V>,
+    requirer_dev_requires: Option<&std::collections::BTreeMap<String, V>>,
 ) -> Vec<usize>
 where
     P: Required,
@@ -167,7 +167,7 @@ mod tests {
     #[test]
     fn empty_requires_yields_nothing() {
         let packages = vec![pkg("a/a", &[]), pkg("b/b", &[])];
-        let root = BTreeMap::new();
+        let root: BTreeMap<String, String> = BTreeMap::new();
         let kept = filter_required_packages(&packages, &root, None);
         assert!(kept.is_empty());
     }

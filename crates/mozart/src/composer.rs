@@ -16,7 +16,7 @@ use std::path::{Path, PathBuf};
 use crate::factory::create_composer;
 use mozart_core::composer::{AutoloadGenerator, InstallationManager, Locker, RepositoryManager};
 use mozart_core::config::Config;
-use mozart_core::package::RawPackageData;
+use mozart_core::package::RootPackageData;
 use mozart_core::repository::download_manager::DownloadManager;
 
 /// Project-level Composer state. Mirrors `Composer\PartialComposer` /
@@ -27,7 +27,7 @@ use mozart_core::repository::download_manager::DownloadManager;
 pub struct Composer {
     project_dir: PathBuf,
     config: Config,
-    package: RawPackageData,
+    package: RootPackageData,
     repository_manager: RepositoryManager,
     installation_manager: InstallationManager,
     download_manager: DownloadManager,
@@ -45,7 +45,7 @@ impl Composer {
     pub fn new(
         project_dir: PathBuf,
         config: Config,
-        package: RawPackageData,
+        package: RootPackageData,
         repository_manager: RepositoryManager,
         installation_manager: InstallationManager,
         download_manager: DownloadManager,
@@ -111,12 +111,12 @@ impl Composer {
         &self.config
     }
 
-    /// Root package loaded from the project's `composer.json`. Mirrors
-    /// `Composer::getPackage()`; ideally this would return a fully
-    /// resolved `RootPackageInterface` equivalent, but Mozart does not
-    /// yet have a `RootPackageLoader` port — for now callers see the
-    /// raw, pre-normalised JSON shape.
-    pub fn package(&self) -> &RawPackageData {
+    /// Root package loaded from the project's `composer.json`.
+    /// Mirrors `Composer::getPackage()` — returns a fully typed
+    /// [`RootPackageData`] that implements the [`RootPackage`] trait
+    /// hierarchy (`Package` → `CompletePackage` → `RootPackage`),
+    /// equivalent to PHP's `RootPackageInterface`.
+    pub fn package(&self) -> &RootPackageData {
         &self.package
     }
 

@@ -2,7 +2,8 @@ use super::packagist::{PackagistDist, PackagistSource, PackagistVersion};
 use super::repository::RepositorySet;
 use super::resolver::ResolvedPackage;
 use crate::installer::HasSuggests;
-use crate::package::{RawPackageData, to_json_pretty};
+use crate::package::Package;
+use crate::package::{Link, RawPackageData, to_json_pretty};
 use indexmap::IndexMap;
 use indexmap::IndexSet;
 use serde::{Deserialize, Serialize};
@@ -260,7 +261,7 @@ impl LockFile {
     /// Mirrors `Composer\Package\Locker::getMissingRequirementInfo()`.
     pub fn get_missing_requirement_info(
         &self,
-        root: &crate::package::RawPackageData,
+        root: &crate::package::RootPackageData,
         include_dev: bool,
     ) -> Vec<String> {
         let mut messages = Vec::new();
@@ -280,7 +281,7 @@ impl LockFile {
         }
 
         check_requirement_set(
-            &root.require,
+            root.requires(),
             "Required",
             &base_pool,
             &mut messages,
@@ -288,7 +289,7 @@ impl LockFile {
         );
         if include_dev {
             check_requirement_set(
-                &root.require_dev,
+                root.dev_requires(),
                 "Required (in require-dev)",
                 &dev_pool,
                 &mut messages,
@@ -395,16 +396,17 @@ pub fn locked_package_branch_aliases(pkg: &LockedPackage) -> Vec<LockAlias> {
 }
 
 fn check_requirement_set(
-    requires: &BTreeMap<String, String>,
+    requires: &BTreeMap<String, Link>,
     description: &str,
     pool: &[LockedSearchEntry],
     messages: &mut Vec<String>,
     any_missing: &mut bool,
 ) {
-    for (name, constraint_str) in requires {
+    for (name, link) in requires {
         if crate::platform::is_platform_package(name) {
             continue;
         }
+        let constraint_str = link.constraint.as_str();
         if constraint_str.trim() == "self.version" {
             continue;
         }
@@ -1931,15 +1933,15 @@ mod tests {
     fn root_with_require(
         require: &[(&str, &str)],
         require_dev: &[(&str, &str)],
-    ) -> crate::package::RawPackageData {
-        let mut root = crate::package::RawPackageData::new("__root__".to_string());
+    ) -> crate::package::RootPackageData {
+        let mut raw = crate::package::RawPackageData::new("__root__".to_string());
         for (k, v) in require {
-            root.require.insert((*k).to_string(), (*v).to_string());
+            raw.require.insert((*k).to_string(), (*v).to_string());
         }
         for (k, v) in require_dev {
-            root.require_dev.insert((*k).to_string(), (*v).to_string());
+            raw.require_dev.insert((*k).to_string(), (*v).to_string());
         }
-        root
+        crate::package::RootPackageData::from_raw(raw)
     }
 
     #[test]

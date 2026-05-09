@@ -3,7 +3,7 @@ use crate::composer::{
     PlatformRequirementFilter,
 };
 use crate::config::Config;
-use crate::package::RawPackageData;
+use crate::package::RootPackageData;
 use crate::repository::installed::InstalledPackages;
 use crate::repository::lockfile::LockedPackage;
 use indexmap::IndexSet;
@@ -188,7 +188,7 @@ pub trait AutoloadGeneratorExt {
         options: &AutoloadDumpOptions,
         config: &Config,
         local_repo: &LocalRepository,
-        root_package: &RawPackageData,
+        root_package: &RootPackageData,
         installation_manager: &InstallationManager,
         target_dir: &str,
         scan_psr_packages: bool,
@@ -204,7 +204,7 @@ impl AutoloadGeneratorExt for AutoloadGenerator {
         options: &AutoloadDumpOptions,
         config: &Config,
         _local_repo: &LocalRepository,
-        _root_package: &RawPackageData,
+        _root_package: &RootPackageData,
         installation_manager: &InstallationManager,
         _target_dir: &str,
         scan_psr_packages: bool,

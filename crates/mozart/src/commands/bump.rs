@@ -3,6 +3,7 @@ use clap::Args;
 use indexmap::IndexMap;
 use mozart_core::composer::LocalRepository;
 use mozart_core::console::Console;
+use mozart_core::package::{Link, Package};
 use mozart_core::{console_writeln, console_writeln_error};
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -128,13 +129,13 @@ pub async fn do_bump(
         build_locked_versions_from_local(composer.repository_manager().local_repository())
     };
 
-    let package_type = composer.package().package_type.as_deref();
-    if package_type != Some("project") && !dev_only {
+    let package_type = composer.package().package_type();
+    if package_type != "project" && !dev_only {
         console_writeln_error!(
             io,
             "<warning>Warning: Bumping dependency constraints is not recommended for libraries as it will narrow down your dependencies and may cause problems for your users.</warning>",
         );
-        if package_type.is_none() {
+        if package_type == "library" {
             console_writeln_error!(
                 io,
                 "<warning>If your package is not a library, you can explicitly specify the \"type\" by using \"composer config type project\".</warning>",
@@ -146,12 +147,12 @@ pub async fn do_bump(
         }
     }
 
-    let mut tasks: Vec<(&'static str, &BTreeMap<String, String>)> = Vec::new();
+    let mut tasks: Vec<(&'static str, &BTreeMap<String, Link>)> = Vec::new();
     if !dev_only {
-        tasks.push(("require", &composer.package().require));
+        tasks.push(("require", composer.package().requires()));
     }
     if !no_dev_only {
-        tasks.push(("require-dev", &composer.package().require_dev));
+        tasks.push(("require-dev", composer.package().dev_requires()));
     }
 
     let stripped_filter: Option<Vec<String>> = if packages_filter.is_empty() {
@@ -169,7 +170,8 @@ pub async fn do_bump(
     let mut updates: BTreeMap<&'static str, BTreeMap<String, String>> = BTreeMap::new();
 
     for (key, reqs) in &tasks {
-        for (pkg_name, constraint) in reqs.iter() {
+        for (pkg_name, link) in reqs.iter() {
+            let constraint = &link.constraint;
             if mozart_core::platform::is_platform_package(pkg_name) {
                 continue;
             }

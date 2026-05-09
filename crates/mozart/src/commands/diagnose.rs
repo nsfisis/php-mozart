@@ -8,6 +8,7 @@ use mozart_core::console::Console;
 use mozart_core::console_writeln;
 use mozart_core::factory::create_config;
 use mozart_core::http::HttpDownloader;
+use mozart_core::package::CompletePackage;
 use std::borrow::Cow;
 use std::path::Path;
 
@@ -430,11 +431,11 @@ pub async fn execute(
 
     // Step 13: every additional `composer`-type repo.
     if let Some(composer) = &composer {
-        for repo in composer.package().repositories.iter() {
-            if repo.repo_type != "composer" {
+        for repo in composer.package().repositories().iter() {
+            if repo.get("type").and_then(|v| v.as_str()) != Some("composer") {
                 continue;
             }
-            let Some(url) = repo.url.as_deref() else {
+            let Some(url) = repo.get("url").and_then(|v| v.as_str()) else {
                 continue;
             };
             if !url.starts_with("http") {
