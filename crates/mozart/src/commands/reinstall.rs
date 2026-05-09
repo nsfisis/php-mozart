@@ -1,6 +1,6 @@
 use crate::composer::Composer;
 use clap::Args;
-use mozart_autoload::AutoloadGeneratorExt;
+use mozart_core::autoload::AutoloadGeneratorExt;
 use mozart_core::composer::{AutoloadDumpOptions, LocalPackage};
 use mozart_core::console_format;
 use mozart_core::validation::package_name_to_regexp;
@@ -138,8 +138,8 @@ pub async fn execute(
     // `mozart-registry::installer_executor` exposes the same shape, we
     // remove the install dir and re-download in place using each package's
     // recorded `dist` info.
-    let cache_config = mozart_registry::cache::build_cache_config(cli.no_cache);
-    let files_cache = mozart_registry::cache::Cache::files(&cache_config);
+    let cache_config = mozart_core::repository::cache::build_cache_config(cli.no_cache);
+    let files_cache = mozart_core::repository::cache::Cache::files(&cache_config);
     let installation_manager = composer.installation_manager();
 
     for package in &packages_to_reinstall {
@@ -166,12 +166,12 @@ pub async fn execute(
             std::fs::remove_dir_all(&install_path)?;
         }
 
-        let mut progress = mozart_registry::downloader::DownloadProgress::new(
+        let mut progress = mozart_core::repository::downloader::DownloadProgress::new(
             !args.no_progress,
             format!("{} ({})", package.pretty_name(), package.pretty_version()),
         );
 
-        mozart_registry::downloader::install_package(
+        mozart_core::repository::downloader::install_package(
             &dist.url,
             &dist.kind,
             dist.shasum.as_deref(),

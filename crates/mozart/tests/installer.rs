@@ -15,8 +15,8 @@ use clap::Parser;
 use mozart::commands::{Cli, Commands, install, update};
 use mozart_core::console::Console;
 use mozart_core::exit_code::MozartError;
-use mozart_registry::installer_executor::TraceRecorderExecutor;
-use mozart_registry::repository::RepositorySet;
+use mozart_core::repository::installer_executor::TraceRecorderExecutor;
+use mozart_core::repository::repository::RepositorySet;
 use mozart_test_harness::{ParsedTest, parse_test_file};
 use tempfile::TempDir;
 

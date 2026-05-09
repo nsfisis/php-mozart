@@ -1,8 +1,8 @@
 use crate::composer::Composer;
 use clap::Args;
-use mozart_archiver::{ArchiveManager, ArchivePackage};
 use mozart_core::console_writeln;
 use mozart_core::factory::create_config;
+use mozart_core::package::archiver::{ArchiveManager, ArchivePackage};
 use std::borrow::Cow;
 use std::path::{Path, PathBuf};
 
@@ -74,9 +74,9 @@ async fn archive(
     working_dir: &Path,
     no_cache: bool,
 ) -> anyhow::Result<()> {
-    let cache_config = mozart_registry::cache::build_cache_config(no_cache);
-    let repo_cache = mozart_registry::cache::Cache::repo(&cache_config);
-    let files_cache = mozart_registry::cache::Cache::files(&cache_config);
+    let cache_config = mozart_core::repository::cache::build_cache_config(no_cache);
+    let repo_cache = mozart_core::repository::cache::Cache::repo(&cache_config);
+    let files_cache = mozart_core::repository::cache::Cache::files(&cache_config);
 
     let archive_manager = ArchiveManager::new();
 
@@ -138,10 +138,10 @@ async fn select_package(
     io: &mozart_core::console::Console,
     package_name: &str,
     version: Option<&str>,
-    repo_cache: &mozart_registry::cache::Cache,
+    repo_cache: &mozart_core::repository::cache::Cache,
 ) -> anyhow::Result<ArchivePackage> {
     use mozart_core::package::Stability;
-    use mozart_registry::version::find_best_candidate;
+    use mozart_core::repository::version::find_best_candidate;
 
     io.info("Searching for the specified package.");
 
@@ -160,7 +160,8 @@ async fn select_package(
     let version = version.as_deref();
 
     let packages =
-        mozart_registry::packagist::fetch_package_versions(package_name, repo_cache).await?;
+        mozart_core::repository::packagist::fetch_package_versions(package_name, repo_cache)
+            .await?;
     if packages.is_empty() {
         anyhow::bail!("No versions found for package \"{}\"", package_name);
     }

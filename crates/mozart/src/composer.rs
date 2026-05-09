@@ -17,7 +17,7 @@ use crate::factory::create_composer;
 use mozart_core::composer::{AutoloadGenerator, InstallationManager, Locker, RepositoryManager};
 use mozart_core::config::Config;
 use mozart_core::package::RawPackageData;
-use mozart_registry::download_manager::DownloadManager;
+use mozart_core::repository::download_manager::DownloadManager;
 
 /// Project-level Composer state. Mirrors `Composer\PartialComposer` /
 /// `Composer\Composer` in PHP, exposing the subset of getters command

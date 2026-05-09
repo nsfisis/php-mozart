@@ -17,7 +17,7 @@ use mozart_core::composer::{
 use mozart_core::config::resolve_references;
 use mozart_core::factory::create_config;
 use mozart_core::package::read_from_file;
-use mozart_registry::download_manager::DownloadManager;
+use mozart_core::repository::download_manager::DownloadManager;
 
 /// Rust port of `Factory::createComposer()`.
 ///

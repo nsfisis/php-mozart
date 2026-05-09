@@ -1088,15 +1088,11 @@ dependencies = [
  "clap_complete",
  "colored",
  "indexmap",
- "mozart-archiver",
- "mozart-autoload",
  "mozart-console-macros",
  "mozart-core",
- "mozart-registry",
  "mozart-semver",
  "mozart-spdx-licenses",
  "mozart-test-harness",
- "mozart-vcs",
  "predicates",
  "regex",
  "reqwest",
@@ -1110,37 +1106,6 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "url",
-]
-
-[[package]]
-name = "mozart-archiver"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "bzip2",
- "flate2",
- "mozart-registry",
- "regex",
- "serde_json",
- "sha1",
- "tar",
- "tempfile",
- "zip",
-]
-
-[[package]]
-name = "mozart-autoload"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "indexmap",
- "md5",
- "mozart-class-map-generator",
- "mozart-core",
- "mozart-registry",
- "regex",
- "serde_json",
- "tempfile",
 ]
 
 [[package]]
@@ -1167,17 +1132,32 @@ name = "mozart-core"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-trait",
+ "base64",
+ "bzip2",
  "colored",
  "dialoguer",
+ "filetime",
+ "flate2",
  "indexmap",
+ "md5",
+ "mozart-class-map-generator",
  "mozart-console-macros",
+ "mozart-metadata-minifier",
+ "mozart-php-serialize",
+ "mozart-semver",
  "mozart-spdx-licenses",
  "regex",
  "reqwest",
  "serde",
  "serde_json",
+ "sha1",
+ "tar",
  "tempfile",
+ "tokio",
  "tracing",
+ "url",
+ "zip",
 ]
 
 [[package]]
@@ -1190,44 +1170,6 @@ dependencies = [
 [[package]]
 name = "mozart-php-serialize"
 version = "0.1.0"
-
-[[package]]
-name = "mozart-registry"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-trait",
- "filetime",
- "flate2",
- "indexmap",
- "md5",
- "mozart-console-macros",
- "mozart-core",
- "mozart-metadata-minifier",
- "mozart-php-serialize",
- "mozart-sat-resolver",
- "mozart-semver",
- "mozart-test-harness",
- "mozart-vcs",
- "regex",
- "serde",
- "serde_json",
- "sha1",
- "tar",
- "tempfile",
- "tokio",
- "tracing",
- "zip",
-]
-
-[[package]]
-name = "mozart-sat-resolver"
-version = "0.1.0"
-dependencies = [
- "indexmap",
- "mozart-core",
- "mozart-semver",
-]
 
 [[package]]
 name = "mozart-semver"
@@ -1250,25 +1192,6 @@ dependencies = [
  "regex",
  "serde_json",
  "tempfile",
-]
-
-[[package]]
-name = "mozart-vcs"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "base64",
- "indexmap",
- "mozart-core",
- "mozart-semver",
- "regex",
- "reqwest",
- "serde",
- "serde_json",
- "tempfile",
- "tokio",
- "tracing",
- "url",
 ]
 
 [[package]]

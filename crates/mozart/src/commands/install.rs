@@ -2,14 +2,14 @@ use clap::Args;
 use indexmap::IndexSet;
 use mozart_core::console;
 use mozart_core::console_format;
-use mozart_registry::installed;
-use mozart_registry::installer_executor::{
+use mozart_core::repository::installed;
+use mozart_core::repository::installer_executor::{
     Action, ExecuteContext, FilesystemExecutor, InstallerExecutor, PackageOperation,
     compute_operations, compute_stale_installed_aliases, format_full_pretty_version,
     format_full_pretty_version_for_installed, format_update_pretty_versions,
     locked_to_installed_entry, previously_installed_alias_versions,
 };
-use mozart_registry::lockfile;
+use mozart_core::repository::lockfile;
 use std::collections::BTreeMap;
 use std::path::Path;
 
@@ -815,7 +815,7 @@ pub async fn install_from_lock(
             let suffix = lock.content_hash.clone();
 
             let _result =
-                mozart_autoload::autoload::generate(&mozart_autoload::autoload::AutoloadConfig {
+                mozart_core::autoload::generate(&mozart_core::autoload::AutoloadConfig {
                     project_dir: working_dir.to_path_buf(),
                     vendor_dir: vendor_dir.to_path_buf(),
                     dev_mode,
@@ -826,7 +826,7 @@ pub async fn install_from_lock(
                     apcu_prefix: config.apcu_autoloader_prefix.clone(),
                     strict_psr: false,
                     strict_ambiguous: false,
-                    platform_check: mozart_autoload::autoload::PlatformCheckMode::Full,
+                    platform_check: mozart_core::autoload::PlatformCheckMode::Full,
                     ignore_platform_reqs: config.ignore_platform_reqs,
                 })?;
         }
@@ -835,19 +835,21 @@ pub async fn install_from_lock(
     Ok(())
 }
 
-/// CLI entry point. Builds production [`mozart_registry::repository::RepositorySet`]
+/// CLI entry point. Builds production [`mozart_core::repository::repository::RepositorySet`]
 /// (Packagist) and [`FilesystemExecutor`] from `cli`, then dispatches to [`run`].
 pub async fn execute(
     args: &InstallArgs,
     cli: &super::Cli,
     console: &mozart_core::console::Console,
 ) -> anyhow::Result<()> {
-    let cache_config = mozart_registry::cache::build_cache_config(cli.no_cache);
-    let repositories =
-        std::sync::Arc::new(mozart_registry::repository::RepositorySet::with_packagist(
-            mozart_registry::cache::Cache::repo(&cache_config),
-        ));
-    let mut executor = FilesystemExecutor::new(mozart_registry::cache::Cache::files(&cache_config));
+    let cache_config = mozart_core::repository::cache::build_cache_config(cli.no_cache);
+    let repositories = std::sync::Arc::new(
+        mozart_core::repository::repository::RepositorySet::with_packagist(
+            mozart_core::repository::cache::Cache::repo(&cache_config),
+        ),
+    );
+    let mut executor =
+        FilesystemExecutor::new(mozart_core::repository::cache::Cache::files(&cache_config));
     let working_dir = cli.working_dir()?;
     run(
         &working_dir,
@@ -875,7 +877,7 @@ pub async fn run(
     path_repo_base_override: Option<&Path>,
     args: &InstallArgs,
     console: &mozart_core::console::Console,
-    repositories: std::sync::Arc<mozart_registry::repository::RepositorySet>,
+    repositories: std::sync::Arc<mozart_core::repository::repository::RepositorySet>,
     executor: &mut dyn InstallerExecutor,
 ) -> anyhow::Result<()> {
     // Step 2: Validate arguments — order matches Composer's InstallCommand::execute (80–101):

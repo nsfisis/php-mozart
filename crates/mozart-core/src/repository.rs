@@ -1,0 +1,19 @@
+pub mod advisory;
+pub mod browse_repos;
+pub mod cache;
+pub mod composer_repo;
+pub mod download_manager;
+pub mod downloader;
+pub mod inline_package;
+pub mod installed;
+pub mod installer_executor;
+pub mod lockfile;
+pub mod packagist;
+pub mod path_repository;
+#[allow(clippy::module_inception)]
+pub mod repository;
+pub mod repository_filter;
+pub mod resolver;
+pub mod vcs_bridge;
+pub mod version;
+pub mod version_selector;

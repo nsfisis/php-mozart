@@ -62,7 +62,7 @@ pub async fn execute(
     // Iterate every package that contributes suggestions: locked/installed,
     // then root. Mirrors `$installedRepo->getPackages() + $composer->getPackage()`.
     if has_lock {
-        let lock = mozart_registry::lockfile::LockFile::read_from_file(&lock_path)?;
+        let lock = mozart_core::repository::lockfile::LockFile::read_from_file(&lock_path)?;
         for pkg in lock.packages.iter() {
             if filter.is_empty() || filter.contains(&pkg.name) {
                 reporter.add_suggestions_from_package(pkg);
@@ -79,7 +79,7 @@ pub async fn execute(
         }
     } else {
         let vendor_dir = working_dir.join("vendor");
-        let installed = mozart_registry::installed::InstalledPackages::read(&vendor_dir)?;
+        let installed = mozart_core::repository::installed::InstalledPackages::read(&vendor_dir)?;
 
         if installed.packages.is_empty() {
             let installed_json = vendor_dir.join("composer/installed.json");
@@ -148,9 +148,9 @@ fn build_installed_repo(
 
     if has_lock {
         let lock_path = working_dir.join("composer.lock");
-        let lock = mozart_registry::lockfile::LockFile::read_from_file(&lock_path)?;
+        let lock = mozart_core::repository::lockfile::LockFile::read_from_file(&lock_path)?;
 
-        let mut all_packages: Vec<&mozart_registry::lockfile::LockedPackage> =
+        let mut all_packages: Vec<&mozart_core::repository::lockfile::LockedPackage> =
             lock.packages.iter().collect();
         if !no_dev && let Some(ref pkgs_dev) = lock.packages_dev {
             all_packages.extend(pkgs_dev.iter());
@@ -179,7 +179,7 @@ fn build_installed_repo(
         }
     } else {
         let vendor_dir = working_dir.join("vendor");
-        let installed = mozart_registry::installed::InstalledPackages::read(&vendor_dir)?;
+        let installed = mozart_core::repository::installed::InstalledPackages::read(&vendor_dir)?;
 
         let dev_names: IndexSet<String> = installed
             .dev_package_names
@@ -238,8 +238,8 @@ mod tests {
     fn make_locked_package(
         name: &str,
         suggest: Option<BTreeMap<String, String>>,
-    ) -> mozart_registry::lockfile::LockedPackage {
-        mozart_registry::lockfile::LockedPackage {
+    ) -> mozart_core::repository::lockfile::LockedPackage {
+        mozart_core::repository::lockfile::LockedPackage {
             name: name.to_string(),
             version: "1.0.0".to_string(),
             version_normalized: None,
@@ -269,7 +269,7 @@ mod tests {
     fn make_installed_entry(
         name: &str,
         suggest: Option<BTreeMap<String, String>>,
-    ) -> mozart_registry::installed::InstalledPackageEntry {
+    ) -> mozart_core::repository::installed::InstalledPackageEntry {
         let mut extra_fields: BTreeMap<String, serde_json::Value> = BTreeMap::new();
         if let Some(s) = suggest {
             let map: serde_json::Map<String, serde_json::Value> = s
@@ -278,7 +278,7 @@ mod tests {
                 .collect();
             extra_fields.insert("suggest".to_string(), serde_json::Value::Object(map));
         }
-        mozart_registry::installed::InstalledPackageEntry {
+        mozart_core::repository::installed::InstalledPackageEntry {
             name: name.to_string(),
             version: "1.0.0".to_string(),
             version_normalized: None,
@@ -295,11 +295,11 @@ mod tests {
     }
 
     fn minimal_lock(
-        packages: Vec<mozart_registry::lockfile::LockedPackage>,
-        packages_dev: Option<Vec<mozart_registry::lockfile::LockedPackage>>,
-    ) -> mozart_registry::lockfile::LockFile {
-        mozart_registry::lockfile::LockFile {
-            readme: mozart_registry::lockfile::LockFile::default_readme(),
+        packages: Vec<mozart_core::repository::lockfile::LockedPackage>,
+        packages_dev: Option<Vec<mozart_core::repository::lockfile::LockedPackage>>,
+    ) -> mozart_core::repository::lockfile::LockFile {
+        mozart_core::repository::lockfile::LockFile {
+            readme: mozart_core::repository::lockfile::LockFile::default_readme(),
             content_hash: "abc123".to_string(),
             packages,
             packages_dev,

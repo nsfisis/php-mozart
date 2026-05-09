@@ -4,7 +4,7 @@ use crate::composer::Composer;
 use clap::Args;
 use mozart_core::console_writeln_error;
 use mozart_core::factory::create_config;
-use mozart_registry::cache::Cache;
+use mozart_core::repository::cache::Cache;
 
 #[derive(Args)]
 pub struct ClearCacheArgs {

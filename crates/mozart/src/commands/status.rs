@@ -5,7 +5,7 @@ use mozart_core::console::Console;
 use mozart_core::console_writeln;
 use mozart_core::console_writeln_error;
 use mozart_core::exit_code;
-use mozart_vcs::version_guesser::{VersionGuesser, VersionParser};
+use mozart_core::vcs::version_guesser::{VersionGuesser, VersionParser};
 
 #[derive(Args)]
 pub struct StatusArgs {}

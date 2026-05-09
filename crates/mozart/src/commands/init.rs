@@ -6,8 +6,8 @@ use mozart_core::console_format;
 use mozart_core::package::{
     self, RawAuthor, RawAutoload, RawPackageData, RawRepository, Stability,
 };
+use mozart_core::repository::{packagist, version};
 use mozart_core::validation;
-use mozart_registry::{packagist, version};
 use std::collections::BTreeMap;
 use std::io::{BufRead, Write};
 use std::path::Path;
@@ -66,8 +66,8 @@ pub async fn execute(
     cli: &super::Cli,
     console: &console::Console,
 ) -> anyhow::Result<()> {
-    let cache_config = mozart_registry::cache::build_cache_config(cli.no_cache);
-    let repo_cache = mozart_registry::cache::Cache::repo(&cache_config);
+    let cache_config = mozart_core::repository::cache::build_cache_config(cli.no_cache);
+    let repo_cache = mozart_core::repository::cache::Cache::repo(&cache_config);
 
     let working_dir = cli.working_dir()?;
 
@@ -235,7 +235,7 @@ async fn build_interactive(
     args: &InitArgs,
     console: &console::Console,
     working_dir: &Path,
-    repo_cache: &mozart_registry::cache::Cache,
+    repo_cache: &mozart_core::repository::cache::Cache,
 ) -> anyhow::Result<RawPackageData> {
     console.info("");
     console.info(&format!(
@@ -487,7 +487,7 @@ async fn interactive_search_packages(
     label: &str,
     already_required: &BTreeMap<String, String>,
     preferred_stability: Stability,
-    repo_cache: &mozart_registry::cache::Cache,
+    repo_cache: &mozart_core::repository::cache::Cache,
     console: &console::Console,
 ) -> anyhow::Result<BTreeMap<String, String>> {
     let stdin = std::io::stdin();

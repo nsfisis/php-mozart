@@ -144,7 +144,7 @@ fn load_installed_entries(
     no_dev: bool,
 ) -> anyhow::Result<Vec<LicenseEntry>> {
     let vendor_dir = working_dir.join("vendor");
-    let installed = mozart_registry::installed::InstalledPackages::read(&vendor_dir)?;
+    let installed = mozart_core::repository::installed::InstalledPackages::read(&vendor_dir)?;
 
     let entries: Vec<LicenseEntry> = installed.packages.iter().map(installed_to_entry).collect();
 
@@ -179,7 +179,7 @@ fn load_locked_entries(
             "Valid composer.json and composer.lock files are required to run this command with --locked"
         );
     }
-    let lock = mozart_registry::lockfile::LockFile::read_from_file(&lock_path)?;
+    let lock = mozart_core::repository::lockfile::LockFile::read_from_file(&lock_path)?;
 
     // Mirrors `Locker::getLockedRepository(!$noDev)`: the prod-only call
     // returns just `packages`, the dev-included call returns the union.
@@ -190,7 +190,9 @@ fn load_locked_entries(
     Ok(entries)
 }
 
-fn installed_to_entry(pkg: &mozart_registry::installed::InstalledPackageEntry) -> LicenseEntry {
+fn installed_to_entry(
+    pkg: &mozart_core::repository::installed::InstalledPackageEntry,
+) -> LicenseEntry {
     let licenses = pkg
         .extra_fields
         .get("license")
@@ -240,7 +242,7 @@ fn installed_to_entry(pkg: &mozart_registry::installed::InstalledPackageEntry) -
     }
 }
 
-fn locked_to_entry(pkg: &mozart_registry::lockfile::LockedPackage) -> LicenseEntry {
+fn locked_to_entry(pkg: &mozart_core::repository::lockfile::LockedPackage) -> LicenseEntry {
     let support_source = pkg
         .support
         .as_ref()
@@ -537,7 +539,7 @@ mod tests {
 
     #[test]
     fn installed_to_entry_extracts_require_and_license() {
-        use mozart_registry::installed::InstalledPackageEntry;
+        use mozart_core::repository::installed::InstalledPackageEntry;
         let mut extra = BTreeMap::new();
         extra.insert("license".to_string(), serde_json::json!(["MIT"]));
         extra.insert(
@@ -565,7 +567,7 @@ mod tests {
 
     #[test]
     fn installed_to_entry_pulls_support_source_and_source_url() {
-        use mozart_registry::installed::InstalledPackageEntry;
+        use mozart_core::repository::installed::InstalledPackageEntry;
         let pkg = InstalledPackageEntry {
             name: "vendor/pkg".to_string(),
             version: "1.0.0".to_string(),
@@ -608,8 +610,8 @@ mod tests {
         )
         .unwrap();
 
-        let mut installed = mozart_registry::installed::InstalledPackages::new();
-        installed.upsert(mozart_registry::installed::InstalledPackageEntry {
+        let mut installed = mozart_core::repository::installed::InstalledPackages::new();
+        installed.upsert(mozart_core::repository::installed::InstalledPackageEntry {
             name: "a/a".to_string(),
             version: "1.0.0".to_string(),
             version_normalized: None,
@@ -623,7 +625,7 @@ mod tests {
             support: None,
             extra_fields: BTreeMap::new(),
         });
-        installed.upsert(mozart_registry::installed::InstalledPackageEntry {
+        installed.upsert(mozart_core::repository::installed::InstalledPackageEntry {
             name: "b/b".to_string(),
             version: "1.0.0".to_string(),
             version_normalized: None,
@@ -653,7 +655,7 @@ mod tests {
 
     #[test]
     fn locked_no_dev_drops_packages_dev() {
-        use mozart_registry::lockfile::{LockFile, LockedPackage};
+        use mozart_core::repository::lockfile::{LockFile, LockedPackage};
         let dir = tempfile::tempdir().unwrap();
         let working_dir = dir.path();
         std::fs::write(

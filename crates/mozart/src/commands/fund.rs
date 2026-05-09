@@ -4,9 +4,9 @@ use mozart_core::console::{Console, hyperlink};
 use mozart_core::console_format;
 use mozart_core::console_writeln;
 use mozart_core::exit_code;
-use mozart_registry::cache::{Cache, build_cache_config};
-use mozart_registry::installed::InstalledPackages;
-use mozart_registry::repository::{PackageQuery, RepositorySet};
+use mozart_core::repository::cache::{Cache, build_cache_config};
+use mozart_core::repository::installed::InstalledPackages;
+use mozart_core::repository::repository::{PackageQuery, RepositorySet};
 use serde::Serialize;
 use std::collections::{BTreeMap, BTreeSet};
 

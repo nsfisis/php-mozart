@@ -337,7 +337,7 @@ fn check_lock_freshness(
         return;
     }
 
-    match mozart_registry::lockfile::LockFile::read_from_file(&lock_path) {
+    match mozart_core::repository::lockfile::LockFile::read_from_file(&lock_path) {
         Ok(lock) => {
             if !lock.is_fresh(composer_json_content) {
                 lock_errors.push(
@@ -578,7 +578,7 @@ mod tests {
 
     #[test]
     fn test_check_lock_freshness_fresh_lock() {
-        use mozart_registry::lockfile::LockFile;
+        use mozart_core::repository::lockfile::LockFile;
         use tempfile::tempdir;
 
         let dir = tempdir().unwrap();
@@ -614,7 +614,7 @@ mod tests {
 
     #[test]
     fn test_check_lock_freshness_stale_lock() {
-        use mozart_registry::lockfile::LockFile;
+        use mozart_core::repository::lockfile::LockFile;
         use tempfile::tempdir;
 
         let dir = tempdir().unwrap();

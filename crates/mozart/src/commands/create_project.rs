@@ -3,12 +3,12 @@ use indexmap::IndexMap;
 use mozart_core::console::Console;
 use mozart_core::console_format;
 use mozart_core::package::{self, Stability};
+use mozart_core::repository::downloader;
+use mozart_core::repository::lockfile;
+use mozart_core::repository::packagist;
+use mozart_core::repository::resolver::{self, PlatformConfig, ResolveRequest};
+use mozart_core::repository::version;
 use mozart_core::validation;
-use mozart_registry::downloader;
-use mozart_registry::lockfile;
-use mozart_registry::packagist;
-use mozart_registry::resolver::{self, PlatformConfig, ResolveRequest};
-use mozart_registry::version;
 use std::path::{Path, PathBuf};
 
 #[derive(Args)]
@@ -498,8 +498,8 @@ async fn install_project(
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
 
-    let cache_config = mozart_registry::cache::build_cache_config(cli.no_cache);
-    let repo_cache = mozart_registry::cache::Cache::repo(&cache_config);
+    let cache_config = mozart_core::repository::cache::build_cache_config(cli.no_cache);
+    let repo_cache = mozart_core::repository::cache::Cache::repo(&cache_config);
 
     let request = ResolveRequest {
         root_name: raw.name.clone(),
@@ -515,7 +515,7 @@ async fn install_project(
         ignore_platform_reqs: args.ignore_platform_reqs,
         ignore_platform_req_list: args.ignore_platform_req.clone(),
         repositories: std::sync::Arc::new(
-            mozart_registry::repository::RepositorySet::with_packagist(repo_cache.clone()),
+            mozart_core::repository::repository::RepositorySet::with_packagist(repo_cache.clone()),
         ),
         temporary_constraints: IndexMap::new(),
         raw_repositories: raw.repositories.clone(),
@@ -559,7 +559,7 @@ async fn install_project(
         composer_json: raw.clone(),
         include_dev: dev_mode,
         repositories: std::sync::Arc::new(
-            mozart_registry::repository::RepositorySet::with_packagist(repo_cache.clone()),
+            mozart_core::repository::repository::RepositorySet::with_packagist(repo_cache.clone()),
         ),
         previous_lock: None,
         lock_pinned_names: indexmap::IndexSet::new(),
@@ -611,9 +611,10 @@ async fn install_project(
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
 
-    let cache_config = mozart_registry::cache::build_cache_config(cli.no_cache);
-    let files_cache = mozart_registry::cache::Cache::files(&cache_config);
-    let mut executor = mozart_registry::installer_executor::FilesystemExecutor::new(files_cache);
+    let cache_config = mozart_core::repository::cache::build_cache_config(cli.no_cache);
+    let files_cache = mozart_core::repository::cache::Cache::files(&cache_config);
+    let mut executor =
+        mozart_core::repository::installer_executor::FilesystemExecutor::new(files_cache);
     super::install::install_from_lock(
         &new_lock,
         &target_dir,
@@ -726,9 +727,9 @@ async fn install_root_package(
     let (_, minimum_stability) = resolve_stability(stability, package_version.as_deref())?;
 
     // --- Find the best candidate matching constraint + stability ---
-    let cache_config = mozart_registry::cache::build_cache_config(cli.no_cache);
-    let repo_cache = mozart_registry::cache::Cache::repo(&cache_config);
-    let files_cache = mozart_registry::cache::Cache::files(&cache_config);
+    let cache_config = mozart_core::repository::cache::build_cache_config(cli.no_cache);
+    let repo_cache = mozart_core::repository::cache::Cache::repo(&cache_config);
+    let files_cache = mozart_core::repository::cache::Cache::files(&cache_config);
 
     let versions = packagist::fetch_package_versions(&name, &repo_cache).await?;
 

@@ -4,9 +4,9 @@ use crate::composer::Composer;
 use clap::Args;
 use indexmap::IndexMap;
 use mozart_core::advisory::{AbandonedHandling, AuditConfig, AuditFormat};
-use mozart_registry::advisory::{AuditOptions, Auditor, PackageInfo};
-use mozart_registry::cache::{Cache, build_cache_config};
-use mozart_registry::repository::RepositorySet;
+use mozart_core::repository::advisory::{AuditOptions, Auditor, PackageInfo};
+use mozart_core::repository::cache::{Cache, build_cache_config};
+use mozart_core::repository::repository::RepositorySet;
 
 #[derive(Args)]
 pub struct AuditArgs {
@@ -127,7 +127,7 @@ fn get_packages(composer: &Composer, args: &AuditArgs) -> anyhow::Result<Vec<Pac
 
 fn load_installed_packages(working_dir: &Path, no_dev: bool) -> anyhow::Result<Vec<PackageInfo>> {
     let vendor_dir = working_dir.join("vendor");
-    let installed = mozart_registry::installed::InstalledPackages::read(&vendor_dir)?;
+    let installed = mozart_core::repository::installed::InstalledPackages::read(&vendor_dir)?;
 
     let dev_names: indexmap::IndexSet<String> = installed
         .dev_package_names
@@ -166,9 +166,9 @@ fn load_locked_packages(working_dir: &Path, no_dev: bool) -> anyhow::Result<Vec<
         );
     }
 
-    let lock = mozart_registry::lockfile::LockFile::read_from_file(&lock_path)?;
+    let lock = mozart_core::repository::lockfile::LockFile::read_from_file(&lock_path)?;
 
-    let mut all_packages: Vec<&mozart_registry::lockfile::LockedPackage> =
+    let mut all_packages: Vec<&mozart_core::repository::lockfile::LockedPackage> =
         lock.packages.iter().collect();
 
     if !no_dev && let Some(ref pkgs_dev) = lock.packages_dev {
@@ -196,7 +196,7 @@ mod tests {
     use std::collections::BTreeMap;
 
     use super::*;
-    use mozart_registry::lockfile::{LockFile, LockedPackage};
+    use mozart_core::repository::lockfile::{LockFile, LockedPackage};
 
     fn make_pkg(name: &str, version: &str, version_normalized: Option<&str>) -> PackageInfo {
         PackageInfo {
@@ -228,8 +228,8 @@ mod tests {
         let working_dir = dir.path();
         let vendor_dir = working_dir.join("vendor");
 
-        let mut installed = mozart_registry::installed::InstalledPackages::new();
-        installed.upsert(mozart_registry::installed::InstalledPackageEntry {
+        let mut installed = mozart_core::repository::installed::InstalledPackages::new();
+        installed.upsert(mozart_core::repository::installed::InstalledPackageEntry {
             name: "monolog/monolog".to_string(),
             version: "1.5.0".to_string(),
             version_normalized: Some("1.5.0.0".to_string()),
@@ -259,8 +259,8 @@ mod tests {
         let working_dir = dir.path();
         let vendor_dir = working_dir.join("vendor");
 
-        let mut installed = mozart_registry::installed::InstalledPackages::new();
-        installed.upsert(mozart_registry::installed::InstalledPackageEntry {
+        let mut installed = mozart_core::repository::installed::InstalledPackages::new();
+        installed.upsert(mozart_core::repository::installed::InstalledPackageEntry {
             name: "monolog/monolog".to_string(),
             version: "1.5.0".to_string(),
             version_normalized: None,
@@ -274,7 +274,7 @@ mod tests {
             support: None,
             extra_fields: BTreeMap::new(),
         });
-        installed.upsert(mozart_registry::installed::InstalledPackageEntry {
+        installed.upsert(mozart_core::repository::installed::InstalledPackageEntry {
             name: "phpunit/phpunit".to_string(),
             version: "10.0.0".to_string(),
             version_normalized: None,

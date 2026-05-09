@@ -4,9 +4,9 @@ use mozart_core::console::Console;
 use mozart_core::console_writeln;
 use mozart_core::console_writeln_error;
 use mozart_core::exit_code;
-use mozart_registry::browse_repos::{BrowseRepos, CompletePackageView};
-use mozart_registry::cache::{Cache, build_cache_config};
-use mozart_registry::installed::InstalledPackages;
+use mozart_core::repository::browse_repos::{BrowseRepos, CompletePackageView};
+use mozart_core::repository::cache::{Cache, build_cache_config};
+use mozart_core::repository::installed::InstalledPackages;
 use std::process::Command;
 
 #[derive(Args)]

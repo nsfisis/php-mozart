@@ -109,13 +109,13 @@ pub async fn do_bump(
         // to an empty map (`getLockedRepository` would throw in PHP — Mozart degrades
         // gracefully because `bump` has nothing to bump in that case anyway).
         if composer.locker().is_locked() {
-            let lock = mozart_registry::lockfile::LockFile::read_from_file(lock_path)?;
+            let lock = mozart_core::repository::lockfile::LockFile::read_from_file(lock_path)?;
             build_locked_versions_from_lock(&lock)
         } else {
             IndexMap::new()
         }
     } else if composer.locker().is_locked() {
-        let lock = mozart_registry::lockfile::LockFile::read_from_file(lock_path)?;
+        let lock = mozart_core::repository::lockfile::LockFile::read_from_file(lock_path)?;
         if !lock.is_fresh(&contents) {
             console_writeln_error!(
                 io,
@@ -282,9 +282,10 @@ fn update_file_cleanly(
 /// successful in-place edit so the lockfile stays "fresh" for the next install.
 fn update_lock_hash(lock_path: &Path, composer_json_path: &Path) -> anyhow::Result<()> {
     let new_composer_json_content = std::fs::read_to_string(composer_json_path)?;
-    let new_hash =
-        mozart_registry::lockfile::LockFile::compute_content_hash(&new_composer_json_content)?;
-    let mut lock = mozart_registry::lockfile::LockFile::read_from_file(lock_path)?;
+    let new_hash = mozart_core::repository::lockfile::LockFile::compute_content_hash(
+        &new_composer_json_content,
+    )?;
+    let mut lock = mozart_core::repository::lockfile::LockFile::read_from_file(lock_path)?;
     lock.content_hash = new_hash;
     lock.write_to_file(lock_path)?;
     Ok(())
@@ -304,7 +305,7 @@ fn is_writable(path: &Path) -> bool {
 /// Build a map of lowercase package names to (pretty_version, version_normalized)
 /// from a parsed `composer.lock`.
 fn build_locked_versions_from_lock(
-    lock: &mozart_registry::lockfile::LockFile,
+    lock: &mozart_core::repository::lockfile::LockFile,
 ) -> IndexMap<String, (String, Option<String>)> {
     let mut map: IndexMap<String, (String, Option<String>)> = IndexMap::new();
     let all_packages = lock
@@ -352,7 +353,7 @@ fn strip_inline_constraint(arg: &str) -> &str {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use mozart_registry::lockfile::{LockFile, LockedPackage};
+    use mozart_core::repository::lockfile::{LockFile, LockedPackage};
     use tempfile::tempdir;
 
     fn minimal_lock(packages: Vec<LockedPackage>, packages_dev: Vec<LockedPackage>) -> LockFile {

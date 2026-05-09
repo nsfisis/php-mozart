@@ -5,6 +5,8 @@ use std::fmt;
 use std::fs;
 use std::path::Path;
 
+pub mod archiver;
+
 /// Package stability level.
 /// Higher value = less stable.
 /// Corresponds to `Composer\Package\BasePackage::STABILITY_*`.

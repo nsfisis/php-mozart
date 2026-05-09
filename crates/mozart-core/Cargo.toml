@@ -4,17 +4,33 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
+mozart-class-map-generator.workspace = true
 mozart-console-macros.workspace = true
+mozart-metadata-minifier.workspace = true
+mozart-php-serialize.workspace = true
+mozart-semver.workspace = true
 mozart-spdx-licenses.workspace = true
 anyhow.workspace = true
+async-trait.workspace = true
+base64.workspace = true
+bzip2.workspace = true
 colored.workspace = true
 dialoguer.workspace = true
+filetime.workspace = true
+flate2.workspace = true
 indexmap.workspace = true
+md5.workspace = true
 regex.workspace = true
 reqwest.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+sha1.workspace = true
+tar.workspace = true
+tempfile.workspace = true
+tokio.workspace = true
 tracing.workspace = true
+url.workspace = true
+zip.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

@@ -258,7 +258,7 @@ fn load_from_lockfile(lock_path: &Path) -> Result<Vec<PackageInfo>> {
     if !lock_path.exists() {
         anyhow::bail!("composer.lock not found — run `mozart install` first or omit --locked");
     }
-    let lock = mozart_registry::lockfile::LockFile::read_from_file(lock_path)?;
+    let lock = mozart_core::repository::lockfile::LockFile::read_from_file(lock_path)?;
 
     let mut packages: Vec<PackageInfo> = Vec::new();
 
@@ -291,7 +291,7 @@ fn load_from_lockfile(lock_path: &Path) -> Result<Vec<PackageInfo>> {
 
 fn load_from_installed(working_dir: &Path) -> Result<Vec<PackageInfo>> {
     let vendor_dir = working_dir.join("vendor");
-    let installed = mozart_registry::installed::InstalledPackages::read(&vendor_dir)?;
+    let installed = mozart_core::repository::installed::InstalledPackages::read(&vendor_dir)?;
 
     let packages = installed
         .packages

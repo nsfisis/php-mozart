@@ -3,12 +3,12 @@ use indexmap::{IndexMap, IndexSet};
 use mozart_core::console_format;
 use mozart_core::console_writeln;
 use mozart_core::package::{self, RawPackageData, Stability};
+use mozart_core::repository::lockfile;
+use mozart_core::repository::packagist;
+use mozart_core::repository::resolver::{self, PlatformConfig, ResolveRequest};
+use mozart_core::repository::version;
+use mozart_core::repository::version_selector::VersionSelector;
 use mozart_core::validation;
-use mozart_registry::lockfile;
-use mozart_registry::packagist;
-use mozart_registry::resolver::{self, PlatformConfig, ResolveRequest};
-use mozart_registry::version;
-use mozart_registry::version_selector::VersionSelector;
 use std::io::{BufRead, IsTerminal, Write};
 use std::path::{Path, PathBuf};
 
@@ -270,8 +270,8 @@ async fn do_update(
 ) -> anyhow::Result<()> {
     let working_dir = cli.working_dir()?;
     let vendor_dir = working_dir.join("vendor");
-    let cache_config = mozart_registry::cache::build_cache_config(cli.no_cache);
-    let repo_cache = mozart_registry::cache::Cache::repo(&cache_config);
+    let cache_config = mozart_core::repository::cache::build_cache_config(cli.no_cache);
+    let repo_cache = mozart_core::repository::cache::Cache::repo(&cache_config);
 
     let dev_mode = !args.update_no_dev;
 
@@ -322,7 +322,7 @@ async fn do_update(
         ignore_platform_reqs: args.ignore_platform_reqs,
         ignore_platform_req_list: args.ignore_platform_req.clone(),
         repositories: std::sync::Arc::new(
-            mozart_registry::repository::RepositorySet::with_packagist(repo_cache.clone()),
+            mozart_core::repository::repository::RepositorySet::with_packagist(repo_cache.clone()),
         ),
         temporary_constraints: IndexMap::new(),
         raw_repositories: raw.repositories.clone(),
@@ -444,7 +444,7 @@ async fn do_update(
         composer_json: raw.clone(),
         include_dev: dev_mode,
         repositories: std::sync::Arc::new(
-            mozart_registry::repository::RepositorySet::with_packagist(repo_cache.clone()),
+            mozart_core::repository::repository::RepositorySet::with_packagist(repo_cache.clone()),
         ),
         previous_lock: old_lock.clone(),
         lock_pinned_names: IndexSet::new(),
@@ -548,11 +548,11 @@ async fn do_update(
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
 
-        let files_cache = mozart_registry::cache::Cache::files(
-            &mozart_registry::cache::build_cache_config(cli.no_cache),
+        let files_cache = mozart_core::repository::cache::Cache::files(
+            &mozart_core::repository::cache::build_cache_config(cli.no_cache),
         );
         let mut executor =
-            mozart_registry::installer_executor::FilesystemExecutor::new(files_cache);
+            mozart_core::repository::installer_executor::FilesystemExecutor::new(files_cache);
         super::install::install_from_lock(
             &new_lock,
             &working_dir,
@@ -590,7 +590,7 @@ async fn interactive_search_packages(
     already_required: &indexmap::IndexSet<String>,
     preferred_stability: Stability,
     fixed: bool,
-    repo_cache: &mozart_registry::cache::Cache,
+    repo_cache: &mozart_core::repository::cache::Cache,
     console: &mozart_core::console::Console,
 ) -> anyhow::Result<Vec<String>> {
     let stdin = std::io::stdin();
@@ -784,8 +784,8 @@ pub async fn execute(
     cli: &super::Cli,
     console: &mozart_core::console::Console,
 ) -> anyhow::Result<()> {
-    let cache_config = mozart_registry::cache::build_cache_config(cli.no_cache);
-    let repo_cache = mozart_registry::cache::Cache::repo(&cache_config);
+    let cache_config = mozart_core::repository::cache::build_cache_config(cli.no_cache);
+    let repo_cache = mozart_core::repository::cache::Cache::repo(&cache_config);
 
     // --- Deprecated flag warnings ---
     // Mirrors Composer\Command\RequireCommand::execute() L134-136.
@@ -1316,7 +1316,7 @@ mod tests {
     async fn test_require_full_e2e() {
         use indexmap::IndexSet;
         use mozart_core::package::RawPackageData;
-        use mozart_registry::lockfile::{LockFileGenerationRequest, generate_lock_file};
+        use mozart_core::repository::lockfile::{LockFileGenerationRequest, generate_lock_file};
 
         let composer_json_content = r#"{"name": "test/project", "require": {"psr/log": "^3.0"}}"#;
         let composer_json: RawPackageData = serde_json::from_str(composer_json_content).unwrap();
@@ -1335,8 +1335,8 @@ mod tests {
             ignore_platform_reqs: false,
             ignore_platform_req_list: vec![],
             repositories: std::sync::Arc::new(
-                mozart_registry::repository::RepositorySet::with_packagist(
-                    mozart_registry::cache::Cache::new(
+                mozart_core::repository::repository::RepositorySet::with_packagist(
+                    mozart_core::repository::cache::Cache::new(
                         std::env::temp_dir().join("mozart-test-cache"),
                         false,
                     ),
@@ -1367,8 +1367,8 @@ mod tests {
             composer_json,
             include_dev: false,
             repositories: std::sync::Arc::new(
-                mozart_registry::repository::RepositorySet::with_packagist(
-                    mozart_registry::cache::Cache::new(
+                mozart_core::repository::repository::RepositorySet::with_packagist(
+                    mozart_core::repository::cache::Cache::new(
                         std::env::temp_dir().join("mozart-test-cache"),
                         false,
                     ),
@@ -1416,8 +1416,8 @@ mod tests {
             ignore_platform_reqs: false,
             ignore_platform_req_list: vec![],
             repositories: std::sync::Arc::new(
-                mozart_registry::repository::RepositorySet::with_packagist(
-                    mozart_registry::cache::Cache::new(
+                mozart_core::repository::repository::RepositorySet::with_packagist(
+                    mozart_core::repository::cache::Cache::new(
                         std::env::temp_dir().join("mozart-test-cache"),
                         false,
                     ),
@@ -1445,8 +1445,8 @@ mod tests {
             composer_json: raw,
             include_dev: false,
             repositories: std::sync::Arc::new(
-                mozart_registry::repository::RepositorySet::with_packagist(
-                    mozart_registry::cache::Cache::new(
+                mozart_core::repository::repository::RepositorySet::with_packagist(
+                    mozart_core::repository::cache::Cache::new(
                         std::env::temp_dir().join("mozart-test-cache"),
                         false,
                     ),

@@ -7,19 +7,14 @@ version = "0.1.0"
 edition = "2024"
 
 [workspace.dependencies]
-mozart-archiver = { path = "crates/mozart-archiver" }
-mozart-autoload = { path = "crates/mozart-autoload" }
 mozart-class-map-generator = { path = "crates/mozart-class-map-generator" }
-mozart-core = { path = "crates/mozart-core" }
 mozart-console-macros = { path = "crates/mozart-console-macros" }
+mozart-core = { path = "crates/mozart-core" }
 mozart-metadata-minifier = { path = "crates/mozart-metadata-minifier" }
 mozart-php-serialize = { path = "crates/mozart-php-serialize" }
-mozart-registry = { path = "crates/mozart-registry" }
-mozart-sat-resolver = { path = "crates/mozart-sat-resolver" }
 mozart-semver = { path = "crates/mozart-semver" }
 mozart-spdx-licenses = { path = "crates/mozart-spdx-licenses" }
 mozart-test-harness = { path = "crates/mozart-test-harness" }
-mozart-vcs = { path = "crates/mozart-vcs" }
 anyhow = "1.0.102"
 assert_cmd = "2.1.2"
 async-trait = "0.1.83"

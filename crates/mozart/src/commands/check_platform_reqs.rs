@@ -89,12 +89,13 @@ pub async fn execute(
         load_lock(&lock_path, args.no_dev, &mut installed_repo, &mut requires)?;
     } else {
         let installed_packages_present = installed_path.exists()
-            && !mozart_registry::installed::InstalledPackages::read(&vendor_dir)?
+            && !mozart_core::repository::installed::InstalledPackages::read(&vendor_dir)?
                 .packages
                 .is_empty();
 
         if installed_packages_present {
-            let installed = mozart_registry::installed::InstalledPackages::read(&vendor_dir)?;
+            let installed =
+                mozart_core::repository::installed::InstalledPackages::read(&vendor_dir)?;
             console_writeln_error!(
                 console,
                 "<info>Checking {}platform requirements for packages in the vendor dir</info>",
@@ -252,9 +253,10 @@ fn load_lock(
     repo: &mut InstalledRepoLite,
     requires: &mut BTreeMap<String, Vec<Link>>,
 ) -> anyhow::Result<()> {
-    let lock = mozart_registry::lockfile::LockFile::read_from_file(lock_path)?;
+    let lock = mozart_core::repository::lockfile::LockFile::read_from_file(lock_path)?;
 
-    let mut all: Vec<&mozart_registry::lockfile::LockedPackage> = lock.packages.iter().collect();
+    let mut all: Vec<&mozart_core::repository::lockfile::LockedPackage> =
+        lock.packages.iter().collect();
     if !no_dev && let Some(ref pkgs_dev) = lock.packages_dev {
         all.extend(pkgs_dev.iter());
     }
@@ -277,7 +279,7 @@ fn load_lock(
 }
 
 fn load_installed(
-    installed: &mozart_registry::installed::InstalledPackages,
+    installed: &mozart_core::repository::installed::InstalledPackages,
     no_dev: bool,
     repo: &mut InstalledRepoLite,
     requires: &mut BTreeMap<String, Vec<Link>>,

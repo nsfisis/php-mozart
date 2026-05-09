@@ -2,8 +2,8 @@ use clap::Args;
 use mozart_core::console::{Console, hyperlink};
 use mozart_core::console_format;
 use mozart_core::console_writeln;
-use mozart_registry::packagist::SearchResult;
-use mozart_registry::repository::{RepositorySet, SearchMode};
+use mozart_core::repository::packagist::SearchResult;
+use mozart_core::repository::repository::{RepositorySet, SearchMode};
 use serde::Serialize;
 
 /// JSON output structure matching Composer's search result schema.
@@ -111,8 +111,8 @@ pub async fn execute(args: &SearchArgs, cli: &super::Cli, console: &Console) -> 
     // 5. Build the repository set. Configured remote repositories from
     //    `composer.json` are not yet wired up; this is a known divergence
     //    from Composer's full `CompositeRepository`.
-    let cache_config = mozart_registry::cache::build_cache_config(cli.no_cache);
-    let repo_cache = mozart_registry::cache::Cache::repo(&cache_config);
+    let cache_config = mozart_core::repository::cache::build_cache_config(cli.no_cache);
+    let repo_cache = mozart_core::repository::cache::Cache::repo(&cache_config);
     let repos = RepositorySet::with_packagist(repo_cache);
 
     // 6. Dispatch.
@@ -199,7 +199,7 @@ mod tests {
 
     #[test]
     fn test_parse_search_response() {
-        use mozart_registry::packagist::SearchResponse;
+        use mozart_core::repository::packagist::SearchResponse;
 
         let json = r#"{
             "results": [
@@ -245,7 +245,7 @@ mod tests {
 
     #[test]
     fn test_parse_search_response_with_abandoned() {
-        use mozart_registry::packagist::SearchResponse;
+        use mozart_core::repository::packagist::SearchResponse;
 
         let json = r#"{
             "results": [
@@ -288,7 +288,7 @@ mod tests {
 
     #[test]
     fn test_parse_search_response_with_next() {
-        use mozart_registry::packagist::SearchResponse;
+        use mozart_core::repository::packagist::SearchResponse;
 
         let json = r#"{
             "results": [],

@@ -110,8 +110,8 @@ pub async fn execute(
     cli: &super::Cli,
     console: &mozart_core::console::Console,
 ) -> anyhow::Result<()> {
-    let cache_config = mozart_registry::cache::build_cache_config(cli.no_cache);
-    let repo_cache = mozart_registry::cache::Cache::repo(&cache_config);
+    let cache_config = mozart_core::repository::cache::build_cache_config(cli.no_cache);
+    let repo_cache = mozart_core::repository::cache::Cache::repo(&cache_config);
 
     // A9: --installed deprecation warning (mirrors Composer 143-145)
     if args.installed && !args.self_info {
@@ -296,12 +296,13 @@ async fn fetch_latest_for_package(
     name: &str,
     current_normalized: &str,
     args: &ShowArgs,
-    repo_cache: &mozart_registry::cache::Cache,
+    repo_cache: &mozart_core::repository::cache::Cache,
 ) -> anyhow::Result<LatestInfo> {
     use mozart_core::package::Stability;
-    use mozart_registry::version::find_best_candidate;
+    use mozart_core::repository::version::find_best_candidate;
 
-    let versions = mozart_registry::packagist::fetch_package_versions(name, repo_cache).await?;
+    let versions =
+        mozart_core::repository::packagist::fetch_package_versions(name, repo_cache).await?;
 
     let current_major = extract_major(current_normalized);
     let current_minor = extract_minor(current_normalized);
@@ -313,7 +314,7 @@ async fn fetch_latest_for_package(
         anyhow::bail!("Cannot determine major update for dev version of {name}");
     }
 
-    let filtered: Vec<mozart_registry::packagist::PackagistVersion> = versions
+    let filtered: Vec<mozart_core::repository::packagist::PackagistVersion> = versions
         .iter()
         .filter(|v| {
             let v_norm = &v.version_normalized;
@@ -355,7 +356,7 @@ fn abandoned_info(val: &serde_json::Value) -> Option<String> {
 }
 
 fn classify_update_category(current_normalized: &str, latest_normalized: &str) -> ListUpdateKind {
-    use mozart_registry::version::compare_normalized_versions;
+    use mozart_core::repository::version::compare_normalized_versions;
     use std::cmp::Ordering;
 
     if compare_normalized_versions(latest_normalized, current_normalized) != Ordering::Greater {
@@ -400,10 +401,10 @@ fn extract_minor(version_normalized: &str) -> u64 {
 // ============================================================================
 
 async fn collect_installed_entries(
-    packages: &[&mozart_registry::installed::InstalledPackageEntry],
+    packages: &[&mozart_core::repository::installed::InstalledPackageEntry],
     args: &ShowArgs,
     direct_names: &IndexSet<String>,
-    repo_cache: &mozart_registry::cache::Cache,
+    repo_cache: &mozart_core::repository::cache::Cache,
 ) -> Vec<PackageEntry> {
     let show_latest = args.latest || args.outdated;
     let mut entries = Vec::new();
@@ -435,7 +436,7 @@ async fn collect_installed_entries(
 
         if args.outdated {
             if let Some(ref li) = latest_info {
-                use mozart_registry::version::compare_normalized_versions;
+                use mozart_core::repository::version::compare_normalized_versions;
                 use std::cmp::Ordering;
                 if compare_normalized_versions(&li.version_normalized, &version_normalized)
                     != Ordering::Greater
@@ -462,10 +463,10 @@ async fn collect_installed_entries(
 }
 
 async fn collect_locked_entries(
-    packages: &[&mozart_registry::lockfile::LockedPackage],
+    packages: &[&mozart_core::repository::lockfile::LockedPackage],
     args: &ShowArgs,
     direct_names: &IndexSet<String>,
-    repo_cache: &mozart_registry::cache::Cache,
+    repo_cache: &mozart_core::repository::cache::Cache,
 ) -> Vec<PackageEntry> {
     let show_latest = args.latest || args.outdated;
     let mut entries = Vec::new();
@@ -497,7 +498,7 @@ async fn collect_locked_entries(
 
         if args.outdated {
             if let Some(ref li) = latest_info {
-                use mozart_registry::version::compare_normalized_versions;
+                use mozart_core::repository::version::compare_normalized_versions;
                 use std::cmp::Ordering;
                 if compare_normalized_versions(&li.version_normalized, &version_normalized)
                     != Ordering::Greater
@@ -803,7 +804,7 @@ fn render_list_json(
 
 /// Build a `PackageDetail` from an installed package entry.
 fn installed_to_detail(
-    pkg: &mozart_registry::installed::InstalledPackageEntry,
+    pkg: &mozart_core::repository::installed::InstalledPackageEntry,
     vendor_dir: &Path,
 ) -> PackageDetail {
     let install_path = vendor_dir.join(&pkg.name);
@@ -871,7 +872,7 @@ fn installed_to_detail(
 }
 
 /// Build a `PackageDetail` from a locked package entry.
-fn locked_to_detail(pkg: &mozart_registry::lockfile::LockedPackage) -> PackageDetail {
+fn locked_to_detail(pkg: &mozart_core::repository::lockfile::LockedPackage) -> PackageDetail {
     let mut names = vec![pkg.name.clone()];
     names.extend(pkg.provide.keys().cloned());
     names.extend(pkg.replace.keys().cloned());
@@ -927,7 +928,7 @@ fn locked_to_detail(pkg: &mozart_registry::lockfile::LockedPackage) -> PackageDe
 async fn print_package_detail(
     detail: &PackageDetail,
     args: &ShowArgs,
-    repo_cache: &mozart_registry::cache::Cache,
+    repo_cache: &mozart_core::repository::cache::Cache,
     console: &mozart_core::console::Console,
 ) -> anyhow::Result<()> {
     if args.format == "json" {
@@ -1157,7 +1158,7 @@ fn print_links_section(
 async fn print_package_detail_json(
     detail: &PackageDetail,
     args: &ShowArgs,
-    repo_cache: &mozart_registry::cache::Cache,
+    repo_cache: &mozart_core::repository::cache::Cache,
     console: &mozart_core::console::Console,
 ) -> anyhow::Result<()> {
     let mut obj = serde_json::json!({
@@ -1225,11 +1226,11 @@ async fn print_package_detail_json(
 async fn execute_installed(
     args: &ShowArgs,
     working_dir: &Path,
-    repo_cache: &mozart_registry::cache::Cache,
+    repo_cache: &mozart_core::repository::cache::Cache,
     console: &mozart_core::console::Console,
 ) -> anyhow::Result<()> {
     let vendor_dir = working_dir.join("vendor");
-    let installed = mozart_registry::installed::InstalledPackages::read(&vendor_dir)?;
+    let installed = mozart_core::repository::installed::InstalledPackages::read(&vendor_dir)?;
 
     if installed.packages.is_empty() {
         let composer_json_path = working_dir.join("composer.json");
@@ -1343,11 +1344,11 @@ async fn execute_installed(
 }
 
 fn filter_installed_packages<'a>(
-    installed: &'a mozart_registry::installed::InstalledPackages,
+    installed: &'a mozart_core::repository::installed::InstalledPackages,
     args: &ShowArgs,
     direct_names: &IndexSet<String>,
-) -> Vec<&'a mozart_registry::installed::InstalledPackageEntry> {
-    let mut packages: Vec<&mozart_registry::installed::InstalledPackageEntry> =
+) -> Vec<&'a mozart_core::repository::installed::InstalledPackageEntry> {
+    let mut packages: Vec<&mozart_core::repository::installed::InstalledPackageEntry> =
         installed.packages.iter().collect();
 
     // --no-dev: exclude dev packages
@@ -1376,7 +1377,7 @@ fn filter_installed_packages<'a>(
 async fn execute_locked(
     args: &ShowArgs,
     working_dir: &Path,
-    repo_cache: &mozart_registry::cache::Cache,
+    repo_cache: &mozart_core::repository::cache::Cache,
     console: &mozart_core::console::Console,
 ) -> anyhow::Result<()> {
     let lock_path = working_dir.join("composer.lock");
@@ -1386,9 +1387,9 @@ async fn execute_locked(
         );
     }
 
-    let lock = mozart_registry::lockfile::LockFile::read_from_file(&lock_path)?;
+    let lock = mozart_core::repository::lockfile::LockFile::read_from_file(&lock_path)?;
 
-    let mut packages: Vec<&mozart_registry::lockfile::LockedPackage> =
+    let mut packages: Vec<&mozart_core::repository::lockfile::LockedPackage> =
         lock.packages.iter().collect();
 
     if let Some(ref pkgs_dev) = lock.packages_dev
@@ -1573,10 +1574,10 @@ fn show_tree(
 
     let root = mozart_core::package::read_from_file(&composer_json_path)?;
 
-    let pkg_map: IndexMap<String, &mozart_registry::lockfile::LockedPackage>;
+    let pkg_map: IndexMap<String, &mozart_core::repository::lockfile::LockedPackage>;
     let lock_storage;
     if lock_path.exists() {
-        lock_storage = mozart_registry::lockfile::LockFile::read_from_file(&lock_path)?;
+        lock_storage = mozart_core::repository::lockfile::LockFile::read_from_file(&lock_path)?;
         pkg_map = lock_storage
             .packages
             .iter()
@@ -1635,7 +1636,7 @@ fn show_tree(
 fn print_tree_node(
     pkg_name: &str,
     constraint: &str,
-    pkg_map: &IndexMap<String, &mozart_registry::lockfile::LockedPackage>,
+    pkg_map: &IndexMap<String, &mozart_core::repository::lockfile::LockedPackage>,
     prefix: &str,
     child_prefix: &str,
     visited: &mut IndexSet<String>,
@@ -1736,7 +1737,7 @@ fn show_platform(
 
     let lock_path = working_dir.join("composer.lock");
     if lock_path.exists() {
-        let lock = mozart_registry::lockfile::LockFile::read_from_file(&lock_path)?;
+        let lock = mozart_core::repository::lockfile::LockFile::read_from_file(&lock_path)?;
 
         if let Some(obj) = lock.platform.as_object() {
             for (name, version_val) in obj {
@@ -1839,7 +1840,7 @@ fn show_platform(
 async fn show_available(
     args: &ShowArgs,
     working_dir: &Path,
-    repo_cache: &mozart_registry::cache::Cache,
+    repo_cache: &mozart_core::repository::cache::Cache,
     console: &mozart_core::console::Console,
 ) -> anyhow::Result<()> {
     if let Some(ref pkg_name) = args.package {
@@ -1847,21 +1848,21 @@ async fn show_available(
     }
 
     let vendor_dir = working_dir.join("vendor");
-    let installed = mozart_registry::installed::InstalledPackages::read(&vendor_dir);
+    let installed = mozart_core::repository::installed::InstalledPackages::read(&vendor_dir);
 
     let installed = match installed {
         Ok(i) if !i.packages.is_empty() => i,
         _ => {
             let lock_path = working_dir.join("composer.lock");
             if lock_path.exists() {
-                let lock = mozart_registry::lockfile::LockFile::read_from_file(&lock_path)?;
+                let lock = mozart_core::repository::lockfile::LockFile::read_from_file(&lock_path)?;
                 console_writeln!(
                     console,
                     "<info>Available versions for locked packages (from Packagist):</info>",
                 );
                 console_writeln!(console, "");
 
-                let mut all_packages: Vec<&mozart_registry::lockfile::LockedPackage> =
+                let mut all_packages: Vec<&mozart_core::repository::lockfile::LockedPackage> =
                     lock.packages.iter().collect();
                 if !args.no_dev
                     && let Some(ref dev_pkgs) = lock.packages_dev
@@ -1898,7 +1899,9 @@ async fn show_available(
             if is_platform_package(&pkg.name) {
                 continue;
             }
-            match mozart_registry::packagist::fetch_package_versions(&pkg.name, repo_cache).await {
+            match mozart_core::repository::packagist::fetch_package_versions(&pkg.name, repo_cache)
+                .await
+            {
                 Ok(versions) => {
                     let version_strings: Vec<String> =
                         versions.iter().map(|v| v.version.clone()).collect();
@@ -1934,11 +1937,12 @@ async fn show_available(
 
 async fn show_available_versions(
     pkg_name: &str,
-    repo_cache: &mozart_registry::cache::Cache,
+    repo_cache: &mozart_core::repository::cache::Cache,
     args: &ShowArgs,
     console: &mozart_core::console::Console,
 ) -> anyhow::Result<()> {
-    let versions = mozart_registry::packagist::fetch_package_versions(pkg_name, repo_cache).await?;
+    let versions =
+        mozart_core::repository::packagist::fetch_package_versions(pkg_name, repo_cache).await?;
     if versions.is_empty() {
         console_writeln!(console, "No versions found for {pkg_name}");
         return Ok(());
@@ -1967,10 +1971,10 @@ async fn show_available_versions(
 
 async fn show_available_versions_inline(
     pkg_name: &str,
-    repo_cache: &mozart_registry::cache::Cache,
+    repo_cache: &mozart_core::repository::cache::Cache,
     console: &mozart_core::console::Console,
 ) {
-    match mozart_registry::packagist::fetch_package_versions(pkg_name, repo_cache).await {
+    match mozart_core::repository::packagist::fetch_package_versions(pkg_name, repo_cache).await {
         Ok(versions) => {
             if versions.is_empty() {
                 console_writeln!(
@@ -2020,7 +2024,9 @@ fn format_version_highlight(version: &str) -> String {
     format!("* {}", format_version(version))
 }
 
-fn get_installed_description(pkg: &mozart_registry::installed::InstalledPackageEntry) -> String {
+fn get_installed_description(
+    pkg: &mozart_core::repository::installed::InstalledPackageEntry,
+) -> String {
     pkg.extra_fields
         .get("description")
         .and_then(|v| v.as_str())
@@ -2029,7 +2035,7 @@ fn get_installed_description(pkg: &mozart_registry::installed::InstalledPackageE
 }
 
 fn get_installed_keywords_vec(
-    pkg: &mozart_registry::installed::InstalledPackageEntry,
+    pkg: &mozart_core::repository::installed::InstalledPackageEntry,
 ) -> Vec<String> {
     pkg.extra_fields
         .get("keywords")
@@ -2042,7 +2048,9 @@ fn get_installed_keywords_vec(
         .unwrap_or_default()
 }
 
-fn get_installed_licenses(pkg: &mozart_registry::installed::InstalledPackageEntry) -> Vec<String> {
+fn get_installed_licenses(
+    pkg: &mozart_core::repository::installed::InstalledPackageEntry,
+) -> Vec<String> {
     pkg.extra_fields
         .get("license")
         .and_then(|v| v.as_array())
@@ -2055,7 +2063,7 @@ fn get_installed_licenses(pkg: &mozart_registry::installed::InstalledPackageEntr
 }
 
 fn get_installed_homepage(
-    pkg: &mozart_registry::installed::InstalledPackageEntry,
+    pkg: &mozart_core::repository::installed::InstalledPackageEntry,
 ) -> Option<String> {
     pkg.extra_fields
         .get("homepage")
@@ -2064,7 +2072,7 @@ fn get_installed_homepage(
 }
 
 fn get_installed_release_date(
-    pkg: &mozart_registry::installed::InstalledPackageEntry,
+    pkg: &mozart_core::repository::installed::InstalledPackageEntry,
 ) -> Option<String> {
     pkg.extra_fields
         .get("time")
@@ -2075,7 +2083,7 @@ fn get_installed_release_date(
 /// Extract a map of `{name: constraint}` from an installed package's
 /// extra_fields for the given key (e.g. "require", "conflict", "provide").
 fn get_installed_link_map(
-    pkg: &mozart_registry::installed::InstalledPackageEntry,
+    pkg: &mozart_core::repository::installed::InstalledPackageEntry,
     key: &str,
 ) -> BTreeMap<String, String> {
     pkg.extra_fields
@@ -2091,7 +2099,7 @@ fn get_installed_link_map(
 
 /// Extract a map of `{package: reason}` from an installed package's suggest field.
 fn get_installed_suggest_map(
-    pkg: &mozart_registry::installed::InstalledPackageEntry,
+    pkg: &mozart_core::repository::installed::InstalledPackageEntry,
 ) -> BTreeMap<String, String> {
     pkg.extra_fields
         .get("suggest")
@@ -2274,7 +2282,7 @@ mod tests {
             "description".to_string(),
             serde_json::Value::String("A logging library".to_string()),
         );
-        let pkg = mozart_registry::installed::InstalledPackageEntry {
+        let pkg = mozart_core::repository::installed::InstalledPackageEntry {
             name: "monolog/monolog".to_string(),
             version: "3.0.0".to_string(),
             version_normalized: None,
@@ -2294,7 +2302,7 @@ mod tests {
     #[test]
     fn test_get_installed_description_absent() {
         use std::collections::BTreeMap;
-        let pkg = mozart_registry::installed::InstalledPackageEntry {
+        let pkg = mozart_core::repository::installed::InstalledPackageEntry {
             name: "psr/log".to_string(),
             version: "3.0.0".to_string(),
             version_normalized: None,
@@ -2319,7 +2327,7 @@ mod tests {
             "keywords".to_string(),
             serde_json::json!(["log", "psr3", "logging"]),
         );
-        let pkg = mozart_registry::installed::InstalledPackageEntry {
+        let pkg = mozart_core::repository::installed::InstalledPackageEntry {
             name: "psr/log".to_string(),
             version: "3.0.0".to_string(),
             version_normalized: None,
