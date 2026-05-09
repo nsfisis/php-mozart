@@ -11,116 +11,6 @@
 //! `Composer\Command\BaseCommand::tryComposer()` for the upstream contract
 //! that [`Composer::require`] and [`Composer::try_load`] are modelled on.
 
-use std::path::{Path, PathBuf};
-
-use regex::Regex;
-
-use crate::config::Config;
-use crate::factory::create_composer;
-use crate::package::RawPackageData;
-
-/// Return the Composer home directory, respecting `COMPOSER_HOME` and falling
-/// back to the platform default using Composer-compatible logic.
-///
-/// On Unix:
-/// - If XDG is in use (any `XDG_*` env var exists, or `/etc/xdg` exists),
-///   prefer `$XDG_CONFIG_HOME/composer` (or `$HOME/.config/composer`).
-/// - Always include `$HOME/.composer` as a fallback candidate.
-/// - Return the first candidate directory that exists on disk;
-///   if none exist, return the first candidate.
-pub fn composer_home() -> PathBuf {
-    if let Ok(val) = std::env::var("COMPOSER_HOME")
-        && !val.is_empty()
-    {
-        return PathBuf::from(val);
-    }
-
-    #[cfg(target_os = "windows")]
-    {
-        if let Ok(appdata) = std::env::var("APPDATA")
-            && !appdata.is_empty()
-        {
-            return PathBuf::from(appdata).join("Composer");
-        }
-        return PathBuf::from("C:/ProgramData/ComposerSetup/bin");
-    }
-
-    #[cfg(not(target_os = "windows"))]
-    {
-        let home_dir = std::env::var("HOME")
-            .map(PathBuf::from)
-            .unwrap_or_else(|_| PathBuf::from("/tmp"));
-
-        let mut candidates: Vec<PathBuf> = Vec::new();
-
-        if use_xdg() {
-            let xdg_config = std::env::var("XDG_CONFIG_HOME")
-                .map(PathBuf::from)
-                .unwrap_or_else(|_| home_dir.join(".config"));
-            candidates.push(xdg_config.join("composer"));
-        }
-
-        candidates.push(home_dir.join(".composer"));
-
-        // Return first candidate that exists; otherwise return the first
-        candidates
-            .iter()
-            .find(|p| p.is_dir())
-            .cloned()
-            .unwrap_or_else(|| candidates.into_iter().next().unwrap())
-    }
-}
-
-#[cfg(not(target_os = "windows"))]
-fn use_xdg() -> bool {
-    std::env::vars().any(|(k, _)| k.starts_with("XDG_"))
-        || std::path::Path::new("/etc/xdg").is_dir()
-}
-
-/// Project-level Composer state. Mirrors `Composer\PartialComposer` /
-/// `Composer\Composer` in PHP, exposing the subset of getters command
-/// handlers need today: config, root package, repository manager,
-/// installation manager, autoload generator, and locker. More
-/// managers (download, …) can be layered on as commands need them.
-pub struct Composer {
-    project_dir: PathBuf,
-    config: Config,
-    package: RawPackageData,
-    repository_manager: RepositoryManager,
-    installation_manager: InstallationManager,
-    autoload_generator: AutoloadGenerator,
-    locker: Locker,
-}
-
-/// Which source the package was installed from. Mirrors
-/// `PackageInterface::getInstallationSource` ("source" | "dist").
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum InstallationSource {
-    Source,
-    Dist,
-}
-
-impl InstallationSource {
-    /// Parse the `installation-source` field from `installed.json`.
-    pub fn parse(s: &str) -> Option<Self> {
-        match s {
-            "source" => Some(InstallationSource::Source),
-            "dist" => Some(InstallationSource::Dist),
-            _ => None,
-        }
-    }
-}
-
-/// Source/dist descriptor — mirrors the nested `source`/`dist` objects in
-/// `installed.json`.
-#[derive(Debug, Clone)]
-pub struct PackageReference {
-    pub kind: String,
-    pub url: String,
-    pub reference: Option<String>,
-    pub shasum: Option<String>,
-}
-
 /// Subset of `Composer\Package\PackageInterface` carried through Mozart's
 /// `LocalRepository`. Holds the fields needed by both the installation
 /// manager (`prettyName`, `targetDir`) and the status command
@@ -214,181 +104,33 @@ impl LocalPackage {
     }
 }
 
-/// In-memory mirror of `Composer\Repository\InstalledFilesystemRepository`
-/// (`vendor/composer/installed.json`). Carries enough information for
-/// commands that walk the local install (currently: `dump-autoload`).
-pub struct LocalRepository {
-    packages: Vec<LocalPackage>,
-    /// Mirrors `InstalledRepositoryInterface::getDevMode()`: `Some(true)` when
-    /// the last install ran with dev requires, `Some(false)` when run with
-    /// `--no-dev`, and `None` when the flag was absent (the legacy v1
-    /// installed.json shape, or an in-memory repository that was never
-    /// hydrated from disk). Callers default to `true` on `None`, matching
-    /// `ReinstallCommand::execute`'s `getDevMode() ?? true`.
-    dev_mode: Option<bool>,
+/// Which source the package was installed from. Mirrors
+/// `PackageInterface::getInstallationSource` ("source" | "dist").
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InstallationSource {
+    Source,
+    Dist,
 }
 
-impl LocalRepository {
-    pub fn new(packages: Vec<LocalPackage>) -> Self {
-        Self {
-            packages,
-            dev_mode: None,
-        }
-    }
-
-    /// Build a [`LocalRepository`] with an explicit `dev` flag taken from
-    /// `vendor/composer/installed.json`'s top-level `dev` field.
-    pub fn with_dev_mode(packages: Vec<LocalPackage>, dev_mode: Option<bool>) -> Self {
-        Self { packages, dev_mode }
-    }
-
-    /// Mirror of `WritableRepositoryInterface::getCanonicalPackages` —
-    /// "at most one package of each name, with aliases unfolded". Mozart
-    /// does not yet model alias packages, so this is currently a straight
-    /// pass-through over the loaded packages.
-    pub fn get_canonical_packages(&self) -> impl Iterator<Item = &LocalPackage> {
-        self.packages.iter()
-    }
-
-    /// Mirror of `InstalledRepositoryInterface::getDevMode()` — returns
-    /// `None` when the source `installed.json` did not record a `dev`
-    /// flag (e.g. legacy v1 array form). Callers should default to
-    /// `true` on `None`, matching PHP's `?? true` coalesce.
-    pub fn dev_mode(&self) -> Option<bool> {
-        self.dev_mode
-    }
-}
-
-/// Mirror of `Composer\Repository\RepositoryManager`. Today only the
-/// local repository is wired up; remote repositories are loaded ad hoc by
-/// commands and will move here as the registry layer is ported.
-pub struct RepositoryManager {
-    local_repository: LocalRepository,
-}
-
-impl RepositoryManager {
-    pub fn new(local_repository: LocalRepository) -> Self {
-        Self { local_repository }
-    }
-
-    /// Mirror of `RepositoryManager::getLocalRepository`.
-    pub fn local_repository(&self) -> &LocalRepository {
-        &self.local_repository
-    }
-}
-
-/// Mirror of `Composer\Installer\InstallationManager`. Without an
-/// installer plugin chain Mozart only supports the `LibraryInstaller`
-/// behaviour (`vendor-dir/<pretty-name>(/<target-dir>)`).
-pub struct InstallationManager {
-    vendor_dir: PathBuf,
-}
-
-impl InstallationManager {
-    pub fn new(vendor_dir: PathBuf) -> Self {
-        Self { vendor_dir }
-    }
-
-    /// Resolved absolute path of the vendor directory. Not on PHP's
-    /// `InstallationManager`, but the autoload generator needs it
-    /// without the round-trip through `Config::get('vendor-dir')`.
-    pub fn vendor_dir(&self) -> &Path {
-        &self.vendor_dir
-    }
-
-    /// Mirror of `InstallationManager::getInstallPath` — the absolute
-    /// path on disk where a package's code is expected to live. Returns
-    /// `None` when the package has nothing on disk (metapackages); for
-    /// regular library packages this matches `LibraryInstaller::getInstallPath`.
-    pub fn get_install_path(&self, package: &LocalPackage) -> Option<PathBuf> {
-        let mut path = self.vendor_dir.join(package.pretty_name());
-        if let Some(td) = package.target_dir() {
-            path = path.join(td);
-        }
-        Some(path)
-    }
-}
-
-/// Mirror of `Composer\Autoload\AutoloadGenerator`.
-///
-/// PHP's class is stateful: `setDryRun`, `setDevMode`, … flip private
-/// flags that `dump()` later reads. Mozart deliberately diverges here —
-/// the per-call toggles live in [`AutoloadDumpOptions`] which is
-/// passed into `dump()` as a parameter, and [`AutoloadGenerator`] is a
-/// once-constructed handle that only holds dependencies that are
-/// genuinely lifetime-shared (PHP's `EventDispatcher` / `IO` will land
-/// here once they're ported). Today there are none, so the struct is
-/// empty — but keeping it as a real type preserves the
-/// `composer.autoload_generator().dump(...)` calling shape and gives a
-/// home for those dependencies later.
-pub struct AutoloadGenerator {
-    // Intentionally empty. EventDispatcher / IO will move here once
-    // ported; for now `dump()` (in `mozart-autoload`) reads everything
-    // it needs from its arguments.
-    _private: (),
-}
-
-impl AutoloadGenerator {
-    pub fn new() -> Self {
-        Self { _private: () }
-    }
-}
-
-impl Default for AutoloadGenerator {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-/// Per-invocation toggles passed to
-/// `mozart_autoload::AutoloadGeneratorExt::dump`.
-///
-/// Diverges from PHP, where these live on `AutoloadGenerator` itself
-/// and are flipped by `setDryRun` / `setDevMode` / … . In Mozart the
-/// generator carries no transient state, so commands assemble an
-/// [`AutoloadDumpOptions`] and hand it to `dump()` directly.
-pub struct AutoloadDumpOptions {
-    /// `None` mirrors PHP's `private ?bool $devMode = null` — meaning
-    /// "auto-detect from `installed.json`'s `dev` flag at dump time".
-    /// `Some(_)` corresponds to an explicit `setDevMode` call.
-    pub dev_mode: Option<bool>,
-    /// `setClassMapAuthoritative`.
-    pub class_map_authoritative: bool,
-    /// `setApcu` first arg.
-    pub apcu: bool,
-    /// `setApcu` second arg. The prefix is recorded even when `apcu`
-    /// is false, matching the PHP signature.
-    pub apcu_prefix: Option<String>,
-    /// `setRunScripts`.
-    pub run_scripts: bool,
-    /// `setDryRun`.
-    pub dry_run: bool,
-    /// `setPlatformRequirementFilter`. Defaults to
-    /// `PlatformRequirementFilterFactory::ignoreNothing()`.
-    pub platform_requirement_filter: PlatformRequirementFilter,
-}
-
-impl AutoloadDumpOptions {
-    /// Same defaults as PHP's `AutoloadGenerator::__construct` — every
-    /// toggle off, dev-mode unset (auto-detect), filter set to
-    /// `IgnoreNothing`.
-    pub fn new() -> Self {
-        Self {
-            dev_mode: None,
-            class_map_authoritative: false,
-            apcu: false,
-            apcu_prefix: None,
-            run_scripts: false,
-            dry_run: false,
-            platform_requirement_filter: PlatformRequirementFilter::ignore_nothing(),
+impl InstallationSource {
+    /// Parse the `installation-source` field from `installed.json`.
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "source" => Some(InstallationSource::Source),
+            "dist" => Some(InstallationSource::Dist),
+            _ => None,
         }
     }
 }
 
-impl Default for AutoloadDumpOptions {
-    fn default() -> Self {
-        Self::new()
-    }
+/// Source/dist descriptor — mirrors the nested `source`/`dist` objects in
+/// `installed.json`.
+#[derive(Debug, Clone)]
+pub struct PackageReference {
+    pub kind: String,
+    pub url: String,
+    pub reference: Option<String>,
+    pub shasum: Option<String>,
 }
 
 /// Mirror of `Composer\Filter\PlatformRequirementFilter\PlatformRequirementFilterInterface`
@@ -411,8 +153,8 @@ pub enum PlatformRequirementFilter {
     /// `None` for either regex means "no entries" (the corresponding
     /// list was empty), short-circuiting to no match.
     IgnoreList {
-        ignore_regex: Option<Regex>,
-        ignore_upper_bound_regex: Option<Regex>,
+        ignore_regex: Option<regex::Regex>,
+        ignore_upper_bound_regex: Option<regex::Regex>,
     },
 }
 
@@ -507,7 +249,7 @@ pub enum BoolOrList {
 /// Returns `None` when `names` is empty — Rust's `regex` crate refuses
 /// regexes that never match, so we model "match nothing" as the
 /// absence of a compiled regex and short-circuit at the call site.
-fn package_names_to_regexp(names: &[String]) -> anyhow::Result<Option<Regex>> {
+fn package_names_to_regexp(names: &[String]) -> anyhow::Result<Option<regex::Regex>> {
     if names.is_empty() {
         return Ok(None);
     }
@@ -516,21 +258,198 @@ fn package_names_to_regexp(names: &[String]) -> anyhow::Result<Option<Regex>> {
         .map(|n| regex::escape(n).replace("\\*", ".*"))
         .collect();
     let pattern = format!("(?i)^(?:{})$", parts.join("|"));
-    Ok(Some(Regex::new(&pattern)?))
+    Ok(Some(regex::Regex::new(&pattern)?))
 }
 
 /// Mirror of `Composer\Repository\PlatformRepository::isPlatformPackage`
 /// using the same canonical regex (`PLATFORM_PACKAGE_REGEX`).
 fn is_platform_package(name: &str) -> bool {
     use std::sync::OnceLock;
-    static RE: OnceLock<Regex> = OnceLock::new();
+    static RE: OnceLock<regex::Regex> = OnceLock::new();
     let re = RE.get_or_init(|| {
-        Regex::new(
+        regex::Regex::new(
             r"(?i)^(?:php(?:-64bit|-ipv6|-zts|-debug)?|hhvm|(?:ext|lib)-[a-z0-9](?:[_.-]?[a-z0-9]+)*|composer(?:-(?:plugin|runtime)-api)?)$",
         )
         .expect("PLATFORM_PACKAGE_REGEX compiles")
     });
     re.is_match(name)
+}
+
+/// In-memory mirror of `Composer\Repository\InstalledFilesystemRepository`
+/// (`vendor/composer/installed.json`). Carries enough information for
+/// commands that walk the local install (currently: `dump-autoload`).
+pub struct LocalRepository {
+    packages: Vec<LocalPackage>,
+    /// Mirrors `InstalledRepositoryInterface::getDevMode()`: `Some(true)` when
+    /// the last install ran with dev requires, `Some(false)` when run with
+    /// `--no-dev`, and `None` when the flag was absent (the legacy v1
+    /// installed.json shape, or an in-memory repository that was never
+    /// hydrated from disk). Callers default to `true` on `None`, matching
+    /// `ReinstallCommand::execute`'s `getDevMode() ?? true`.
+    dev_mode: Option<bool>,
+}
+
+impl LocalRepository {
+    pub fn new(packages: Vec<LocalPackage>) -> Self {
+        Self {
+            packages,
+            dev_mode: None,
+        }
+    }
+
+    /// Build a [`LocalRepository`] with an explicit `dev` flag taken from
+    /// `vendor/composer/installed.json`'s top-level `dev` field.
+    pub fn with_dev_mode(packages: Vec<LocalPackage>, dev_mode: Option<bool>) -> Self {
+        Self { packages, dev_mode }
+    }
+
+    /// Mirror of `WritableRepositoryInterface::getCanonicalPackages` —
+    /// "at most one package of each name, with aliases unfolded". Mozart
+    /// does not yet model alias packages, so this is currently a straight
+    /// pass-through over the loaded packages.
+    pub fn get_canonical_packages(&self) -> impl Iterator<Item = &LocalPackage> {
+        self.packages.iter()
+    }
+
+    /// Mirror of `InstalledRepositoryInterface::getDevMode()` — returns
+    /// `None` when the source `installed.json` did not record a `dev`
+    /// flag (e.g. legacy v1 array form). Callers should default to
+    /// `true` on `None`, matching PHP's `?? true` coalesce.
+    pub fn dev_mode(&self) -> Option<bool> {
+        self.dev_mode
+    }
+}
+
+/// Mirror of `Composer\Repository\RepositoryManager`. Today only the
+/// local repository is wired up; remote repositories are loaded ad hoc by
+/// commands and will move here as the registry layer is ported.
+pub struct RepositoryManager {
+    local_repository: LocalRepository,
+}
+
+impl RepositoryManager {
+    pub fn new(local_repository: LocalRepository) -> Self {
+        Self { local_repository }
+    }
+
+    /// Mirror of `RepositoryManager::getLocalRepository`.
+    pub fn local_repository(&self) -> &LocalRepository {
+        &self.local_repository
+    }
+}
+
+/// Mirror of `Composer\Installer\InstallationManager`. Without an
+/// installer plugin chain Mozart only supports the `LibraryInstaller`
+/// behaviour (`vendor-dir/<pretty-name>(/<target-dir>)`).
+pub struct InstallationManager {
+    vendor_dir: std::path::PathBuf,
+}
+
+impl InstallationManager {
+    pub fn new(vendor_dir: std::path::PathBuf) -> Self {
+        Self { vendor_dir }
+    }
+
+    /// Resolved absolute path of the vendor directory. Not on PHP's
+    /// `InstallationManager`, but the autoload generator needs it
+    /// without the round-trip through `Config::get('vendor-dir')`.
+    pub fn vendor_dir(&self) -> &std::path::Path {
+        &self.vendor_dir
+    }
+
+    /// Mirror of `InstallationManager::getInstallPath` — the absolute
+    /// path on disk where a package's code is expected to live. Returns
+    /// `None` when the package has nothing on disk (metapackages); for
+    /// regular library packages this matches `LibraryInstaller::getInstallPath`.
+    pub fn get_install_path(&self, package: &LocalPackage) -> Option<std::path::PathBuf> {
+        let mut path = self.vendor_dir.join(package.pretty_name());
+        if let Some(td) = package.target_dir() {
+            path = path.join(td);
+        }
+        Some(path)
+    }
+}
+
+/// Mirror of `Composer\Autoload\AutoloadGenerator`.
+///
+/// PHP's class is stateful: `setDryRun`, `setDevMode`, … flip private
+/// flags that `dump()` later reads. Mozart deliberately diverges here —
+/// the per-call toggles live in [`AutoloadDumpOptions`] which is
+/// passed into `dump()` as a parameter, and [`AutoloadGenerator`] is a
+/// once-constructed handle that only holds dependencies that are
+/// genuinely lifetime-shared (PHP's `EventDispatcher` / `IO` will land
+/// here once they're ported). Today there are none, so the struct is
+/// empty — but keeping it as a real type preserves the
+/// `composer.autoload_generator().dump(...)` calling shape and gives a
+/// home for those dependencies later.
+pub struct AutoloadGenerator {
+    // Intentionally empty. EventDispatcher / IO will move here once
+    // ported; for now `dump()` (in `mozart-autoload`) reads everything
+    // it needs from its arguments.
+    _private: (),
+}
+
+impl AutoloadGenerator {
+    pub fn new() -> Self {
+        Self { _private: () }
+    }
+}
+
+impl Default for AutoloadGenerator {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Per-invocation toggles passed to
+/// `mozart_autoload::AutoloadGeneratorExt::dump`.
+///
+/// Diverges from PHP, where these live on `AutoloadGenerator` itself
+/// and are flipped by `setDryRun` / `setDevMode` / … . In Mozart the
+/// generator carries no transient state, so commands assemble an
+/// [`AutoloadDumpOptions`] and hand it to `dump()` directly.
+pub struct AutoloadDumpOptions {
+    /// `None` mirrors PHP's `private ?bool $devMode = null` — meaning
+    /// "auto-detect from `installed.json`'s `dev` flag at dump time".
+    /// `Some(_)` corresponds to an explicit `setDevMode` call.
+    pub dev_mode: Option<bool>,
+    /// `setClassMapAuthoritative`.
+    pub class_map_authoritative: bool,
+    /// `setApcu` first arg.
+    pub apcu: bool,
+    /// `setApcu` second arg. The prefix is recorded even when `apcu`
+    /// is false, matching the PHP signature.
+    pub apcu_prefix: Option<String>,
+    /// `setRunScripts`.
+    pub run_scripts: bool,
+    /// `setDryRun`.
+    pub dry_run: bool,
+    /// `setPlatformRequirementFilter`. Defaults to
+    /// `PlatformRequirementFilterFactory::ignoreNothing()`.
+    pub platform_requirement_filter: PlatformRequirementFilter,
+}
+
+impl AutoloadDumpOptions {
+    /// Same defaults as PHP's `AutoloadGenerator::__construct` — every
+    /// toggle off, dev-mode unset (auto-detect), filter set to
+    /// `IgnoreNothing`.
+    pub fn new() -> Self {
+        Self {
+            dev_mode: None,
+            class_map_authoritative: false,
+            apcu: false,
+            apcu_prefix: None,
+            run_scripts: false,
+            dry_run: false,
+            platform_requirement_filter: PlatformRequirementFilter::ignore_nothing(),
+        }
+    }
+}
+
+impl Default for AutoloadDumpOptions {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 /// Mirror of `Composer\Package\Locker`. The full PHP class is a thick
@@ -540,17 +459,17 @@ fn is_platform_package(name: &str) -> bool {
 /// generator needs (`isLocked()` / `getLockData()['content-hash']`).
 /// The richer accessors will land as more commands are ported.
 pub struct Locker {
-    lock_file_path: PathBuf,
+    lock_file_path: std::path::PathBuf,
 }
 
 impl Locker {
-    pub fn new(lock_file_path: PathBuf) -> Self {
+    pub fn new(lock_file_path: std::path::PathBuf) -> Self {
         Self { lock_file_path }
     }
 
     /// Path to the underlying `composer.lock`. Mirrors
     /// `Locker::getJsonFile()->getPath()`.
-    pub fn lock_file_path(&self) -> &Path {
+    pub fn lock_file_path(&self) -> &std::path::Path {
         &self.lock_file_path
     }
 
@@ -591,111 +510,60 @@ pub struct LockData {
     pub content_hash: String,
 }
 
-impl Composer {
-    /// All-args constructor used by [`crate::factory::create_composer`].
-    /// Mirrors the PHP pattern of `new Composer()` followed by
-    /// `setConfig` / `setPackage` / `setRepositoryManager` /
-    /// `setInstallationManager` / `setAutoloadGenerator` / `setLocker`,
-    /// collapsed into a single immutable build.
-    pub fn new(
-        project_dir: PathBuf,
-        config: Config,
-        package: RawPackageData,
-        repository_manager: RepositoryManager,
-        installation_manager: InstallationManager,
-        autoload_generator: AutoloadGenerator,
-        locker: Locker,
-    ) -> Self {
-        Self {
-            project_dir,
-            config,
-            package,
-            repository_manager,
-            installation_manager,
-            autoload_generator,
-            locker,
+/// Return the Composer home directory, respecting `COMPOSER_HOME` and falling
+/// back to the platform default using Composer-compatible logic.
+///
+/// On Unix:
+/// - If XDG is in use (any `XDG_*` env var exists, or `/etc/xdg` exists),
+///   prefer `$XDG_CONFIG_HOME/composer` (or `$HOME/.config/composer`).
+/// - Always include `$HOME/.composer` as a fallback candidate.
+/// - Return the first candidate directory that exists on disk;
+///   if none exist, return the first candidate.
+pub fn composer_home() -> std::path::PathBuf {
+    if let Ok(val) = std::env::var("COMPOSER_HOME")
+        && !val.is_empty()
+    {
+        return std::path::PathBuf::from(val);
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        if let Ok(appdata) = std::env::var("APPDATA")
+            && !appdata.is_empty()
+        {
+            return std::path::PathBuf::from(appdata).join("Composer");
         }
+        return std::path::PathBuf::from("C:/ProgramData/ComposerSetup/bin");
     }
 
-    /// Load Composer state for `project_dir`, requiring a composer.json.
-    /// Mirrors `BaseCommand::requireComposer()`, which delegates to
-    /// `Factory::createComposer` after asserting the file exists.
-    pub fn require(project_dir: impl Into<PathBuf>) -> anyhow::Result<Self> {
-        let project_dir = project_dir.into();
-        let composer_json = project_dir.join("composer.json");
-        if !composer_json.exists() {
-            anyhow::bail!(
-                "Composer could not find a composer.json file in {}",
-                project_dir.display()
-            );
+    #[cfg(not(target_os = "windows"))]
+    {
+        let home_dir = std::env::var("HOME")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|_| std::path::PathBuf::from("/tmp"));
+
+        let mut candidates = Vec::new();
+
+        if use_xdg() {
+            let xdg_config = std::env::var("XDG_CONFIG_HOME")
+                .map(std::path::PathBuf::from)
+                .unwrap_or_else(|_| home_dir.join(".config"));
+            candidates.push(xdg_config.join("composer"));
         }
-        create_composer(project_dir, &composer_json)
-    }
 
-    /// Load Composer state for `project_dir`, returning `None` if no
-    /// composer.json exists. Other I/O or parse errors still propagate.
-    /// Mirrors `BaseCommand::tryComposer()`.
-    pub fn try_load(project_dir: impl Into<PathBuf>) -> anyhow::Result<Option<Self>> {
-        let project_dir = project_dir.into();
-        let composer_json = project_dir.join("composer.json");
-        if !composer_json.exists() {
-            return Ok(None);
-        }
-        create_composer(project_dir, &composer_json).map(Some)
-    }
+        candidates.push(home_dir.join(".composer"));
 
-    /// Load Composer state keyed on a specific `composer.json` file, deriving
-    /// the project directory from `file.parent()`. Mirrors
-    /// `ValidateCommand::createComposerInstance($file)` — Composer keys
-    /// instances on a file rather than a directory for non-default paths.
-    pub fn try_load_from_file(file: &Path) -> anyhow::Result<Option<Self>> {
-        let project_dir = file
-            .parent()
-            .map(Path::to_path_buf)
-            .unwrap_or_else(|| PathBuf::from("."));
-        Self::try_load(project_dir)
+        // Return first candidate that exists; otherwise return the first
+        candidates
+            .iter()
+            .find(|p| p.is_dir())
+            .cloned()
+            .unwrap_or_else(|| candidates.into_iter().next().unwrap())
     }
+}
 
-    pub fn project_dir(&self) -> &Path {
-        &self.project_dir
-    }
-
-    pub fn config(&self) -> &Config {
-        &self.config
-    }
-
-    /// Root package loaded from the project's `composer.json`. Mirrors
-    /// `Composer::getPackage()`; ideally this would return a fully
-    /// resolved `RootPackageInterface` equivalent, but Mozart does not
-    /// yet have a `RootPackageLoader` port — for now callers see the
-    /// raw, pre-normalised JSON shape.
-    pub fn package(&self) -> &RawPackageData {
-        &self.package
-    }
-
-    /// Mirror of `Composer::getRepositoryManager()`.
-    pub fn repository_manager(&self) -> &RepositoryManager {
-        &self.repository_manager
-    }
-
-    /// Mirror of `Composer::getInstallationManager()`.
-    pub fn installation_manager(&self) -> &InstallationManager {
-        &self.installation_manager
-    }
-
-    /// Mirror of `Composer::getAutoloadGenerator()`.
-    ///
-    /// Returned by shared reference because Mozart's
-    /// [`AutoloadGenerator`] is stateless — per-call toggles live on
-    /// [`AutoloadDumpOptions`] passed into `dump()`, not on the
-    /// generator itself. Diverges from PHP's
-    /// `$composer->getAutoloadGenerator()->setDryRun(...)` chain.
-    pub fn autoload_generator(&self) -> &AutoloadGenerator {
-        &self.autoload_generator
-    }
-
-    /// Mirror of `Composer::getLocker()`.
-    pub fn locker(&self) -> &Locker {
-        &self.locker
-    }
+#[cfg(not(target_os = "windows"))]
+fn use_xdg() -> bool {
+    std::env::vars().any(|(k, _)| k.starts_with("XDG_"))
+        || std::path::Path::new("/etc/xdg").is_dir()
 }

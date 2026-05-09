@@ -1,6 +1,7 @@
+use crate::composer::Composer;
 use clap::Args;
 use indexmap::IndexMap;
-use mozart_core::composer::{Composer, LocalRepository};
+use mozart_core::composer::LocalRepository;
 use mozart_core::console::Console;
 use mozart_core::{console_writeln, console_writeln_error};
 use std::collections::BTreeMap;

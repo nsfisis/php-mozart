@@ -1,6 +1,6 @@
+use crate::composer::Composer;
 use clap::Args;
 use indexmap::{IndexMap, IndexSet};
-use mozart_core::composer::Composer;
 use mozart_core::console_format;
 use mozart_core::package;
 use mozart_core::platform::is_platform_package;

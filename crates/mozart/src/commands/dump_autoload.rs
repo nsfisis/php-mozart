@@ -1,6 +1,7 @@
+use crate::composer::Composer;
 use clap::Args;
 use mozart_autoload::AutoloadGeneratorExt;
-use mozart_core::composer::{AutoloadDumpOptions, Composer};
+use mozart_core::composer::AutoloadDumpOptions;
 use mozart_core::console_writeln;
 
 #[derive(Args, Default)]

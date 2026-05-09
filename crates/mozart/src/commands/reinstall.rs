@@ -1,6 +1,7 @@
+use crate::composer::Composer;
 use clap::Args;
 use mozart_autoload::AutoloadGeneratorExt;
-use mozart_core::composer::{AutoloadDumpOptions, Composer, LocalPackage};
+use mozart_core::composer::{AutoloadDumpOptions, LocalPackage};
 use mozart_core::console_format;
 use mozart_core::validation::package_name_to_regexp;
 

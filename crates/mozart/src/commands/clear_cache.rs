@@ -1,7 +1,7 @@
 use std::{borrow::Cow, path::Path};
 
+use crate::composer::Composer;
 use clap::Args;
-use mozart_core::composer::Composer;
 use mozart_core::console_writeln_error;
 use mozart_core::factory::create_config;
 use mozart_registry::cache::Cache;

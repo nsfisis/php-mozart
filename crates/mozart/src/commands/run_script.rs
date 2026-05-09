@@ -1,5 +1,5 @@
+use crate::composer::Composer;
 use clap::Args;
-use mozart_core::composer::Composer;
 use mozart_core::script_events;
 use mozart_core::{console_writeln, console_writeln_error};
 use std::collections::BTreeMap;

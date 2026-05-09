@@ -1,6 +1,6 @@
+use crate::composer::Composer;
 use clap::Args;
 use indexmap::IndexMap;
-use mozart_core::composer::Composer;
 use mozart_core::console::Console;
 use mozart_core::console::hyperlink;
 use mozart_core::console_writeln;

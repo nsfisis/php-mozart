@@ -1,8 +1,7 @@
 use std::path::PathBuf;
 
+use mozart_core::composer::composer_home;
 use mozart_core::config_source::JsonConfigSource;
-
-use super::config_helpers::composer_home;
 
 /// Mirrors Composer's `BaseConfigCommand`: resolves the target config file path
 /// and enforces the `--file` ↔ `--global` mutual exclusivity.

@@ -1,5 +1,5 @@
+use crate::composer::Composer;
 use clap::Args;
-use mozart_core::composer::Composer;
 use mozart_core::config_validator::{ValidationResult, ValidatorOptions, validate_manifest};
 use mozart_core::console_format;
 use mozart_core::console_writeln;

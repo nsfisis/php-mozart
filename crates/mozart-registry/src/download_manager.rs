@@ -35,7 +35,10 @@ impl DownloadManager {
         Self { git_cache_dir }
     }
 
-    pub fn for_package(&self, package: &LocalPackage) -> Option<Box<dyn VcsDownloader>> {
+    pub fn get_downloader_for_package(
+        &self,
+        package: &LocalPackage,
+    ) -> Option<Box<dyn VcsDownloader>> {
         if package.package_type() == Some("metapackage") {
             return None;
         }
@@ -107,34 +110,34 @@ mod tests {
             None,
             Value::Null,
         );
-        assert!(dm.for_package(&p).is_none());
+        assert!(dm.get_downloader_for_package(&p).is_none());
     }
 
     #[test]
     fn dist_install_returns_none() {
         let dm = DownloadManager::new(PathBuf::from("/tmp/mz-test-cache"));
         let p = pkg(Some(InstallationSource::Dist), Some("git"));
-        assert!(dm.for_package(&p).is_none());
+        assert!(dm.get_downloader_for_package(&p).is_none());
     }
 
     #[test]
     fn source_install_with_git_returns_some() {
         let dm = DownloadManager::new(PathBuf::from("/tmp/mz-test-cache"));
         let p = pkg(Some(InstallationSource::Source), Some("git"));
-        assert!(dm.for_package(&p).is_some());
+        assert!(dm.get_downloader_for_package(&p).is_some());
     }
 
     #[test]
     fn unknown_source_kind_returns_none() {
         let dm = DownloadManager::new(PathBuf::from("/tmp/mz-test-cache"));
         let p = pkg(Some(InstallationSource::Source), Some("perforce"));
-        assert!(dm.for_package(&p).is_none());
+        assert!(dm.get_downloader_for_package(&p).is_none());
     }
 
     #[test]
     fn missing_installation_source_returns_none() {
         let dm = DownloadManager::new(PathBuf::from("/tmp/mz-test-cache"));
         let p = pkg(None, Some("git"));
-        assert!(dm.for_package(&p).is_none());
+        assert!(dm.get_downloader_for_package(&p).is_none());
     }
 }

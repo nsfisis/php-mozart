@@ -1,9 +1,9 @@
 use std::path::Path;
 
+use crate::composer::Composer;
 use clap::Args;
 use indexmap::IndexMap;
 use mozart_core::advisory::{AbandonedHandling, AuditConfig, AuditFormat};
-use mozart_core::composer::Composer;
 use mozart_registry::advisory::{AuditOptions, Auditor, PackageInfo};
 use mozart_registry::cache::{Cache, build_cache_config};
 use mozart_registry::repository::RepositorySet;

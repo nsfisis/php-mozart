@@ -1,14 +1,14 @@
+use super::config_helpers::{
+    add_repository, read_json_file, remove_repository, render_value, write_json_file,
+};
 use anyhow::anyhow;
 use clap::Args;
+use mozart_core::composer::composer_home;
 use mozart_core::config::resolve_references;
 use mozart_core::console_writeln;
 use mozart_core::factory::create_config;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
-
-use super::config_helpers::{
-    add_repository, composer_home, read_json_file, remove_repository, render_value, write_json_file,
-};
 
 #[derive(Args)]
 pub struct ConfigArgs {

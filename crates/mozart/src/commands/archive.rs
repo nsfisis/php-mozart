@@ -1,6 +1,6 @@
+use crate::composer::Composer;
 use clap::Args;
 use mozart_archiver::{ArchiveManager, ArchivePackage};
-use mozart_core::composer::Composer;
 use mozart_core::console_writeln;
 use mozart_core::factory::create_config;
 use std::borrow::Cow;

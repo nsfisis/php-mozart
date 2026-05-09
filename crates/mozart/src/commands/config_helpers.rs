@@ -1,7 +1,6 @@
 use anyhow::anyhow;
+use mozart_core::composer::composer_home;
 use std::path::{Path, PathBuf};
-
-pub(crate) use mozart_core::composer::composer_home;
 
 /// Read TLS-related options (`config.cafile`, `config.capath`) from the merged
 /// global + local config. Local values override global. Relative paths are

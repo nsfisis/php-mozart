@@ -1,4 +1,5 @@
 use clap::Args;
+use mozart_core::composer::composer_home;
 
 #[derive(Args)]
 pub struct GlobalArgs {
@@ -27,7 +28,7 @@ pub async fn execute(
         }
     };
 
-    let home = super::config_helpers::composer_home();
+    let home = composer_home();
 
     fs::create_dir_all(&home)?;
 

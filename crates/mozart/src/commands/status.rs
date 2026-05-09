@@ -1,11 +1,11 @@
+use crate::composer::Composer;
 use clap::Args;
 use indexmap::IndexMap;
-use mozart_core::composer::{Composer, InstallationSource, LocalPackage};
+use mozart_core::composer::{InstallationSource, LocalPackage};
 use mozart_core::console::Console;
 use mozart_core::console_writeln;
 use mozart_core::console_writeln_error;
 use mozart_core::exit_code;
-use mozart_registry::download_manager::DownloadManager;
 use mozart_vcs::version_guesser::VersionGuesser;
 
 #[derive(Args)]
@@ -26,19 +26,21 @@ pub async fn execute(
     cli: &super::Cli,
     console: &Console,
 ) -> anyhow::Result<()> {
-    let working_dir = cli.working_dir()?;
-    let composer = Composer::require(&working_dir)?;
+    let composer = Composer::require(cli.working_dir()?)?;
+
     let installed_repo = composer.repository_manager().local_repository();
+
+    let dm = composer.download_manager();
     let im = composer.installation_manager();
-    let dm = DownloadManager::new(im.vendor_dir().join(".cache").join("git"));
+
+    let mut errors = IndexMap::new();
+    let mut unpushed_changes = IndexMap::new();
+    let mut vcs_version_changes = IndexMap::new();
+
     let guesser = VersionGuesser::new();
 
-    let mut errors: IndexMap<String, String> = IndexMap::new();
-    let mut unpushed_changes: IndexMap<String, String> = IndexMap::new();
-    let mut vcs_version_changes: IndexMap<String, VcsVerChange> = IndexMap::new();
-
     for package in installed_repo.get_canonical_packages() {
-        let Some(downloader) = dm.for_package(package) else {
+        let Some(downloader) = dm.get_downloader_for_package(package) else {
             continue;
         };
         let Some(target_dir) = im.get_install_path(package) else {
@@ -111,6 +113,7 @@ pub async fn execute(
             console,
             "<error>You have changes in the following dependencies:</error>"
         );
+
         for (path, changes) in &errors {
             if verbose {
                 console_writeln!(console, "<info>{path}</info>:");
@@ -126,6 +129,7 @@ pub async fn execute(
             console,
             "<warning>You have unpushed changes on the current branch in the following dependencies:</warning>"
         );
+
         for (path, changes) in &unpushed_changes {
             if verbose {
                 console_writeln!(console, "<info>{path}</info>:");
@@ -141,6 +145,7 @@ pub async fn execute(
             console,
             "<warning>You have version variations in the following dependencies:</warning>"
         );
+
         for (path, change) in &vcs_version_changes {
             if verbose {
                 let mut prev = if change.previous.version.is_empty() {
@@ -173,8 +178,8 @@ pub async fn execute(
     }
 
     let code = (if !errors.is_empty() { 1 } else { 0 })
-        | (if !unpushed_changes.is_empty() { 2 } else { 0 })
-        | (if !vcs_version_changes.is_empty() {
+        + (if !unpushed_changes.is_empty() { 2 } else { 0 })
+        + (if !vcs_version_changes.is_empty() {
             4
         } else {
             0

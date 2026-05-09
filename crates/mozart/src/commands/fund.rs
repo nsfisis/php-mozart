@@ -1,5 +1,5 @@
+use crate::composer::Composer;
 use clap::Args;
-use mozart_core::composer::Composer;
 use mozart_core::console::{Console, hyperlink};
 use mozart_core::console_format;
 use mozart_core::console_writeln;

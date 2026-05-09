@@ -328,12 +328,6 @@ impl Config {
     }
 }
 
-fn substitute(s: &str, vendor_dir: &str, home: &str, cache_dir: &str) -> String {
-    s.replace("{$vendor-dir}", vendor_dir)
-        .replace("{$home}", home)
-        .replace("{$cache-dir}", cache_dir)
-}
-
 /// Resolve `{$vendor-dir}`, `{$home}`, and `{$cache-dir}` placeholders in
 /// string-valued fields.  Only one pass is performed (no recursive expansion).
 pub fn resolve_references(config: &mut Config) {
@@ -367,4 +361,10 @@ pub fn resolve_references(config: &mut Config) {
             }
         }
     }
+}
+
+fn substitute(s: &str, vendor_dir: &str, home: &str, cache_dir: &str) -> String {
+    s.replace("{$vendor-dir}", vendor_dir)
+        .replace("{$home}", home)
+        .replace("{$cache-dir}", cache_dir)
 }
