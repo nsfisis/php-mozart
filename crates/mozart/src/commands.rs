@@ -312,3 +312,25 @@ pub async fn execute(cli: &Cli) -> anyhow::Result<()> {
         Commands::Validate(args) => validate::execute(args, cli, &console).await,
     }
 }
+
+/// Creates PlatformRequirementFilter from CLI options. Priority:
+///
+/// 1. `--ignore-platform-reqs` → ignore every platform requirement
+/// 2. `--ignore-platform-req <name>...` (non-empty) → ignore the listed names
+/// 3. neither → ignore nothing
+///
+/// ref: \Composer\Command\BaseCommand::getPlatformRequirementFilter()
+pub(crate) fn get_platform_requirement_filter(
+    ignore_platform_reqs: bool,
+    ignore_platform_req: &[String],
+) -> anyhow::Result<mozart_core::composer::PlatformRequirementFilter> {
+    use mozart_core::composer::PlatformRequirementFilter;
+
+    if ignore_platform_reqs {
+        return Ok(PlatformRequirementFilter::ignore_all());
+    }
+    if !ignore_platform_req.is_empty() {
+        return PlatformRequirementFilter::from_list(ignore_platform_req);
+    }
+    Ok(PlatformRequirementFilter::ignore_nothing())
+}

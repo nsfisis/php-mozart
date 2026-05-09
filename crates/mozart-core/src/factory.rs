@@ -429,7 +429,7 @@ mod tests {
             let pkg = composer
                 .repository_manager()
                 .local_repository()
-                .canonical_packages()
+                .get_canonical_packages()
                 .next()
                 .unwrap();
 
@@ -457,7 +457,7 @@ mod tests {
             let pkg = composer
                 .repository_manager()
                 .local_repository()
-                .canonical_packages()
+                .get_canonical_packages()
                 .next()
                 .unwrap();
 
@@ -478,7 +478,7 @@ mod tests {
             let count = composer
                 .repository_manager()
                 .local_repository()
-                .canonical_packages()
+                .get_canonical_packages()
                 .count();
             assert_eq!(count, 0);
         }
@@ -499,7 +499,7 @@ mod tests {
             let names: Vec<&str> = composer
                 .repository_manager()
                 .local_repository()
-                .canonical_packages()
+                .get_canonical_packages()
                 .map(|p| p.pretty_name())
                 .collect();
             assert_eq!(names, vec!["a/a", "b/b"]);
@@ -541,7 +541,7 @@ mod tests {
             let pkg = composer
                 .repository_manager()
                 .local_repository()
-                .canonical_packages()
+                .get_canonical_packages()
                 .next()
                 .unwrap();
 

@@ -1,8 +1,6 @@
 use clap::Args;
 use mozart_autoload::AutoloadGeneratorExt;
-use mozart_core::composer::{
-    AutoloadDumpOptions, Composer, LocalPackage, PlatformRequirementFilter,
-};
+use mozart_core::composer::{AutoloadDumpOptions, Composer, LocalPackage};
 use mozart_core::console_format;
 use mozart_core::validation::package_name_to_regexp;
 
@@ -78,7 +76,7 @@ pub async fn execute(
             anyhow::bail!("You cannot specify package names and filter by type at the same time.");
         }
         let lower_types: Vec<String> = args.r#type.iter().map(|t| t.to_lowercase()).collect();
-        for package in local_repo.canonical_packages() {
+        for package in local_repo.get_canonical_packages() {
             // Composer compares against `getType()` — packages without a
             // `type` are normalised to `library` by the package loader.
             let pt = package.package_type().unwrap_or("library").to_lowercase();
@@ -94,7 +92,7 @@ pub async fn execute(
         for pattern in &args.packages {
             let pattern_regexp = package_name_to_regexp(pattern);
             let mut matched = false;
-            for package in local_repo.canonical_packages() {
+            for package in local_repo.get_canonical_packages() {
                 if pattern_regexp.is_match(package.pretty_name()) {
                     matched = true;
                     packages_to_reinstall.push(package);
@@ -201,7 +199,10 @@ pub async fn execute(
             apcu_prefix,
             run_scripts: false,
             dry_run: false,
-            platform_requirement_filter: get_platform_requirement_filter(args)?,
+            platform_requirement_filter: super::get_platform_requirement_filter(
+                args.ignore_platform_reqs,
+                &args.ignore_platform_req,
+            )?,
         };
 
         let _class_map = composer.autoload_generator().dump(
@@ -221,22 +222,4 @@ pub async fn execute(
     // TODO(plugins): dispatchScript(POST_INSTALL_CMD, dev_mode).
 
     Ok(())
-}
-
-/// Mirror of `BaseCommand::getPlatformRequirementFilter` for the
-/// `reinstall` command. Priority:
-/// 1. `--ignore-platform-reqs` → ignore every platform requirement
-/// 2. `--ignore-platform-req <name>...` (non-empty) → ignore the listed
-///    names (with `*` glob support)
-/// 3. neither → ignore nothing
-fn get_platform_requirement_filter(
-    args: &ReinstallArgs,
-) -> anyhow::Result<PlatformRequirementFilter> {
-    if args.ignore_platform_reqs {
-        return Ok(PlatformRequirementFilter::ignore_all());
-    }
-    if !args.ignore_platform_req.is_empty() {
-        return PlatformRequirementFilter::from_list(&args.ignore_platform_req);
-    }
-    Ok(PlatformRequirementFilter::ignore_nothing())
 }

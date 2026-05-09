@@ -1,6 +1,6 @@
 use clap::Args;
 use mozart_autoload::AutoloadGeneratorExt;
-use mozart_core::composer::{AutoloadDumpOptions, Composer, PlatformRequirementFilter};
+use mozart_core::composer::{AutoloadDumpOptions, Composer};
 use mozart_core::console_writeln;
 
 #[derive(Args, Default)]
@@ -55,14 +55,16 @@ pub async fn execute(
     cli: &super::Cli,
     console: &mozart_core::console::Console,
 ) -> anyhow::Result<()> {
-    let working_dir = cli.working_dir()?;
-    let composer = Composer::require(&working_dir)?;
+    let composer = Composer::require(cli.working_dir()?)?;
+
+    let installation_manager = composer.installation_manager();
+    let local_repo = composer.repository_manager().local_repository();
+    let package = composer.package();
+    let config = composer.config();
 
     let missing_dependencies = {
-        let installation_manager = composer.installation_manager();
-        let local_repo = composer.repository_manager().local_repository();
         let mut missing = false;
-        for local_pkg in local_repo.canonical_packages() {
+        for local_pkg in local_repo.get_canonical_packages() {
             if let Some(install_path) = installation_manager.get_install_path(local_pkg)
                 && !install_path.exists()
             {
@@ -77,13 +79,12 @@ pub async fn execute(
         missing
     };
 
-    let optimize = args.optimize || composer.config().optimize_autoloader;
-    let class_map_authoritative =
-        args.classmap_authoritative || composer.config().classmap_authoritative;
+    let optimize = args.optimize || config.optimize_autoloader;
+    let authoritative = args.classmap_authoritative || config.classmap_authoritative;
     let apcu_prefix = args.apcu_prefix.clone();
-    let apcu = apcu_prefix.is_some() || args.apcu || composer.config().apcu_autoloader;
+    let apcu = apcu_prefix.is_some() || args.apcu || config.apcu_autoloader;
 
-    let do_optimize = optimize || class_map_authoritative;
+    let do_optimize = optimize || authoritative;
     if args.strict_psr && !do_optimize {
         anyhow::bail!(
             "--strict-psr mode only works with optimized autoloader, use --optimize or --classmap-authoritative."
@@ -95,17 +96,16 @@ pub async fn execute(
         );
     }
 
-    console_writeln!(
-        console,
-        "<info>{}</info>",
-        if class_map_authoritative {
-            "Generating optimized autoload files (authoritative)"
-        } else if optimize {
-            "Generating optimized autoload files"
-        } else {
-            "Generating autoload files"
-        }
-    );
+    if authoritative {
+        console_writeln!(
+            console,
+            "<info>Generating optimized autoload files (authoritative)</info>",
+        );
+    } else if optimize {
+        console_writeln!(console, "<info>Generating optimized autoload files</info>");
+    } else {
+        console_writeln!(console, "<info>Generating autoload files</info>");
+    }
 
     let dev_mode = if args.dev {
         Some(true)
@@ -119,20 +119,23 @@ pub async fn execute(
     }
     let options = AutoloadDumpOptions {
         dev_mode,
-        class_map_authoritative,
+        class_map_authoritative: authoritative,
         apcu,
         apcu_prefix,
         run_scripts: true,
         dry_run: args.dry_run,
-        platform_requirement_filter: get_platform_requirement_filter(args)?,
+        platform_requirement_filter: super::get_platform_requirement_filter(
+            args.ignore_platform_reqs,
+            &args.ignore_platform_req,
+        )?,
     };
 
     let class_map = composer.autoload_generator().dump(
         &options,
-        composer.config(),
-        composer.repository_manager().local_repository(),
-        composer.package(),
-        composer.installation_manager(),
+        config,
+        local_repo,
+        package,
+        installation_manager,
         "composer",
         optimize,
         None,
@@ -141,7 +144,7 @@ pub async fn execute(
     )?;
     let number_of_classes = class_map.count();
 
-    if class_map_authoritative {
+    if authoritative {
         console_writeln!(
             console,
             "<info>Generated optimized autoload files (authoritative) containing {number_of_classes} classes</info>",
@@ -156,9 +159,7 @@ pub async fn execute(
     }
 
     if missing_dependencies || args.strict_psr && class_map.has_psr_violations() {
-        return Err(mozart_core::exit_code::bail_silent(
-            mozart_core::exit_code::GENERAL_ERROR,
-        ));
+        return Err(mozart_core::exit_code::bail_silent(1));
     }
 
     if args.strict_ambiguous && class_map.has_ambiguous_classes(false) {
@@ -166,22 +167,4 @@ pub async fn execute(
     }
 
     Ok(())
-}
-
-/// Mirror of `BaseCommand::getPlatformRequirementFilter` for the
-/// `dump-autoload` command. Priority:
-/// 1. `--ignore-platform-reqs` → ignore every platform requirement
-/// 2. `--ignore-platform-req <name>...` (non-empty) → ignore the listed
-///    names (with `*` glob support)
-/// 3. neither → ignore nothing
-fn get_platform_requirement_filter(
-    args: &DumpAutoloadArgs,
-) -> anyhow::Result<PlatformRequirementFilter> {
-    if args.ignore_platform_reqs {
-        return Ok(PlatformRequirementFilter::ignore_all());
-    }
-    if !args.ignore_platform_req.is_empty() {
-        return PlatformRequirementFilter::from_list(&args.ignore_platform_req);
-    }
-    Ok(PlatformRequirementFilter::ignore_nothing())
 }

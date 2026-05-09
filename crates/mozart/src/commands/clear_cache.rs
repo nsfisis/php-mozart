@@ -68,7 +68,7 @@ pub async fn execute(
             match key {
                 "cache-files-dir" => cache.gc(config.cache_files_ttl, config.cache_files_maxsize)?,
                 "cache-repo-dir" => cache.gc(config.cache_files_ttl, 1024 * 1024 * 1024 /* 1GB, this should almost never clear anything that is not outdated */)?,
-                "cache-vcs-dir" => cache.gc_vcs(config.cache_files_ttl)?,
+                "cache-vcs-dir" => cache.gc_vcs_cache(config.cache_files_ttl)?,
                 _ => unreachable!(),
             };
         } else {

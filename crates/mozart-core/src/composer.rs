@@ -246,7 +246,7 @@ impl LocalRepository {
     /// "at most one package of each name, with aliases unfolded". Mozart
     /// does not yet model alias packages, so this is currently a straight
     /// pass-through over the loaded packages.
-    pub fn canonical_packages(&self) -> impl Iterator<Item = &LocalPackage> {
+    pub fn get_canonical_packages(&self) -> impl Iterator<Item = &LocalPackage> {
         self.packages.iter()
     }
 

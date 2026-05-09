@@ -327,7 +327,7 @@ fn build_locked_versions_from_local(
     repo: &LocalRepository,
 ) -> IndexMap<String, (String, Option<String>)> {
     let mut map: IndexMap<String, (String, Option<String>)> = IndexMap::new();
-    for pkg in repo.canonical_packages() {
+    for pkg in repo.get_canonical_packages() {
         map.insert(
             pkg.pretty_name().to_lowercase(),
             (pkg.pretty_version().to_string(), None),

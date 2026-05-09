@@ -193,7 +193,7 @@ fn validate_dependencies(
     for package in composer
         .repository_manager()
         .local_repository()
-        .canonical_packages()
+        .get_canonical_packages()
     {
         // Mirrors Composer: `if ($package->getType() === 'metapackage') { continue; }`
         if package.package_type() == Some("metapackage") {

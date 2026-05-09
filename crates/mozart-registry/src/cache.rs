@@ -298,7 +298,7 @@ impl Cache {
     /// Each top-level subdirectory is one bare mirror keyed by sanitized URL.
     /// Deletes entire subdirectories whose mtime is older than `ttl_seconds`.
     /// Mirrors Composer's `Cache::gcVcsCache`.
-    pub fn gc_vcs(&self, ttl_seconds: u64) -> anyhow::Result<()> {
+    pub fn gc_vcs_cache(&self, ttl_seconds: u64) -> anyhow::Result<()> {
         if !self.enabled || !self.root.exists() {
             return Ok(());
         }
@@ -541,7 +541,7 @@ mod tests {
         )
         .unwrap();
 
-        cache.gc_vcs(3600).unwrap();
+        cache.gc_vcs_cache(3600).unwrap();
 
         assert!(!old_mirror.exists(), "expired mirror should be removed");
         assert!(new_mirror.exists(), "fresh mirror should remain");

@@ -37,7 +37,7 @@ pub async fn execute(
     let mut unpushed_changes: IndexMap<String, String> = IndexMap::new();
     let mut vcs_version_changes: IndexMap<String, VcsVerChange> = IndexMap::new();
 
-    for package in installed_repo.canonical_packages() {
+    for package in installed_repo.get_canonical_packages() {
         let Some(downloader) = dm.for_package(package) else {
             continue;
         };
