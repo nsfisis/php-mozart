@@ -46,7 +46,7 @@ pub async fn execute(
     let composer = Composer::require(&working_dir)?;
 
     // Parse audit config from composer.json's config.audit section
-    let audit_config = AuditConfig::from_config(composer.config(), true, AuditFormat::Table);
+    let audit_config = AuditConfig::from_config(composer.config(), true, AuditFormat::Table)?;
 
     // Resolve format: CLI arg > config default (table)
     let format = match args.format.as_deref() {
