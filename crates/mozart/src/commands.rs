@@ -96,6 +96,10 @@ impl Cli {
                 .map_err(|e| anyhow::anyhow!("Failed to get current directory: {}", e)),
         }
     }
+
+    fn is_verbose(&self) -> bool {
+        self.verbose > 0
+    }
 }
 
 #[derive(clap::Subcommand)]

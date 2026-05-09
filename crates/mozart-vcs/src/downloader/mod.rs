@@ -25,7 +25,7 @@ pub trait VcsDownloader {
     /// Detect local changes in the working copy.
     /// Returns `None` if clean, `Some(diff)` if modified.
     /// Mirrors `Composer\Downloader\ChangeReportInterface::getLocalChanges`.
-    fn local_changes(&self, target: &Path) -> Result<Option<String>>;
+    fn get_local_changes(&self, target: &Path) -> Result<Option<String>>;
 
     /// Detect commits present locally but not on the tracking remote.
     /// Returns `None` if there are no unpushed commits or the concept does
@@ -44,4 +44,13 @@ pub trait VcsDownloader {
 
     /// Get commit log between two references.
     fn commit_logs(&self, from: &str, to: &str, target: &Path) -> Result<String>;
+
+    /// instanceof ChangeReportInterface
+    fn is_change_report(&self) -> bool;
+
+    /// instanceof VcsCapableDownloaderInterface
+    fn is_vcs_capable_downloader(&self) -> bool;
+
+    /// instanceof DvcsDownloaderInterface
+    fn is_dvcs_downloader(&self) -> bool;
 }

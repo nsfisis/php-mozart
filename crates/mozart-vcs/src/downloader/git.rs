@@ -96,7 +96,7 @@ impl VcsDownloader for GitDownloader {
         Ok(())
     }
 
-    fn local_changes(&self, target: &Path) -> Result<Option<String>> {
+    fn get_local_changes(&self, target: &Path) -> Result<Option<String>> {
         if !target.join(".git").exists() {
             return Ok(None);
         }
@@ -222,6 +222,18 @@ impl VcsDownloader for GitDownloader {
             Some(target),
         )?;
         Ok(output.stdout)
+    }
+
+    fn is_change_report(&self) -> bool {
+        true
+    }
+
+    fn is_vcs_capable_downloader(&self) -> bool {
+        true
+    }
+
+    fn is_dvcs_downloader(&self) -> bool {
+        true
     }
 }
 

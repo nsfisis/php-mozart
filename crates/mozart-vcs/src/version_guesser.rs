@@ -20,6 +20,25 @@ use crate::process::ProcessExecutor;
 
 const DEFAULT_BRANCH_ALIAS: &str = "9999999-dev";
 
+/// Mirrors `Composer\Package\Version\VersionParser` (itself a thin wrapper
+/// around `Composer\Semver\VersionParser`). In Rust, semver parsing is
+/// handled by `mozart_semver` directly, so this type carries no state;
+/// it exists to keep `VersionGuesser::new` signature compatible with the
+/// PHP constructor.
+pub struct VersionParser;
+
+impl Default for VersionParser {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl VersionParser {
+    pub fn new() -> Self {
+        Self
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GuessedVersion {
     pub version: String,
@@ -35,12 +54,15 @@ pub struct VersionGuesser {
 
 impl Default for VersionGuesser {
     fn default() -> Self {
-        Self::new()
+        Self::new(VersionParser::new())
     }
 }
 
 impl VersionGuesser {
-    pub fn new() -> Self {
+    /// Mirrors `Composer\Package\Version\VersionGuesser::__construct`.
+    /// `_version_parser` is accepted for API parity but unused — Rust relies
+    /// on `mozart_semver` directly.
+    pub fn new(_version_parser: VersionParser) -> Self {
         Self {
             process: ProcessExecutor::new(),
         }

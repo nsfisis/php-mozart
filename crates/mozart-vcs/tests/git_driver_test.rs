@@ -165,13 +165,13 @@ fn test_git_downloader() {
     assert!(target.join("composer.json").exists());
 
     // Check no local changes
-    let changes = downloader.local_changes(&target).unwrap();
+    let changes = downloader.get_local_changes(&target).unwrap();
     assert!(changes.is_none(), "Expected no changes, got: {:?}", changes);
 
     // Untracked files alone must NOT count as local changes (matches
     // Composer's `git status --porcelain --untracked-files=no`).
     std::fs::write(target.join("untracked.txt"), "untracked").unwrap();
-    let changes = downloader.local_changes(&target).unwrap();
+    let changes = downloader.get_local_changes(&target).unwrap();
     assert!(
         changes.is_none(),
         "Untracked files should be ignored, got: {:?}",
@@ -180,7 +180,7 @@ fn test_git_downloader() {
 
     // Modifying a tracked file is a local change.
     std::fs::write(target.join("composer.json"), "{\"name\":\"changed\"}\n").unwrap();
-    let changes = downloader.local_changes(&target).unwrap();
+    let changes = downloader.get_local_changes(&target).unwrap();
     assert!(changes.is_some());
     assert!(changes.unwrap().contains("composer.json"));
 

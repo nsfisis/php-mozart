@@ -51,7 +51,7 @@ impl VcsDownloader for SvnDownloader {
         Ok(())
     }
 
-    fn local_changes(&self, target: &Path) -> Result<Option<String>> {
+    fn get_local_changes(&self, target: &Path) -> Result<Option<String>> {
         if !target.join(".svn").is_dir() {
             return Ok(None);
         }
@@ -71,5 +71,17 @@ impl VcsDownloader for SvnDownloader {
             .svn_util
             .execute(&["log", "-r", &range], Some(target))?;
         Ok(output.stdout)
+    }
+
+    fn is_change_report(&self) -> bool {
+        true
+    }
+
+    fn is_vcs_capable_downloader(&self) -> bool {
+        true
+    }
+
+    fn is_dvcs_downloader(&self) -> bool {
+        false
     }
 }
