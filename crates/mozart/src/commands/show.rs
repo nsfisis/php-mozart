@@ -8,7 +8,7 @@ use mozart_core::platform::is_platform_package;
 use std::collections::BTreeMap;
 use std::path::Path;
 
-#[derive(Args)]
+#[derive(Default, Args)]
 pub struct ShowArgs {
     /// Package to inspect
     pub package: Option<String>,
@@ -89,8 +89,8 @@ pub struct ShowArgs {
     pub strict: bool,
 
     /// Output format (text, json)
-    #[arg(short, long)]
-    pub format: Option<String>,
+    #[arg(short, long, default_value = "text")]
+    pub format: String,
 
     /// Disables listing of require-dev packages
     #[arg(long)]
@@ -152,13 +152,10 @@ pub async fn execute(
     }
 
     // --format validation
-    if let Some(ref fmt) = args.format
-        && fmt != "text"
-        && fmt != "json"
-    {
+    if args.format != "text" && args.format != "json" {
         anyhow::bail!(
             "Unsupported format \"{}\". See help for supported formats.",
-            fmt
+            args.format
         );
     }
 
@@ -539,7 +536,6 @@ fn render_package_list(
     console: &mozart_core::console::Console,
 ) -> anyhow::Result<bool> {
     let show_latest = args.latest || args.outdated;
-    let format = args.format.as_deref().unwrap_or("text");
 
     // A4: --sort-by-age (mirrors Composer 497-504)
     if args.sort_by_age {
@@ -548,7 +544,7 @@ fn render_package_list(
 
     let has_outdated = entries.iter().any(|e| e.latest_info.is_some());
 
-    if format == "json" {
+    if args.format == "json" {
         render_list_json(entries, section_key, console)?;
         return Ok(has_outdated);
     }
@@ -934,8 +930,7 @@ async fn print_package_detail(
     repo_cache: &mozart_registry::cache::Cache,
     console: &mozart_core::console::Console,
 ) -> anyhow::Result<()> {
-    let format = args.format.as_deref().unwrap_or("text");
-    if format == "json" {
+    if args.format == "json" {
         return print_package_detail_json(detail, args, repo_cache, console).await;
     }
 
@@ -1777,8 +1772,7 @@ fn show_platform(
 
     platform_packages.sort_by(|a, b| a.0.cmp(&b.0));
 
-    let format = args.format.as_deref().unwrap_or("text");
-    if format == "json" {
+    if args.format == "json" {
         let json_entries: Vec<serde_json::Value> = platform_packages
             .iter()
             .map(|(name, version, source)| {
@@ -1898,9 +1892,7 @@ async fn show_available(
     );
     console_writeln!(console, "");
 
-    let format = args.format.as_deref().unwrap_or("text");
-
-    if format == "json" {
+    if args.format == "json" {
         let mut json_entries: Vec<serde_json::Value> = Vec::new();
         for pkg in &installed.packages {
             if is_platform_package(&pkg.name) {
@@ -1952,8 +1944,7 @@ async fn show_available_versions(
         return Ok(());
     }
 
-    let format = args.format.as_deref().unwrap_or("text");
-    if format == "json" {
+    if args.format == "json" {
         let version_strings: Vec<String> = versions.iter().map(|v| v.version.clone()).collect();
         let output = serde_json::json!({
             "name": pkg_name,

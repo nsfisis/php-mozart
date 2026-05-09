@@ -58,11 +58,7 @@ pub struct OutdatedArgs {
     pub ignore_platform_reqs: bool,
 }
 
-/// `outdated` is a proxy command — it mirrors Composer's `OutdatedCommand::execute`
-/// (see `composer/src/Composer/Command/OutdatedCommand.php` 68–126), which remaps
-/// its options into a `show --latest [--outdated]` invocation. Keeping the logic
-/// in one place means every behavioral aspect (rendering, JSON shape, --strict,
-/// mutual-exclusion checks, ignore warnings, etc.) has a single source of truth.
+/// `outdated` is a proxy command, forwarding to `show --latest`.
 pub async fn execute(
     args: &OutdatedArgs,
     cli: &super::Cli,
@@ -70,18 +66,8 @@ pub async fn execute(
 ) -> anyhow::Result<()> {
     let show_args = super::show::ShowArgs {
         package: args.package.clone(),
-        version: None,
-        all: false,
         locked: args.locked,
-        installed: false,
-        platform: false,
-        available: false,
-        self_info: false,
-        name_only: false,
-        path: false,
-        tree: false,
         latest: true,
-        // Composer: `if (!--all) $args['--outdated'] = true;`
         outdated: !args.all,
         ignore: args.ignore.clone(),
         major_only: args.major_only,
@@ -90,10 +76,11 @@ pub async fn execute(
         sort_by_age: args.sort_by_age,
         direct: args.direct,
         strict: args.strict,
-        format: Some(args.format.clone()),
+        format: args.format.clone(),
         no_dev: args.no_dev,
         ignore_platform_req: args.ignore_platform_req.clone(),
         ignore_platform_reqs: args.ignore_platform_reqs,
+        ..Default::default()
     };
 
     super::show::execute(&show_args, cli, console).await
