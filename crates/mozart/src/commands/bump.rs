@@ -2,7 +2,6 @@ use clap::Args;
 use indexmap::IndexMap;
 use mozart_core::composer::{Composer, LocalRepository};
 use mozart_core::console::Console;
-use mozart_core::console_format;
 use mozart_core::{console_writeln, console_writeln_error};
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -69,10 +68,8 @@ pub async fn do_bump(
     if !is_readable(&composer_json_path) {
         console_writeln_error!(
             io,
-            &console_format!(
-                "<error>{} is not readable.</error>",
-                composer_json_path.display()
-            ),
+            "<error>{} is not readable.</error>",
+            composer_json_path.display(),
         );
         return Ok(mozart_core::exit_code::GENERAL_ERROR);
     }
@@ -82,10 +79,8 @@ pub async fn do_bump(
         Err(_) => {
             console_writeln_error!(
                 io,
-                &console_format!(
-                    "<error>{} is not readable.</error>",
-                    composer_json_path.display()
-                ),
+                "<error>{} is not readable.</error>",
+                composer_json_path.display(),
             );
             return Ok(mozart_core::exit_code::GENERAL_ERROR);
         }
@@ -94,10 +89,8 @@ pub async fn do_bump(
     if !is_writable(&composer_json_path) {
         console_writeln_error!(
             io,
-            &console_format!(
-                "<error>{} is not writable.</error>",
-                composer_json_path.display()
-            ),
+            "<error>{} is not writable.</error>",
+            composer_json_path.display(),
         );
         return Ok(mozart_core::exit_code::GENERAL_ERROR);
     }
@@ -125,9 +118,7 @@ pub async fn do_bump(
         if !lock.is_fresh(&contents) {
             console_writeln_error!(
                 io,
-                &console_format!(
-                    "<error>The lock file is not up to date with the latest changes in composer.json. Run the appropriate `update` to fix that before you use the `bump` command.</error>"
-                ),
+                "<error>The lock file is not up to date with the latest changes in composer.json. Run the appropriate `update` to fix that before you use the `bump` command.</error>",
             );
             return Ok(ERROR_LOCK_OUTDATED);
         }
@@ -140,22 +131,16 @@ pub async fn do_bump(
     if package_type != Some("project") && !dev_only {
         console_writeln_error!(
             io,
-            &console_format!(
-                "<warning>Warning: Bumping dependency constraints is not recommended for libraries as it will narrow down your dependencies and may cause problems for your users.</warning>"
-            ),
+            "<warning>Warning: Bumping dependency constraints is not recommended for libraries as it will narrow down your dependencies and may cause problems for your users.</warning>",
         );
         if package_type.is_none() {
             console_writeln_error!(
                 io,
-                &console_format!(
-                    "<warning>If your package is not a library, you can explicitly specify the \"type\" by using \"composer config type project\".</warning>"
-                ),
+                "<warning>If your package is not a library, you can explicitly specify the \"type\" by using \"composer config type project\".</warning>",
             );
             console_writeln_error!(
                 io,
-                &console_format!(
-                    "<warning>Alternatively you can use {dev_only_flag_hint} to only bump dependencies within \"require-dev\".</warning>"
-                ),
+                "<warning>Alternatively you can use {dev_only_flag_hint} to only bump dependencies within \"require-dev\".</warning>",
             );
         }
     }
@@ -244,35 +229,26 @@ pub async fn do_bump(
         if dry_run {
             console_writeln!(
                 io,
-                &console_format!(
-                    "<info>{} would be updated with:</info>",
-                    composer_json_path.display()
-                ),
+                "<info>{} would be updated with:</info>",
+                composer_json_path.display(),
             );
             for (require_type, packages) in &updates {
                 for (package, version) in packages {
-                    console_writeln!(
-                        io,
-                        &console_format!("<info> - {require_type}.{package}: {version}</info>"),
-                    );
+                    console_writeln!(io, "<info> - {require_type}.{package}: {version}</info>");
                 }
             }
         } else {
             console_writeln!(
                 io,
-                &console_format!(
-                    "<info>{} has been updated ({change_count} changes).</info>",
-                    composer_json_path.display()
-                ),
+                "<info>{} has been updated ({change_count} changes).</info>",
+                composer_json_path.display(),
             );
         }
     } else {
         console_writeln!(
             io,
-            &console_format!(
-                "<info>No requirements to update in {}.</info>",
-                composer_json_path.display()
-            ),
+            "<info>No requirements to update in {}.</info>",
+            composer_json_path.display(),
         );
     }
 

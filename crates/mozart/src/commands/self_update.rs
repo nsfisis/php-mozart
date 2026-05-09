@@ -1,6 +1,5 @@
 use clap::Args;
 use mozart_core::MOZART_VERSION;
-use mozart_core::console_format;
 use mozart_core::console_writeln;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -280,19 +279,14 @@ async fn update(
     if args.version.is_none() && target_version == current_version {
         console_writeln!(
             console,
-            &console_format!(
-                "<info>You are already using the latest available Mozart version {current_version} ({channel} channel).</info>"
-            ),
+            "<info>You are already using the latest available Mozart version {current_version} ({channel} channel).</info>"
         );
 
         if args.clean_backups {
             // Preserve the most recent backup
             let latest = find_latest_backup(data_dir).ok();
             clean_backups(data_dir, latest.as_deref())?;
-            console_writeln!(
-                console,
-                &console_format!("<comment>Old backups removed.</comment>"),
-            );
+            console_writeln!(console, "<comment>Old backups removed.</comment>");
         }
 
         return Ok(());
@@ -349,9 +343,7 @@ async fn update(
 
     console_writeln!(
         console,
-        &console_format!(
-            "<info>Mozart updated successfully from {current_version} to {target_version}</info>"
-        ),
+        "<info>Mozart updated successfully from {current_version} to {target_version}</info>"
     );
     console.info(&format!(
         "Use `mozart self-update --rollback` to return to version {current_version}"
@@ -359,10 +351,7 @@ async fn update(
 
     if args.clean_backups {
         clean_backups(data_dir, Some(&backup_path))?;
-        console_writeln!(
-            console,
-            &console_format!("<comment>Old backups removed.</comment>"),
-        );
+        console_writeln!(console, "<comment>Old backups removed.</comment>");
     }
 
     Ok(())
@@ -393,7 +382,7 @@ fn rollback(
 
     console_writeln!(
         console,
-        &console_format!("<info>Rollback successful. Restored version {backup_version}</info>"),
+        "<info>Rollback successful. Restored version {backup_version}</info>",
     );
 
     let _ = current_exe; // suppress unused warning

@@ -4,6 +4,7 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
+mozart-console-macros.workspace = true
 mozart-core.workspace = true
 mozart-metadata-minifier.workspace = true
 mozart-php-serialize.workspace = true

@@ -998,8 +998,10 @@ fn execute_read(
         for (key, value) in config.entries() {
             console_writeln!(
                 console,
-                &format!("[{}] {}", key, render_value(&value)),
                 mozart_core::console::Verbosity::Quiet,
+                "[{}] {}",
+                key,
+                render_value(&value),
             );
         }
         return Ok(());
@@ -1019,8 +1021,9 @@ fn execute_read(
                         if entry.get("name").and_then(|n| n.as_str()) == Some(repo_name) {
                             console_writeln!(
                                 console,
-                                &render_value(entry),
                                 mozart_core::console::Verbosity::Quiet,
+                                "{}",
+                                &render_value(entry),
                             );
                             return Ok(());
                         }
@@ -1035,8 +1038,9 @@ fn execute_read(
                 if let Some(v) = get_nested(&raw, key) {
                     console_writeln!(
                         console,
-                        &render_value(v),
                         mozart_core::console::Verbosity::Quiet,
+                        "{}",
+                        &render_value(v),
                     );
                     return Ok(());
                 }
@@ -1049,8 +1053,9 @@ fn execute_read(
                 if let Some(v) = raw.get(key.as_str()) {
                     console_writeln!(
                         console,
-                        &render_value(v),
                         mozart_core::console::Verbosity::Quiet,
+                        "{}",
+                        &render_value(v),
                     );
                     return Ok(());
                 }
@@ -1062,8 +1067,9 @@ fn execute_read(
                 Some(value) => {
                     console_writeln!(
                         console,
-                        &render_value(&value),
                         mozart_core::console::Verbosity::Quiet,
+                        "{}",
+                        &render_value(&value),
                     );
                 }
                 None => {

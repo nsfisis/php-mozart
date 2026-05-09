@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 use indexmap::IndexMap;
 use mozart_core::advisory::{AbandonedHandling, AuditFormat};
 use mozart_core::console::Console;
-use mozart_core::{console_format, console_writeln, console_writeln_error};
+use mozart_core::{console_writeln, console_writeln_error};
 
 use crate::packagist::SecurityAdvisory;
 use crate::repository::RepositorySet;
@@ -154,7 +154,7 @@ impl Auditor {
                 let msg = format!(
                     "Found {ignored_total} ignored security vulnerability advisor{plurality} affecting {ignored_pkg_count} package{pkg_plurality}{punctuation}"
                 );
-                console_writeln_error!(console, &console_format!("<info>{msg}</info>"));
+                console_writeln_error!(console, "<info>{msg}</info>");
                 self.output_advisories_ignored(console, &ignored_advisories, format);
             }
 
@@ -170,9 +170,9 @@ impl Auditor {
                     "Found {active_total} security vulnerability advisor{plurality} affecting {active_pkg_count} package{pkg_plurality}{punctuation}"
                 );
                 if options.warning_only {
-                    console_writeln_error!(console, &console_format!("<warning>{msg}</warning>"));
+                    console_writeln_error!(console, "<warning>{msg}</warning>");
                 } else {
-                    console_writeln_error!(console, &console_format!("<error>{msg}</error>"));
+                    console_writeln_error!(console, "<error>{msg}</error>");
                 }
                 self.output_advisories(console, &advisories, format);
             }
@@ -186,17 +186,17 @@ impl Auditor {
         } else {
             console_writeln_error!(
                 console,
-                &console_format!("<info>No security vulnerability advisories found.</info>")
+                "<info>No security vulnerability advisories found.</info>",
             );
         }
 
         if !unreachable_repos.is_empty() {
             console_writeln_error!(
                 console,
-                &console_format!("<warning>The following repositories were unreachable:</warning>")
+                "<warning>The following repositories were unreachable:</warning>",
             );
             for repo in &unreachable_repos {
-                console_writeln_error!(console, &format!("  - {repo}"));
+                console_writeln_error!(console, "  - {repo}");
             }
         }
 
@@ -461,20 +461,18 @@ impl Auditor {
             vw = value_width
         );
 
-        console_writeln_error!(console, &separator);
+        console_writeln_error!(console, "{}", separator);
         for (label, value) in &rows {
             console_writeln_error!(
                 console,
-                &format!(
-                    "| {:<lw$} | {:<vw$} |",
-                    label,
-                    value,
-                    lw = label_width,
-                    vw = value_width
-                ),
+                "| {:<lw$} | {:<vw$} |",
+                label,
+                value,
+                lw = label_width,
+                vw = value_width,
             );
         }
-        console_writeln_error!(console, &separator);
+        console_writeln_error!(console, "{}", &separator);
         console_writeln_error!(console, "");
     }
 
@@ -529,29 +527,21 @@ impl Auditor {
         installed_version: &str,
         ignore_reason: Option<&str>,
     ) {
-        console_writeln_error!(console, &format!("Package: {}", adv.package_name));
-        console_writeln_error!(console, &format!("Version: {installed_version}"));
+        console_writeln_error!(console, "Package: {}", adv.package_name);
+        console_writeln_error!(console, "Version: {installed_version}");
         console_writeln_error!(
             console,
-            &format!("Severity: {}", adv.severity.as_deref().unwrap_or(""))
+            "Severity: {}",
+            adv.severity.as_deref().unwrap_or(""),
         );
-        console_writeln_error!(console, &format!("Advisory ID: {}", adv.advisory_id));
-        console_writeln_error!(
-            console,
-            &format!("CVE: {}", adv.cve.as_deref().unwrap_or("NO CVE"))
-        );
-        console_writeln_error!(console, &format!("Title: {}", adv.title));
-        console_writeln_error!(
-            console,
-            &format!("URL: {}", adv.link.as_deref().unwrap_or(""))
-        );
-        console_writeln_error!(
-            console,
-            &format!("Affected versions: {}", adv.affected_versions)
-        );
-        console_writeln_error!(console, &format!("Reported at: {}", adv.reported_at));
+        console_writeln_error!(console, "Advisory ID: {}", adv.advisory_id);
+        console_writeln_error!(console, "CVE: {}", adv.cve.as_deref().unwrap_or("NO CVE"));
+        console_writeln_error!(console, "Title: {}", adv.title);
+        console_writeln_error!(console, "URL: {}", adv.link.as_deref().unwrap_or(""));
+        console_writeln_error!(console, "Affected versions: {}", adv.affected_versions);
+        console_writeln_error!(console, "Reported at: {}", adv.reported_at);
         if let Some(reason) = ignore_reason {
-            console_writeln_error!(console, &format!("Ignore reason: {reason}"));
+            console_writeln_error!(console, "Ignore reason: {reason}");
         }
     }
 
@@ -565,7 +555,7 @@ impl Auditor {
         let plurality = if count == 1 { "" } else { "s" };
         console_writeln_error!(
             console,
-            &console_format!("<error>Found {count} abandoned package{plurality}:</error>")
+            "<error>Found {count} abandoned package{plurality}:</error>",
         );
 
         if format == AuditFormat::Plain {
@@ -573,17 +563,16 @@ impl Auditor {
                 match &pkg.replacement {
                     Some(repl) => console_writeln_error!(
                         console,
-                        &format!(
-                            "{} ({}) is abandoned. Use {} instead.",
-                            pkg.name, pkg.version, repl
-                        ),
+                        "{} ({}) is abandoned. Use {} instead.",
+                        pkg.name,
+                        pkg.version,
+                        repl,
                     ),
                     None => console_writeln_error!(
                         console,
-                        &format!(
-                            "{} ({}) is abandoned. No replacement was suggested.",
-                            pkg.name, pkg.version
-                        ),
+                        "{} ({}) is abandoned. No replacement was suggested.",
+                        pkg.name,
+                        pkg.version,
                     ),
                 }
             }
@@ -612,27 +601,23 @@ impl Auditor {
 
         console_writeln_error!(
             console,
-            &format!(
-                "| {:<nw$} | {:<vw$} | {:<rw$} |",
-                "Abandoned Package",
-                "Version",
-                "Suggested Replacement",
-                nw = name_width,
-                vw = ver_width,
-                rw = repl_width
-            ),
+            "| {:<nw$} | {:<vw$} | {:<rw$} |",
+            "Abandoned Package",
+            "Version",
+            "Suggested Replacement",
+            nw = name_width,
+            vw = ver_width,
+            rw = repl_width,
         );
         console_writeln_error!(
             console,
-            &format!(
-                "+-{:-<nw$}-+-{:-<vw$}-+-{:-<rw$}-+",
-                "",
-                "",
-                "",
-                nw = name_width,
-                vw = ver_width,
-                rw = repl_width
-            ),
+            "+-{:-<nw$}-+-{:-<vw$}-+-{:-<rw$}-+",
+            "",
+            "",
+            "",
+            nw = name_width,
+            vw = ver_width,
+            rw = repl_width,
         );
         for pkg in packages {
             let replacement = pkg
@@ -641,15 +626,13 @@ impl Auditor {
                 .unwrap_or("No replacement suggested");
             console_writeln_error!(
                 console,
-                &format!(
-                    "| {:<nw$} | {:<vw$} | {:<rw$} |",
-                    pkg.name,
-                    pkg.version,
-                    replacement,
-                    nw = name_width,
-                    vw = ver_width,
-                    rw = repl_width
-                ),
+                "| {:<nw$} | {:<vw$} | {:<rw$} |",
+                pkg.name,
+                pkg.version,
+                replacement,
+                nw = name_width,
+                vw = ver_width,
+                rw = repl_width,
             );
         }
         console_writeln_error!(console, "");
@@ -739,7 +722,7 @@ impl Auditor {
         }
 
         let json_str = serde_json::to_string_pretty(&output).unwrap_or_else(|_| "{}".to_string());
-        console_writeln!(console, &json_str);
+        console_writeln!(console, "{}", &json_str);
     }
 }
 

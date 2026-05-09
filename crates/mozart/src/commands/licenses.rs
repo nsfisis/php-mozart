@@ -3,7 +3,6 @@ use indexmap::IndexMap;
 use mozart_core::composer::Composer;
 use mozart_core::console::Console;
 use mozart_core::console::hyperlink;
-use mozart_core::console_format;
 use mozart_core::console_writeln;
 use mozart_core::package_info;
 use mozart_core::package_info::PackageUrls;
@@ -273,18 +272,9 @@ fn render_text(
     } else {
         root_licenses.join(", ")
     };
-    console_writeln!(
-        console,
-        &console_format!("Name: <comment>{root_pretty_name}</comment>"),
-    );
-    console_writeln!(
-        console,
-        &console_format!("Version: <comment>{root_version}</comment>"),
-    );
-    console_writeln!(
-        console,
-        &console_format!("Licenses: <comment>{license_display}</comment>"),
-    );
+    console_writeln!(console, "Name: <comment>{root_pretty_name}</comment>");
+    console_writeln!(console, "Version: <comment>{root_version}</comment>");
+    console_writeln!(console, "Licenses: <comment>{license_display}</comment>");
     console_writeln!(console, "Dependencies:");
     console_writeln!(console, "");
 
@@ -307,13 +297,11 @@ fn render_text(
 
     console_writeln!(
         console,
-        &format!(
-            "{:<nw$}  {:<vw$}  Licenses",
-            "Name",
-            "Version",
-            nw = name_width,
-            vw = version_width
-        ),
+        "{:<nw$}  {:<vw$}  Licenses",
+        "Name",
+        "Version",
+        nw = name_width,
+        vw = version_width,
     );
 
     for entry in entries {
@@ -329,13 +317,11 @@ fn render_text(
         };
         console_writeln!(
             console,
-            &format!(
-                "{}  {:<vw$}  {}",
-                name_cell,
-                entry.version,
-                license_str,
-                vw = version_width
-            ),
+            "{}  {:<vw$}  {}",
+            name_cell,
+            entry.version,
+            license_str,
+            vw = version_width,
         );
     }
 }
@@ -379,7 +365,7 @@ fn render_json(
     let formatter = serde_json::ser::PrettyFormatter::with_indent(b"    ");
     let mut ser = serde_json::Serializer::with_formatter(buf, formatter);
     output.serialize(&mut ser)?;
-    console_writeln!(console, &String::from_utf8(ser.into_inner())?,);
+    console_writeln!(console, "{}", &String::from_utf8(ser.into_inner())?);
     Ok(())
 }
 
@@ -409,31 +395,27 @@ fn render_summary(entries: &[LicenseEntry], console: &Console) {
     let border_col1 = "-".repeat(license_width + 2);
     let border_col2 = "-".repeat(count_width + 2);
 
-    console_writeln!(console, &format!(" {} {}", border_col1, border_col2),);
+    console_writeln!(console, " {} {}", border_col1, border_col2);
     console_writeln!(
         console,
-        &format!(
-            "  {:<lw$}   {:<cw$}",
-            "License",
-            COL2_HEADER,
-            lw = license_width,
-            cw = count_width
-        ),
+        "  {:<lw$}   {:<cw$}",
+        "License",
+        COL2_HEADER,
+        lw = license_width,
+        cw = count_width,
     );
-    console_writeln!(console, &format!(" {} {}", border_col1, border_col2),);
+    console_writeln!(console, " {} {}", border_col1, border_col2);
     for (license, count) in &counts {
         console_writeln!(
             console,
-            &format!(
-                "  {:<lw$}   {:<cw$}",
-                license,
-                count,
-                lw = license_width,
-                cw = count_width
-            ),
+            "  {:<lw$}   {:<cw$}",
+            license,
+            count,
+            lw = license_width,
+            cw = count_width,
         );
     }
-    console_writeln!(console, &format!(" {} {}", border_col1, border_col2),);
+    console_writeln!(console, " {} {}", border_col1, border_col2);
 }
 
 /// Mirror of `LicensesCommand::execute`'s `summary` accumulator.

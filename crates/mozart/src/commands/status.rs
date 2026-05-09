@@ -2,7 +2,6 @@ use clap::Args;
 use indexmap::IndexMap;
 use mozart_core::composer::{Composer, InstallationSource, LocalPackage};
 use mozart_core::console::Console;
-use mozart_core::console_format;
 use mozart_core::console_writeln;
 use mozart_core::console_writeln_error;
 use mozart_core::exit_code;
@@ -100,7 +99,7 @@ pub async fn execute(
     }
 
     if errors.is_empty() && unpushed_changes.is_empty() && vcs_version_changes.is_empty() {
-        console_writeln_error!(console, &console_format!("<info>No local changes</info>"));
+        console_writeln_error!(console, "<info>No local changes</info>");
         return Ok(());
     }
 
@@ -110,14 +109,14 @@ pub async fn execute(
     if !errors.is_empty() {
         console_writeln_error!(
             console,
-            &console_format!("<error>You have changes in the following dependencies:</error>")
+            "<error>You have changes in the following dependencies:</error>"
         );
         for (path, changes) in &errors {
             if verbose {
-                console_writeln!(console, &console_format!("<info>{path}</info>:"));
-                console_writeln!(console, &indent_block(changes));
+                console_writeln!(console, "<info>{path}</info>:");
+                console_writeln!(console, "{}", &indent_block(changes));
             } else {
-                console_writeln!(console, path);
+                console_writeln!(console, "{}", path);
             }
         }
     }
@@ -125,16 +124,14 @@ pub async fn execute(
     if !unpushed_changes.is_empty() {
         console_writeln_error!(
             console,
-            &console_format!(
-                "<warning>You have unpushed changes on the current branch in the following dependencies:</warning>"
-            )
+            "<warning>You have unpushed changes on the current branch in the following dependencies:</warning>"
         );
         for (path, changes) in &unpushed_changes {
             if verbose {
-                console_writeln!(console, &console_format!("<info>{path}</info>:"));
-                console_writeln!(console, &indent_block(changes));
+                console_writeln!(console, "<info>{path}</info>:");
+                console_writeln!(console, "{}", &indent_block(changes));
             } else {
-                console_writeln!(console, path);
+                console_writeln!(console, "{}", path);
             }
         }
     }
@@ -142,9 +139,7 @@ pub async fn execute(
     if !vcs_version_changes.is_empty() {
         console_writeln_error!(
             console,
-            &console_format!(
-                "<warning>You have version variations in the following dependencies:</warning>"
-            )
+            "<warning>You have version variations in the following dependencies:</warning>"
         );
         for (path, change) in &vcs_version_changes {
             if verbose {
@@ -162,15 +157,13 @@ pub async fn execute(
                     prev.push_str(&format!(" ({})", change.previous.reference));
                     curr.push_str(&format!(" ({})", change.current.reference));
                 }
-                console_writeln!(console, &console_format!("<info>{path}</info>:"));
+                console_writeln!(console, "<info>{path}</info>:");
                 console_writeln!(
                     console,
-                    &console_format!(
-                        "    From <comment>{prev}</comment> to <comment>{curr}</comment>"
-                    )
+                    "    From <comment>{prev}</comment> to <comment>{curr}</comment>"
                 );
             } else {
-                console_writeln!(console, path);
+                console_writeln!(console, "{}", path);
             }
         }
     }

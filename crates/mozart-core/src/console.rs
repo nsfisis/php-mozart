@@ -294,12 +294,18 @@ impl Console {
 /// ref: \Composer\IO\IOInterface::write()
 #[macro_export]
 macro_rules! console_writeln {
-    ($console:expr, $msg:expr $(,)?) => {
-        $crate::console_writeln!($console, $msg, $crate::console::Verbosity::Normal)
+    ($console:expr, $fmt:literal) => {
+        $crate::console_writeln!($console, $crate::console::Verbosity::Normal, $fmt,)
     };
-    ($console:expr, $msg:expr, $verbosity:expr $(,)?) => {
+    ($console:expr, $fmt:literal, $($arg:tt)*) => {
+        $crate::console_writeln!($console, $crate::console::Verbosity::Normal, $fmt, $($arg)*)
+    };
+    ($console:expr, $verbosity:expr, $fmt:literal) => {
+        $crate::console_writeln!($console, $verbosity, $fmt, $($arg)*,)
+    };
+    ($console:expr, $verbosity:expr, $fmt:literal, $($arg:tt)*) => {
         if ($console).verbosity >= $verbosity {
-            println!("{}", $msg);
+            ::std::println!("{}", &::mozart_console_macros::console_format!($fmt, $($arg)*));
         }
     };
 }
@@ -309,12 +315,18 @@ macro_rules! console_writeln {
 /// ref: \Composer\IO\IOInterface::write()
 #[macro_export]
 macro_rules! console_write {
-    ($console:expr, $msg:expr $(,)?) => {
-        $crate::console_write!($console, $msg, $crate::console::Verbosity::Normal)
+    ($console:expr, $fmt:literal) => {
+        $crate::console_writeln!($console, $crate::console::Verbosity::Normal, $fmt,)
     };
-    ($console:expr, $msg:expr, $verbosity:expr $(,)?) => {
+    ($console:expr, $fmt:literal, $($arg:tt)*) => {
+        $crate::console_writeln!($console, $crate::console::Verbosity::Normal, $fmt, $($arg)*)
+    };
+    ($console:expr, $verbosity:expr, $fmt:literal) => {
+        $crate::console_writeln!($console, $verbosity, $fmt, $($arg)*,)
+    };
+    ($console:expr, $verbosity:expr, $fmt:literal, $($arg:tt)*) => {
         if ($console).verbosity >= $verbosity {
-            print!("{}", $msg);
+            ::std::print!("{}", &::mozart_console_macros::console_format!($fmt, $($arg)*));
         }
     };
 }
@@ -324,12 +336,18 @@ macro_rules! console_write {
 /// ref: \Composer\IO\IOInterface::writeError()
 #[macro_export]
 macro_rules! console_writeln_error {
-    ($console:expr, $msg:expr $(,)?) => {
-        $crate::console_writeln_error!($console, $msg, $crate::console::Verbosity::Normal)
+    ($console:expr, $fmt:literal) => {
+        $crate::console_writeln!($console, $crate::console::Verbosity::Normal, $fmt,)
     };
-    ($console:expr, $msg:expr, $verbosity:expr $(,)?) => {
+    ($console:expr, $fmt:literal, $($arg:tt)*) => {
+        $crate::console_writeln!($console, $crate::console::Verbosity::Normal, $fmt, $($arg)*)
+    };
+    ($console:expr, $verbosity:expr, $fmt:literal) => {
+        $crate::console_writeln!($console, $verbosity, $fmt, $($arg)*,)
+    };
+    ($console:expr, $verbosity:expr, $fmt:literal, $($arg:tt)*) => {
         if ($console).verbosity >= $verbosity {
-            eprintln!("{}", $msg);
+            ::std::eprintln!("{}", &::mozart_console_macros::console_format!($fmt, $($arg)*));
         }
     };
 }
@@ -339,12 +357,18 @@ macro_rules! console_writeln_error {
 /// ref: \Composer\IO\IOInterface::writeError()
 #[macro_export]
 macro_rules! console_write_error {
-    ($console:expr, $msg:expr $(,)?) => {
-        $crate::console_write_error!($console, $msg, $crate::console::Verbosity::Normal)
+    ($console:expr, $fmt:literal) => {
+        $crate::console_writeln!($console, $crate::console::Verbosity::Normal, $fmt,)
     };
-    ($console:expr, $msg:expr, $verbosity:expr $(,)?) => {
+    ($console:expr, $fmt:literal, $($arg:tt)*) => {
+        $crate::console_writeln!($console, $crate::console::Verbosity::Normal, $fmt, $($arg)*)
+    };
+    ($console:expr, $verbosity:expr, $fmt:literal) => {
+        $crate::console_writeln!($console, $verbosity, $fmt, $($arg)*,)
+    };
+    ($console:expr, $verbosity:expr, $fmt:literal, $($arg:tt)*) => {
         if ($console).verbosity >= $verbosity {
-            eprint!("{}", $msg);
+            ::std::eprint!("{}", &::mozart_console_macros::console_format!($fmt, $($arg)*));
         }
     };
 }

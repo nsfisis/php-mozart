@@ -152,10 +152,7 @@ pub async fn execute(
 
         if args.dev {
             if composer.require_dev.contains_key(&name) {
-                console_writeln!(
-                    console,
-                    &console_format!("<info>Removing {name} from require-dev</info>"),
-                );
+                console_writeln!(console, "<info>Removing {name} from require-dev</info>");
                 composer.require_dev.remove(&name);
                 packages_removed.push(name);
             } else {
@@ -164,17 +161,11 @@ pub async fn execute(
                 ));
             }
         } else if composer.require.contains_key(&name) {
-            console_writeln!(
-                console,
-                &console_format!("<info>Removing {name} from require</info>"),
-            );
+            console_writeln!(console, "<info>Removing {name} from require</info>");
             composer.require.remove(&name);
             packages_removed.push(name);
         } else if composer.require_dev.contains_key(&name) {
-            console_writeln!(
-                console,
-                &console_format!("<info>Removing {name} from require-dev</info>"),
-            );
+            console_writeln!(console, "<info>Removing {name} from require-dev</info>");
             composer.require_dev.remove(&name);
             packages_removed.push(name);
         } else {
@@ -192,9 +183,7 @@ pub async fn execute(
     if args.no_update {
         console_writeln!(
             console,
-            &console_format!(
-                "<comment>Not updating dependencies, only modifying composer.json.</comment>"
-            ),
+            "<comment>Not updating dependencies, only modifying composer.json.</comment>"
         );
         return Ok(());
     }

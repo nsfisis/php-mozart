@@ -1,6 +1,5 @@
 use clap::Args;
 use mozart_core::console::Console;
-use mozart_core::console_format;
 use mozart_core::console_writeln;
 use mozart_core::console_writeln_error;
 use mozart_core::installer::{InstalledCandidate, InstalledRepoLite};
@@ -84,10 +83,8 @@ pub async fn execute(
         }
         console_writeln_error!(
             console,
-            &console_format!(
-                "<info>Checking {}platform requirements using the lock file</info>",
-                dev_text
-            ),
+            "<info>Checking {}platform requirements using the lock file</info>",
+            dev_text,
         );
         load_lock(&lock_path, args.no_dev, &mut installed_repo, &mut requires)?;
     } else {
@@ -100,19 +97,15 @@ pub async fn execute(
             let installed = mozart_registry::installed::InstalledPackages::read(&vendor_dir)?;
             console_writeln_error!(
                 console,
-                &console_format!(
-                    "<info>Checking {}platform requirements for packages in the vendor dir</info>",
-                    dev_text
-                ),
+                "<info>Checking {}platform requirements for packages in the vendor dir</info>",
+                dev_text,
             );
             load_installed(&installed, args.no_dev, &mut installed_repo, &mut requires);
         } else {
             console_writeln_error!(
                 console,
-                &console_format!(
-                    "<warning>No vendor dir present, checking {}platform requirements from the lock file</warning>",
-                    dev_text
-                ),
+                "<warning>No vendor dir present, checking {}platform requirements from the lock file</warning>",
+                dev_text,
             );
             if lock_path.exists() {
                 load_lock(&lock_path, args.no_dev, &mut installed_repo, &mut requires)?;
@@ -406,7 +399,7 @@ fn print_table(results: &[CheckRow], format: &str, console: &Console) -> anyhow:
                 })
             })
             .collect();
-        console_writeln!(console, &serde_json::to_string_pretty(&rows)?);
+        console_writeln!(console, "{}", &serde_json::to_string_pretty(&rows)?);
         return Ok(());
     }
 
@@ -446,25 +439,19 @@ fn print_table(results: &[CheckRow], format: &str, console: &Console) -> anyhow:
             Status::Success => {
                 console_writeln!(
                     console,
-                    &console_format!(
-                        "<info>{padded_name}</info>  <comment>{padded_version}</comment>  {link_text}  <info>success</info>{provider_suffix}",
-                    ),
+                    "<info>{padded_name}</info>  <comment>{padded_version}</comment>  {link_text}  <info>success</info>{provider_suffix}",
                 );
             }
             Status::Failed => {
                 console_writeln!(
                     console,
-                    &console_format!(
-                        "<comment>{padded_name}</comment>  <comment>{padded_version}</comment>  {link_text}  <error>failed</error>{provider_suffix}",
-                    ),
+                    "<comment>{padded_name}</comment>  <comment>{padded_version}</comment>  {link_text}  <error>failed</error>{provider_suffix}",
                 );
             }
             Status::Missing => {
                 console_writeln!(
                     console,
-                    &console_format!(
-                        "<comment>{padded_name}</comment>  <comment>{padded_version}</comment>  {link_text}  <error>missing</error>{provider_suffix}",
-                    ),
+                    "<comment>{padded_name}</comment>  <comment>{padded_version}</comment>  {link_text}  <error>missing</error>{provider_suffix}",
                 );
             }
         }

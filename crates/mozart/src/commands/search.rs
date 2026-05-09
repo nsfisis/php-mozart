@@ -139,7 +139,7 @@ fn render_json(results: &[SearchResult], console: &Console) -> anyhow::Result<()
     let formatter = serde_json::ser::PrettyFormatter::with_indent(b"    ");
     let mut ser = serde_json::Serializer::with_formatter(buf, formatter);
     output.serialize(&mut ser)?;
-    console_writeln!(console, &String::from_utf8(ser.into_inner())?);
+    console_writeln!(console, "{}", &String::from_utf8(ser.into_inner())?);
     Ok(())
 }
 
@@ -189,7 +189,7 @@ fn render_text(results: &[SearchResult], console: &Console) {
             format!("{}{}", result.name, " ".repeat(padding_width))
         };
 
-        console_writeln!(console, &format!("{padded_name}{warning}{desc_display}"));
+        console_writeln!(console, "{padded_name}{warning}{desc_display}");
     }
 }
 

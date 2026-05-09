@@ -399,10 +399,10 @@ fn output_result(
         let kind = if check_lock { "errors" } else { "warnings" };
         console_writeln!(
             console,
-            &console_format!("<info>{name} is valid but your composer.lock has some {kind}</info>"),
+            "<info>{name} is valid but your composer.lock has some {kind}</info>",
         );
     } else {
-        console_writeln!(console, &console_format!("<info>{name} is valid</info>"),);
+        console_writeln!(console, "<info>{name} i valid</info>");
     }
 
     // Collect error and warning message lines

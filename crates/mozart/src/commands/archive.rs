@@ -111,7 +111,7 @@ async fn archive(
         .map(|rel| rel.display().to_string())
         .filter(|rel| rel.len() < absolute.len())
         .unwrap_or(absolute);
-    console_writeln!(io, &format!("Created: {}", short_path));
+    console_writeln!(io, "Created: {}", short_path);
 
     Ok(())
 }

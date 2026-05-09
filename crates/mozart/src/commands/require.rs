@@ -949,9 +949,7 @@ pub async fn execute(
 
                 console_writeln!(
                     console,
-                    &console_format!(
-                        "<info>Using version constraint for {name} from Packagist...</info>"
-                    ),
+                    "<info>Using version constraint for {name} from Packagist...</info>"
                 );
 
                 let best = version_selector
@@ -970,7 +968,7 @@ pub async fn execute(
 
                 console_writeln!(
                     console,
-                    &console_format!("<info>Using version {constraint} for {name}</info>"),
+                    "<info>Using version {constraint} for {name}</info>",
                 );
 
                 (name, constraint)
@@ -1031,15 +1029,12 @@ pub async fn execute(
         if let Some(existing) = target.get(name) {
             console_writeln!(
                 console,
-                &console_format!(
-                    "<comment>Updating {name} from {existing} to {constraint} \
-                     in {section_name}</comment>"
-                ),
+                "<comment>Updating {name} from {existing} to {constraint} in {section_name}</comment>",
             );
         } else {
             console_writeln!(
                 console,
-                &console_format!("<info>Adding {name} ({constraint}) to {section_name}</info>"),
+                "<info>Adding {name} ({constraint}) to {section_name}</info>",
             );
         }
 
@@ -1067,7 +1062,7 @@ pub async fn execute(
     if args.dry_run {
         console_writeln!(
             console,
-            &console_format!("<comment>Dry run: composer.json not modified.</comment>"),
+            "<comment>Dry run: composer.json not modified.</comment>",
         );
     } else {
         update_file(&composer_path, &raw)?;
@@ -1085,9 +1080,7 @@ pub async fn execute(
     if args.no_update {
         console_writeln!(
             console,
-            &console_format!(
-                "<comment>Not updating dependencies, only modifying composer.json.</comment>"
-            ),
+            "<comment>Not updating dependencies, only modifying composer.json.</comment>"
         );
         return Ok(());
     }

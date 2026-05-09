@@ -2,8 +2,8 @@ use std::{borrow::Cow, path::Path};
 
 use clap::Args;
 use mozart_core::composer::Composer;
+use mozart_core::console_writeln_error;
 use mozart_core::factory::create_config;
-use mozart_core::{console_format, console_writeln_error};
 use mozart_registry::cache::Cache;
 
 #[derive(Args)]
@@ -43,10 +43,8 @@ pub async fn execute(
         if !path.exists() {
             console_writeln_error!(
                 console,
-                &console_format!(
-                    "<info>Cache directory does not exist ({key}): {}</info>",
-                    path.display(),
-                ),
+                "<info>Cache directory does not exist ({key}): {}</info>",
+                path.display(),
             );
             continue;
         }
@@ -55,10 +53,8 @@ pub async fn execute(
         if !cache.is_enabled() {
             console_writeln_error!(
                 console,
-                &console_format!(
-                    "<info>Cache is not enabled ({key}): {}</info>",
-                    path.display(),
-                ),
+                "<info>Cache is not enabled ({key}): {}</info>",
+                path.display(),
             );
             continue;
         }
@@ -66,10 +62,8 @@ pub async fn execute(
         if args.gc {
             console_writeln_error!(
                 console,
-                &console_format!(
-                    "<info>Garbage-collecting cache ({key}): {}</info>",
-                    path.display(),
-                ),
+                "<info>Garbage-collecting cache ({key}): {}</info>",
+                path.display(),
             );
             match key {
                 "cache-files-dir" => cache.gc(config.cache_files_ttl, config.cache_files_maxsize)?,
@@ -80,22 +74,17 @@ pub async fn execute(
         } else {
             console_writeln_error!(
                 console,
-                &console_format!("<info>Clearing cache ({key}): {}</info>", path.display()),
+                "<info>Clearing cache ({key}): {}</info>",
+                path.display(),
             );
             cache.clear()?;
         }
     }
 
     if args.gc {
-        console_writeln_error!(
-            console,
-            &console_format!("<info>All caches garbage-collected.</info>"),
-        );
+        console_writeln_error!(console, "<info>All caches garbage-collected.</info>");
     } else {
-        console_writeln_error!(
-            console,
-            &console_format!("<info>All caches cleared.</info>"),
-        );
+        console_writeln_error!(console, "<info>All caches cleared.</info>");
     }
 
     Ok(())

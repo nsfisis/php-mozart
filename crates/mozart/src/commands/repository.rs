@@ -104,7 +104,7 @@ fn list_repositories(
             && let Some((key, val)) = obj.iter().next()
             && val == &serde_json::Value::Bool(false)
         {
-            console_writeln!(console, &format!("[{key}] disabled"));
+            console_writeln!(console, "[{key}] disabled");
             continue;
         }
 
@@ -118,7 +118,7 @@ fn list_repositories(
             .unwrap_or("unknown");
         let url = entry.get("url").map(render_value).unwrap_or_default();
 
-        console_writeln!(console, &format!("[{name}] {repo_type} {url}"));
+        console_writeln!(console, "[{name}] {repo_type} {url}");
     }
 
     Ok(())
@@ -223,7 +223,7 @@ fn execute_get_url(
     // Assoc-keyed fast path (mirrors Composer's `isset($repos[$name])` check).
     if let Some(repo) = repos_raw.as_object().and_then(|obj| obj.get(name)) {
         if let Some(url) = repo.get("url").and_then(|u| u.as_str()) {
-            console_writeln!(console, url);
+            console_writeln!(console, "{}", url);
             return Ok(());
         }
         anyhow::bail!("The {} repository does not have a URL", name);
@@ -234,7 +234,7 @@ fn execute_get_url(
     for repo in &repos {
         if repo.get("name").and_then(|n| n.as_str()) == Some(name) {
             if let Some(url) = repo.get("url").and_then(|u| u.as_str()) {
-                console_writeln!(console, url);
+                console_writeln!(console, "{}", url);
                 return Ok(());
             }
             anyhow::bail!("The {} repository does not have a URL", name);

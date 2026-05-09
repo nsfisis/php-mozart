@@ -117,9 +117,7 @@ pub async fn execute(
     if args.installed && !args.self_info {
         console_writeln_error!(
             console,
-            &console_format!(
-                "<warning>You are using the deprecated option \"installed\". Only installed packages are shown by default now. The --all option can be used to show all packages.</warning>"
-            ),
+            "<warning>You are using the deprecated option \"installed\". Only installed packages are shown by default now. The --all option can be used to show all packages.</warning>",
         );
     }
 
@@ -173,9 +171,7 @@ pub async fn execute(
     if !args.ignore.is_empty() && !args.outdated {
         console_writeln_error!(
             console,
-            &console_format!(
-                "<warning>You are using the option \"ignore\" for action other than \"outdated\", it will be ignored.</warning>"
-            ),
+            "<warning>You are using the option \"ignore\" for action other than \"outdated\", it will be ignored.</warning>",
         );
     }
 
@@ -571,7 +567,7 @@ fn render_package_list(
 
         console_writeln!(
             console,
-            &console_format!("<info>Direct dependencies required in composer.json:</info>"),
+            "<info>Direct dependencies required in composer.json:</info>",
         );
         if direct_entries.is_empty() {
             console_writeln!(console, "Everything up to date");
@@ -582,7 +578,7 @@ fn render_package_list(
         console_writeln!(console, "");
         console_writeln!(
             console,
-            &console_format!("<info>Transitive dependencies not required in composer.json:</info>"),
+            "<info>Transitive dependencies not required in composer.json:</info>",
         );
         if transitive_entries.is_empty() {
             console_writeln!(console, "Everything up to date");
@@ -700,18 +696,21 @@ fn print_package_rows(
             };
             console_writeln!(
                 console,
-                &format!(
-                    "{}{} {} {} {}",
-                    ascii_prefix, name_str, version_str, latest_str, entry.description
-                ),
+                "{}{} {} {} {}",
+                ascii_prefix,
+                name_str,
+                version_str,
+                latest_str,
+                entry.description,
             );
         } else {
             console_writeln!(
                 console,
-                &format!(
-                    "{}{} {} {}",
-                    ascii_prefix, name_str, version_str, entry.description
-                ),
+                "{}{} {} {}",
+                ascii_prefix,
+                name_str,
+                version_str,
+                entry.description,
             );
         }
 
@@ -730,7 +729,7 @@ fn print_package_rows(
                     entry.name, replacement
                 )
             };
-            console_writeln_error!(console, &console_format!("<warning>{}</warning>", msg),);
+            console_writeln_error!(console, "<warning>{}</warning>", msg);
         }
     }
 }
@@ -738,24 +737,21 @@ fn print_package_rows(
 /// Print the color legend before the list (A6, mirrors Composer 626-642).
 fn print_color_legend(console: &mozart_core::console::Console) {
     if console.decorated {
-        console_writeln!(console, &console_format!("<info>Color legend:</info>"),);
+        console_writeln!(console, "<info>Color legend:</info>");
         console_writeln!(
             console,
-            &format!(
-                "- {} release available - update recommended",
-                console_format!("<highlight>patch or minor</highlight>")
-            ),
+            "- {} release available - update recommended",
+            console_format!("<highlight>patch or minor</highlight>"),
         );
         console_writeln!(
             console,
-            &format!(
-                "- {} release available - update possible",
-                console_format!("<comment>major</comment>")
-            ),
+            "- {} release available - update possible",
+            console_format!("<comment>major</comment>"),
         );
         console_writeln!(
             console,
-            &format!("- {} version", console_format!("<info>up to date</info>")),
+            "- {} version",
+            console_format!("<info>up to date</info>"),
         );
     } else {
         console_writeln!(console, "Legend:");
@@ -801,7 +797,7 @@ fn render_list_json(
         .collect();
 
     let output = serde_json::json!({ section_key: json_entries });
-    console_writeln!(console, &serde_json::to_string_pretty(&output)?,);
+    console_writeln!(console, "{}", &serde_json::to_string_pretty(&output)?);
     Ok(())
 }
 
@@ -945,38 +941,36 @@ async fn print_package_detail(
 
     console_writeln!(
         console,
-        &format!("{} : {}", console_format!("<info>name</info>"), detail.name),
+        "{} : {}",
+        console_format!("<info>name</info>"),
+        detail.name,
     );
     console_writeln!(
         console,
-        &format!(
-            "{} : {}",
-            console_format!("<info>descrip.</info>"),
-            detail.description
-        ),
+        "{} : {}",
+        console_format!("<info>descrip.</info>"),
+        detail.description,
     );
     console_writeln!(
         console,
-        &format!(
-            "{} : {}",
-            console_format!("<info>keywords</info>"),
-            detail.keywords.join(", ")
-        ),
+        "{} : {}",
+        console_format!("<info>keywords</info>"),
+        detail.keywords.join(", "),
     );
     console_writeln!(
         console,
-        &format!(
-            "{} : {}",
-            console_format!("<info>versions</info>"),
-            format_version_highlight(&detail.version)
-        ),
+        "{} : {}",
+        console_format!("<info>versions</info>"),
+        format_version_highlight(&detail.version),
     );
 
     // A13: released
     if let Some(ref date) = detail.release_date {
         console_writeln!(
             console,
-            &format!("{} : {}", console_format!("<info>released</info>"), date),
+            "{} : {}",
+            console_format!("<info>released</info>"),
+            date,
         );
     }
 
@@ -1000,43 +994,35 @@ async fn print_package_detail(
             };
             console_writeln!(
                 console,
-                &format!(
-                    "{} : {}",
-                    console_format!("<info>latest</info>"),
-                    latest_str
-                ),
+                "{} : {}",
+                console_format!("<info>latest</info>"),
+                latest_str,
             );
         }
     }
 
     console_writeln!(
         console,
-        &format!(
-            "{} : {}",
-            console_format!("<info>type</info>"),
-            detail.package_type.as_deref().unwrap_or("library")
-        ),
+        "{} : {}",
+        console_format!("<info>type</info>"),
+        detail.package_type.as_deref().unwrap_or("library"),
     );
 
     for license_id in &detail.licenses {
         console_writeln!(
             console,
-            &format!(
-                "{} : {}",
-                console_format!("<info>license</info>"),
-                format_license_for_show(license_id),
-            ),
+            "{} : {}",
+            console_format!("<info>license</info>"),
+            format_license_for_show(license_id),
         );
     }
 
     if let Some(ref homepage) = detail.homepage {
         console_writeln!(
             console,
-            &format!(
-                "{} : {}",
-                console_format!("<info>homepage</info>"),
-                homepage
-            ),
+            "{} : {}",
+            console_format!("<info>homepage</info>"),
+            homepage,
         );
     }
 
@@ -1045,13 +1031,11 @@ async fn print_package_detail(
         let src_ref = detail.source_ref.as_deref().unwrap_or("");
         console_writeln!(
             console,
-            &format!(
-                "{} : [{}] {} {}",
-                console_format!("<info>source</info>"),
-                src_type,
-                console_format!("<comment>{}</comment>", src_url),
-                src_ref
-            ),
+            "{} : [{}] {} {}",
+            console_format!("<info>source</info>"),
+            src_type,
+            console_format!("<comment>{}</comment>", src_url),
+            src_ref,
         );
     }
 
@@ -1060,20 +1044,20 @@ async fn print_package_detail(
         let dist_ref = detail.dist_ref.as_deref().unwrap_or("");
         console_writeln!(
             console,
-            &format!(
-                "{} : [{}] {} {}",
-                console_format!("<info>dist</info>"),
-                dist_type,
-                console_format!("<comment>{}</comment>", dist_url),
-                dist_ref
-            ),
+            "{} : [{}] {} {}",
+            console_format!("<info>dist</info>"),
+            dist_type,
+            console_format!("<comment>{}</comment>", dist_url),
+            dist_ref,
         );
     }
 
     if let Some(ref path) = detail.install_path {
         console_writeln!(
             console,
-            &format!("{} : {}", console_format!("<info>path</info>"), path),
+            "{} : {}",
+            console_format!("<info>path</info>"),
+            path,
         );
     }
 
@@ -1081,11 +1065,9 @@ async fn print_package_detail(
     if detail.names.len() > 1 {
         console_writeln!(
             console,
-            &format!(
-                "{} : {}",
-                console_format!("<info>names</info>"),
-                detail.names.join(", ")
-            ),
+            "{} : {}",
+            console_format!("<info>names</info>"),
+            detail.names.join(", "),
         );
     }
 
@@ -1095,12 +1077,14 @@ async fn print_package_detail(
         && !obj.is_empty()
     {
         console_writeln!(console, "");
-        console_writeln!(console, &console_format!("<info>support</info>"),);
+        console_writeln!(console, "<info>support</info>");
         for (key, val) in obj {
             let v = val.as_str().unwrap_or("");
             console_writeln!(
                 console,
-                &format!("{} {}", key, console_format!("<comment>{}</comment>", v)),
+                "{} {}",
+                key,
+                console_format!("<comment>{}</comment>", v),
             );
         }
     }
@@ -1108,7 +1092,7 @@ async fn print_package_detail(
     // A13: autoload
     if let Some(ref autoload) = detail.autoload {
         console_writeln!(console, "");
-        console_writeln!(console, &console_format!("<info>autoload</info>"),);
+        console_writeln!(console, "<info>autoload</info>");
         if let Some(obj) = autoload.as_object() {
             for (loader_type, config) in obj {
                 match config {
@@ -1117,12 +1101,10 @@ async fn print_package_detail(
                             let v_str = v.as_str().unwrap_or("");
                             console_writeln!(
                                 console,
-                                &format!(
-                                    "{}: {} => {}",
-                                    loader_type,
-                                    k,
-                                    console_format!("<comment>{}</comment>", v_str)
-                                ),
+                                "{}: {} => {}",
+                                loader_type,
+                                k,
+                                console_format!("<comment>{}</comment>", v_str),
                             );
                         }
                     }
@@ -1131,11 +1113,9 @@ async fn print_package_detail(
                             let v_str = item.as_str().unwrap_or("");
                             console_writeln!(
                                 console,
-                                &format!(
-                                    "{}: {}",
-                                    loader_type,
-                                    console_format!("<comment>{}</comment>", v_str)
-                                ),
+                                "{}: {}",
+                                loader_type,
+                                console_format!("<comment>{}</comment>", v_str),
                             );
                         }
                     }
@@ -1166,15 +1146,13 @@ fn print_links_section(
         return;
     }
     console_writeln!(console, "");
-    console_writeln!(console, &console_format!("<info>{}</info>", label),);
+    console_writeln!(console, "<info>{}</info>", label);
     for (name, constraint) in links {
         console_writeln!(
             console,
-            &format!(
-                "{} {}",
-                name,
-                console_format!("<comment>{}</comment>", constraint)
-            ),
+            "{} {}",
+            name,
+            console_format!("<comment>{}</comment>", constraint),
         );
     }
 }
@@ -1241,7 +1219,7 @@ async fn print_package_detail_json(
         }
     }
 
-    console_writeln!(console, &serde_json::to_string_pretty(&obj)?,);
+    console_writeln!(console, "{}", &serde_json::to_string_pretty(&obj)?);
     Ok(())
 }
 
@@ -1265,9 +1243,7 @@ async fn execute_installed(
             if !root.require.is_empty() || !root.require_dev.is_empty() {
                 console_writeln_error!(
                     console,
-                    &console_format!(
-                        "<warning>No dependencies installed. Try running mozart install or update.</warning>"
-                    ),
+                    "<warning>No dependencies installed. Try running mozart install or update.</warning>",
                 );
             }
         }
@@ -1287,7 +1263,7 @@ async fn execute_installed(
             Some(p) => {
                 let install_path = vendor_dir.join(&p.name);
                 let path_str = resolve_path(&install_path);
-                console_writeln!(console, &format!("{} {}", p.name, path_str),);
+                console_writeln!(console, "{} {}", p.name, path_str);
             }
             None => {
                 anyhow::bail!(
@@ -1333,7 +1309,7 @@ async fn execute_installed(
         for pkg in &packages {
             let install_path = vendor_dir.join(&pkg.name);
             let path_str = resolve_path(&install_path);
-            console_writeln!(console, &format!("{} {}", pkg.name, path_str),);
+            console_writeln!(console, "{} {}", pkg.name, path_str);
         }
         return Ok(());
     }
@@ -1342,7 +1318,7 @@ async fn execute_installed(
     let show_latest = args.latest || args.outdated;
     if args.name_only && !show_latest {
         for pkg in &packages {
-            console_writeln!(console, &pkg.name);
+            console_writeln!(console, "{}", &pkg.name);
         }
         return Ok(());
     }
@@ -1355,7 +1331,7 @@ async fn execute_installed(
 
     if args.name_only {
         for e in &entries {
-            console_writeln!(console, &e.name);
+            console_writeln!(console, "{}", &e.name);
         }
         return Ok(());
     }
@@ -1460,7 +1436,7 @@ async fn execute_locked(
     if args.path {
         console_writeln_error!(
             console,
-            &console_format!("<warning>--path is not supported with --locked</warning>"),
+            "<warning>--path is not supported with --locked</warning>",
         );
         return Ok(());
     }
@@ -1469,7 +1445,7 @@ async fn execute_locked(
     let show_latest = args.latest || args.outdated;
     if args.name_only && !show_latest {
         for pkg in &packages {
-            console_writeln!(console, &pkg.name);
+            console_writeln!(console, "{}", &pkg.name);
         }
         return Ok(());
     }
@@ -1482,7 +1458,7 @@ async fn execute_locked(
 
     if args.name_only {
         for e in &entries {
-            console_writeln!(console, &e.name);
+            console_writeln!(console, "{}", &e.name);
         }
         return Ok(());
     }
@@ -1514,63 +1490,55 @@ fn show_self(
     let root = mozart_core::package::read_from_file(&composer_json_path)?;
 
     if args.name_only {
-        console_writeln!(console, &root.name);
+        console_writeln!(console, "{}", &root.name);
         return Ok(());
     }
 
     console_writeln!(
         console,
-        &format!("{} : {}", console_format!("<info>name</info>"), root.name),
+        "{} : {}",
+        console_format!("<info>name</info>"),
+        root.name,
     );
     console_writeln!(
         console,
-        &format!(
-            "{} : {}",
-            console_format!("<info>descrip.</info>"),
-            root.description.as_deref().unwrap_or("")
-        ),
+        "{} : {}",
+        console_format!("<info>descrip.</info>"),
+        root.description.as_deref().unwrap_or(""),
     );
     console_writeln!(
         console,
-        &format!(
-            "{} : {}",
-            console_format!("<info>type</info>"),
-            root.package_type.as_deref().unwrap_or("project")
-        ),
+        "{} : {}",
+        console_format!("<info>type</info>"),
+        root.package_type.as_deref().unwrap_or("project"),
     );
     if let Some(ref license) = root.license {
         console_writeln!(
             console,
-            &format!(
-                "{} : {}",
-                console_format!("<info>license</info>"),
-                format_license_for_show(license),
-            ),
+            "{} : {}",
+            console_format!("<info>license</info>"),
+            format_license_for_show(license),
         );
     }
     if let Some(ref homepage) = root.homepage {
         console_writeln!(
             console,
-            &format!(
-                "{} : {}",
-                console_format!("<info>homepage</info>"),
-                homepage
-            ),
+            "{} : {}",
+            console_format!("<info>homepage</info>"),
+            homepage,
         );
     }
 
     // Requires
     if !root.require.is_empty() {
         console_writeln!(console, "");
-        console_writeln!(console, &console_format!("<info>requires</info>"),);
+        console_writeln!(console, "<info>requires</info>");
         for (name, constraint) in &root.require {
             console_writeln!(
                 console,
-                &format!(
-                    "{} {}",
-                    name,
-                    console_format!("<comment>{}</comment>", constraint)
-                ),
+                "{} {}",
+                name,
+                console_format!("<comment>{}</comment>", constraint),
             );
         }
     }
@@ -1578,15 +1546,13 @@ fn show_self(
     // Requires (dev)
     if !root.require_dev.is_empty() {
         console_writeln!(console, "");
-        console_writeln!(console, &console_format!("<info>requires (dev)</info>"),);
+        console_writeln!(console, "<info>requires (dev)</info>");
         for (name, constraint) in &root.require_dev {
             console_writeln!(
                 console,
-                &format!(
-                    "{} {}",
-                    name,
-                    console_format!("<comment>{}</comment>", constraint)
-                ),
+                "{} {}",
+                name,
+                console_format!("<comment>{}</comment>", constraint),
             );
         }
     }
@@ -1643,11 +1609,9 @@ fn show_tree(
 
     console_writeln!(
         console,
-        &console_format!(
-            "<info>{}</info> <comment>{}</comment>",
-            &root.name,
-            root.description.as_deref().unwrap_or("")
-        ),
+        "<info>{}</info> <comment>{}</comment>",
+        &root.name,
+        root.description.as_deref().unwrap_or(""),
     );
 
     let mut visited_global: IndexSet<String> = IndexSet::new();
@@ -1693,19 +1657,19 @@ fn print_tree_node(
 
         console_writeln!(
             console,
-            &format!(
-                "{} {} {}",
-                prefix,
-                console_format!("<info>{}</info> <comment>{}</comment>", pkg_name, &version),
-                description
-            ),
+            "{} {} {}",
+            prefix,
+            console_format!("<info>{}</info> <comment>{}</comment>", pkg_name, &version),
+            description,
         );
 
         if visited.contains(&key) || depth >= MAX_DEPTH {
             if visited.contains(&key) {
                 console_writeln!(
                     console,
-                    &format!("{}    {} (circular dependency)", child_prefix, pkg_name),
+                    "{}    {} (circular dependency)",
+                    child_prefix,
+                    pkg_name,
                 );
             }
             return;
@@ -1753,12 +1717,10 @@ fn print_tree_node(
         if !is_platform_package(&key) {
             console_writeln!(
                 console,
-                &format!(
-                    "{} {} {} (not installed)",
-                    prefix,
-                    console_format!("<comment>{}</comment>", pkg_name),
-                    constraint
-                ),
+                "{} {} {} (not installed)",
+                prefix,
+                console_format!("<comment>{}</comment>", pkg_name),
+                constraint,
             );
         }
     }
@@ -1829,6 +1791,7 @@ fn show_platform(
             .collect();
         console_writeln!(
             console,
+            "{}",
             &serde_json::to_string_pretty(&serde_json::json!({ "platform": json_entries }))?,
         );
         return Ok(());
@@ -1843,7 +1806,7 @@ fn show_platform(
 
     if args.name_only {
         for (name, _, _) in &platform_packages {
-            console_writeln!(console, name);
+            console_writeln!(console, "{}", name);
         }
         return Ok(());
     }
@@ -1862,14 +1825,12 @@ fn show_platform(
     for (name, version, _source) in &platform_packages {
         console_writeln!(
             console,
-            &format!(
-                "{} {}",
-                console_format!("<info>{:<width$}</info>", name, width = name_width),
-                console_format!(
-                    "<comment>{:<width$}</comment>",
-                    version,
-                    width = version_width
-                ),
+            "{} {}",
+            console_format!("<info>{:<width$}</info>", name, width = name_width),
+            console_format!(
+                "<comment>{:<width$}</comment>",
+                version,
+                width = version_width
             ),
         );
     }
@@ -1902,9 +1863,7 @@ async fn show_available(
                 let lock = mozart_registry::lockfile::LockFile::read_from_file(&lock_path)?;
                 console_writeln!(
                     console,
-                    &console_format!(
-                        "<info>Available versions for locked packages (from Packagist):</info>"
-                    ),
+                    "<info>Available versions for locked packages (from Packagist):</info>",
                 );
                 console_writeln!(console, "");
 
@@ -1927,9 +1886,7 @@ async fn show_available(
 
             console_writeln_error!(
                 console,
-                &console_format!(
-                    "<warning>No dependencies installed. Try running mozart install or update.</warning>"
-                ),
+                "<warning>No dependencies installed. Try running mozart install or update.</warning>",
             );
             return Ok(());
         }
@@ -1937,9 +1894,7 @@ async fn show_available(
 
     console_writeln!(
         console,
-        &console_format!(
-            "<info>Available versions for installed packages (from Packagist):</info>"
-        ),
+        "<info>Available versions for installed packages (from Packagist):</info>",
     );
     console_writeln!(console, "");
 
@@ -1971,7 +1926,7 @@ async fn show_available(
             }
         }
         let output = serde_json::json!({ "packages": json_entries });
-        console_writeln!(console, &serde_json::to_string_pretty(&output)?,);
+        console_writeln!(console, "{}", &serde_json::to_string_pretty(&output)?);
         return Ok(());
     }
 
@@ -1993,7 +1948,7 @@ async fn show_available_versions(
 ) -> anyhow::Result<()> {
     let versions = mozart_registry::packagist::fetch_package_versions(pkg_name, repo_cache).await?;
     if versions.is_empty() {
-        console_writeln!(console, &format!("No versions found for {pkg_name}"),);
+        console_writeln!(console, "No versions found for {pkg_name}");
         return Ok(());
     }
 
@@ -2004,18 +1959,16 @@ async fn show_available_versions(
             "name": pkg_name,
             "versions": version_strings,
         });
-        console_writeln!(console, &serde_json::to_string_pretty(&output)?,);
+        console_writeln!(console, "{}", &serde_json::to_string_pretty(&output)?);
         return Ok(());
     }
 
-    console_writeln!(
-        console,
-        &console_format!("<info>Available versions for {pkg_name}:</info>"),
-    );
+    console_writeln!(console, "<info>Available versions for {pkg_name}:</info>");
     for v in &versions {
         console_writeln!(
             console,
-            &format!("  {}", console_format!("<comment>{}</comment>", &v.version)),
+            "  {}",
+            console_format!("<comment>{}</comment>", &v.version),
         );
     }
     Ok(())
@@ -2031,10 +1984,8 @@ async fn show_available_versions_inline(
             if versions.is_empty() {
                 console_writeln!(
                     console,
-                    &format!(
-                        "{}: no versions found",
-                        console_format!("<info>{}</info>", pkg_name)
-                    ),
+                    "{}: no versions found",
+                    console_format!("<info>{}</info>", pkg_name),
                 );
                 return;
             }
@@ -2050,21 +2001,17 @@ async fn show_available_versions_inline(
             };
             console_writeln!(
                 console,
-                &format!(
-                    "{}: {}{}",
-                    console_format!("<info>{}</info>", pkg_name),
-                    console_format!("<comment>{}</comment>", &shown.join(", ")),
-                    rest
-                ),
+                "{}: {}{}",
+                console_format!("<info>{}</info>", pkg_name),
+                console_format!("<comment>{}</comment>", &shown.join(", ")),
+                rest,
             );
         }
         Err(_) => {
             console_writeln!(
                 console,
-                &format!(
-                    "{}: (could not fetch from Packagist)",
-                    console_format!("<comment>{}</comment>", pkg_name)
-                ),
+                "{}: (could not fetch from Packagist)",
+                console_format!("<comment>{}</comment>", pkg_name),
             );
         }
     }

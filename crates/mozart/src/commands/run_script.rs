@@ -168,16 +168,13 @@ fn list_scripts(
         return Ok(());
     }
 
-    console_writeln_error!(
-        console,
-        &mozart_core::console_format!("<info>scripts:</info>"),
-    );
+    console_writeln_error!(console, "<info>scripts:</info>");
 
     let name_width = scripts.keys().map(|n| n.len() + 2).max().unwrap_or(0);
     for name in scripts.keys() {
         let desc = descriptions.get(name).map(|s| s.as_str()).unwrap_or("");
         let padded = format!("  {:<w$}", name, w = name_width - 2);
-        console_writeln!(console, &format!("{}  {}", padded, desc));
+        console_writeln!(console, "{}  {}", padded, desc);
     }
     Ok(())
 }

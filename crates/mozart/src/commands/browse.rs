@@ -1,7 +1,6 @@
 use clap::Args;
 use mozart_core::composer::Composer;
 use mozart_core::console::Console;
-use mozart_core::console_format;
 use mozart_core::console_writeln;
 use mozart_core::console_writeln_error;
 use mozart_core::exit_code;
@@ -66,7 +65,8 @@ pub async fn execute(args: &BrowseArgs, cli: &super::Cli, console: &Console) -> 
             return_code = 1;
             console_writeln_error!(
                 console,
-                &console_format!("<warning>Package {} not found</warning>", package_name),
+                "<warning>Package {} not found</warning>",
+                package_name,
             );
         }
 
@@ -77,10 +77,7 @@ pub async fn execute(args: &BrowseArgs, cli: &super::Cli, console: &Console) -> 
             } else {
                 "Invalid or missing repository URL"
             };
-            console_writeln_error!(
-                console,
-                &console_format!("<warning>{} for {}</warning>", kind, package_name),
-            );
+            console_writeln_error!(console, "<warning>{} for {}</warning>", kind, package_name);
         }
     }
 
@@ -125,7 +122,7 @@ fn handle_package(
     };
 
     if show_only {
-        console_writeln!(console, &console_format!("<info>{}</info>", url));
+        console_writeln!(console, "<info>{}</info>", url);
     } else {
         open_browser(&url, console)?;
     }
@@ -156,10 +153,8 @@ fn open_browser(url: &str, console: &Console) -> anyhow::Result<()> {
         } else {
             console_writeln_error!(
                 console,
-                &format!(
-                    "No suitable browser opening command found, open yourself: {}",
-                    url
-                ),
+                "No suitable browser opening command found, open yourself: {}",
+                url,
             );
         }
         Ok(())

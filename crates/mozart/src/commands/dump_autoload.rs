@@ -1,7 +1,7 @@
 use clap::Args;
 use mozart_autoload::AutoloadGeneratorExt;
 use mozart_core::composer::{AutoloadDumpOptions, Composer, PlatformRequirementFilter};
-use mozart_core::{console_format, console_writeln};
+use mozart_core::console_writeln;
 
 #[derive(Args, Default)]
 pub struct DumpAutoloadArgs {
@@ -69,9 +69,7 @@ pub async fn execute(
                 missing = true;
                 console_writeln!(
                     console,
-                    &console_format!(
-                        r#"<warning>Not all dependencies are installed. Make sure to run a "composer install" to install missing dependencies</warning>"#
-                    ),
+                    r#"<warning>Not all dependencies are installed. Make sure to run a "composer install" to install missing dependencies</warning>"#,
                 );
                 break;
             }
@@ -99,16 +97,14 @@ pub async fn execute(
 
     console_writeln!(
         console,
-        &console_format!(
-            "<info>{}</info>",
-            if class_map_authoritative {
-                "Generating optimized autoload files (authoritative)"
-            } else if optimize {
-                "Generating optimized autoload files"
-            } else {
-                "Generating autoload files"
-            }
-        ),
+        "<info>{}</info>",
+        if class_map_authoritative {
+            "Generating optimized autoload files (authoritative)"
+        } else if optimize {
+            "Generating optimized autoload files"
+        } else {
+            "Generating autoload files"
+        }
     );
 
     let dev_mode = if args.dev {
@@ -148,22 +144,15 @@ pub async fn execute(
     if class_map_authoritative {
         console_writeln!(
             console,
-            &console_format!(
-                "<info>Generated optimized autoload files (authoritative) containing {number_of_classes} classes</info>",
-            ),
+            "<info>Generated optimized autoload files (authoritative) containing {number_of_classes} classes</info>",
         );
     } else if optimize {
         console_writeln!(
             console,
-            &console_format!(
-                "<info>Generated optimized autoload files containing {number_of_classes} classes</info>",
-            ),
+            "<info>Generated optimized autoload files containing {number_of_classes} classes</info>",
         );
     } else {
-        console_writeln!(
-            console,
-            &console_format!("<info>Generated autoload files</info>"),
-        );
+        console_writeln!(console, "<info>Generated autoload files</info>");
     }
 
     if missing_dependencies || args.strict_psr && class_map.has_psr_violations() {

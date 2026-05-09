@@ -58,37 +58,34 @@ fn output_result(label: &str, result: &CheckResult, exit_code: &mut i32, console
         CheckResult::Ok(detail) => {
             let ok = "OK".green().bold();
             match detail {
-                Some(d) => console_writeln!(
-                    console,
-                    &format!("{prefix}{ok} {}", format!("({d})").bright_black())
-                ),
-                None => console_writeln!(console, &format!("{prefix}{ok}")),
+                Some(d) => {
+                    console_writeln!(console, "{prefix}{ok} {}", format!("({d})").bright_black())
+                }
+                None => console_writeln!(console, "{prefix}{ok}"),
             }
         }
         CheckResult::Warning(msgs) => {
-            console_writeln!(console, &format!("{prefix}{}", "WARNING".yellow().bold()));
+            console_writeln!(console, "{prefix}{}", "WARNING".yellow().bold());
             for msg in msgs {
-                console_writeln!(console, &format!("{}", msg.yellow()));
+                console_writeln!(console, "{}", msg.yellow());
             }
             if *exit_code < 1 {
                 *exit_code = 1;
             }
         }
         CheckResult::Fail(msgs) => {
-            console_writeln!(console, &format!("{prefix}{}", "FAIL".red().bold()));
+            console_writeln!(console, "{prefix}{}", "FAIL".red().bold());
             for msg in msgs {
-                console_writeln!(console, &format!("{}", msg.red()));
+                console_writeln!(console, "{}", msg.red());
             }
             *exit_code = 2;
         }
         CheckResult::Skip(reason) => {
             console_writeln!(
                 console,
-                &format!(
-                    "{prefix}{} {}",
-                    "SKIP".cyan().bold(),
-                    format!("({reason})").bright_black()
-                )
+                "{prefix}{} {}",
+                "SKIP".cyan().bold(),
+                format!("({reason})").bright_black(),
             );
         }
     }
@@ -372,7 +369,7 @@ pub async fn execute(
     // Step 4b (`checkVersion`) is deferred until self-update lands.
 
     // Step 5: Mozart version line.
-    console_writeln!(console, &format!("Mozart version {MOZART_VERSION}"));
+    console_writeln!(console, "Mozart version {MOZART_VERSION}");
 
     // Step 6: Mozart and its dependencies for vulnerabilities. Deferred — needs
     // a Mozart Auditor port.
@@ -474,13 +471,8 @@ pub async fn execute(
     {
         console_writeln!(
             console,
-            &format!(
-                "{}",
-                format!(
-                    "The COMPOSER_IPRESOLVE env var is set to {val} which may result in network failures below."
-                )
-                .yellow()
-            )
+            "{}",
+            format!("The COMPOSER_IPRESOLVE env var is set to {val} which may result in network failures below.").yellow(),
         );
     }
 

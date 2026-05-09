@@ -1,6 +1,5 @@
 use clap::Args;
 use mozart_core::composer::Composer;
-use mozart_core::console_format;
 use mozart_core::console_writeln;
 use std::path::{Path, PathBuf};
 
@@ -36,15 +35,12 @@ pub async fn execute(
                 bin_dir.display(),
             );
         }
-        console_writeln!(
-            console,
-            &console_format!("<comment>Available binaries:</comment>"),
-        );
+        console_writeln!(console, "<comment>Available binaries:</comment>");
         for (bin, is_local) in &bins {
             if *is_local {
-                console_writeln!(console, &console_format!("<info>- {bin} (local)</info>"));
+                console_writeln!(console, "<info>- {bin} (local)</info>");
             } else {
-                console_writeln!(console, &console_format!("<info>- {bin}</info>"));
+                console_writeln!(console, "<info>- {bin}</info>");
             }
         }
         return Ok(());

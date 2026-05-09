@@ -39,7 +39,11 @@ fn console_format_impl(
     let args: ConsoleFormatArgs = syn::parse2(input)?;
     let segments = parser::parse_format_string(&args.format_str)
         .map_err(|msg| syn::Error::new(args.format_str_span, msg))?;
-    Ok(codegen::generate(&segments, &args.extra_args))
+    Ok(codegen::generate(
+        &segments,
+        &args.extra_args,
+        args.format_str_span,
+    ))
 }
 
 struct ConsoleFormatArgs {

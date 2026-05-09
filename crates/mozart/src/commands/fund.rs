@@ -157,15 +157,15 @@ fn render_text(fundings: &BTreeMap<String, BTreeMap<String, Vec<String>>>, conso
     let mut prev: Option<String> = None;
     for (vendor, url_map) in fundings {
         console_writeln!(console, "");
-        console_writeln!(console, &console_format!("<comment>{vendor}</comment>"));
+        console_writeln!(console, "<comment>{vendor}</comment>");
         for (url, packages) in url_map {
             let line = format!("  <info>{}</info>", packages.join(", "));
             if prev.as_deref() != Some(line.as_str()) {
-                console_writeln!(console, &console_format!("{line}"));
+                console_writeln!(console, "{line}");
                 prev = Some(line);
             }
             let link = hyperlink(url, url, console.decorated);
-            console_writeln!(console, &format!("    {link}"));
+            console_writeln!(console, "    {link}");
         }
     }
 
@@ -192,7 +192,7 @@ fn render_json(
     } else {
         fundings.serialize(&mut ser)?;
     }
-    console_writeln!(console, &String::from_utf8(ser.into_inner())?);
+    console_writeln!(console, "{}", &String::from_utf8(ser.into_inner())?);
     Ok(())
 }
 

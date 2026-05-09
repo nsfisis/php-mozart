@@ -6,6 +6,7 @@ edition.workspace = true
 [dependencies]
 mozart-archiver.workspace = true
 mozart-autoload.workspace = true
+mozart-console-macros.workspace = true
 mozart-core.workspace = true
 mozart-registry.workspace = true
 mozart-semver.workspace = true

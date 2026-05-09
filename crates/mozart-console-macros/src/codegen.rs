@@ -77,10 +77,11 @@ fn count_positional_placeholders(s: &str) -> usize {
 pub fn generate(
     segments: &[Segment],
     extra_args: &Punctuated<Expr, syn::Token![,]>,
+    span: proc_macro2::Span,
 ) -> TokenStream {
     // Single segment: pass all extra args
     if segments.len() == 1 {
-        return generate_single(&segments[0], extra_args);
+        return generate_single(&segments[0], extra_args, span);
     }
 
     // Multiple segments: distribute positional args across segments
@@ -101,7 +102,7 @@ pub fn generate(
         pos = end;
 
         let ident = quote::format_ident!("__seg{}", i);
-        let expr = generate_single(segment, &slice);
+        let expr = generate_single(segment, &slice, span);
         seg_bindings.push(quote! { let #ident = #expr; });
         seg_idents.push(ident);
     }
@@ -124,11 +125,21 @@ fn segment_content(segment: &Segment) -> &str {
     }
 }
 
-fn generate_single(segment: &Segment, args: &Punctuated<Expr, syn::Token![,]>) -> TokenStream {
+fn spanned_lit(s: &str, span: proc_macro2::Span) -> proc_macro2::Literal {
+    let mut lit = proc_macro2::Literal::string(s);
+    lit.set_span(span);
+    lit
+}
+
+fn generate_single(
+    segment: &Segment,
+    args: &Punctuated<Expr, syn::Token![,]>,
+    span: proc_macro2::Span,
+) -> TokenStream {
     match segment {
         Segment::Plain(text) => {
             if has_placeholders(text) {
-                let lit = proc_macro2::Literal::string(text);
+                let lit = spanned_lit(text, span);
                 quote! { ::std::format!(#lit, #args) }
             } else {
                 quote! { ::std::string::String::from(#text) }
@@ -137,7 +148,7 @@ fn generate_single(segment: &Segment, args: &Punctuated<Expr, syn::Token![,]>) -
         Segment::Tagged { tag, content } => {
             let func = quote::format_ident!("__format_{}_message", tag);
             if has_placeholders(content) {
-                let lit = proc_macro2::Literal::string(content);
+                let lit = spanned_lit(content, span);
                 quote! {
                     ::std::string::ToString::to_string(
                         &::mozart_core::console::#func(&::std::format!(#lit, #args))

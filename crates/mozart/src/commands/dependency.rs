@@ -92,11 +92,9 @@ pub fn do_execute(
         if inverted {
             console_writeln!(
                 console,
-                &console_format!(
-                    "<info>{} {} can be installed.</info>",
-                    package,
-                    version.unwrap_or("")
-                ),
+                "<info>{} {} can be installed.</info>",
+                package,
+                version.unwrap_or(""),
             );
             return Ok(());
         }
@@ -648,10 +646,7 @@ fn sample_versions_from_constraint(
 /// Columns: package name | version | link description | link constraint
 pub fn print_table(results: &[DependencyResult], console: &mozart_core::console::Console) {
     if results.is_empty() {
-        console_writeln!(
-            console,
-            &console_format!("<info>No relationships found.</info>"),
-        );
+        console_writeln!(console, "<info>No relationships found.</info>");
         return;
     }
 
@@ -683,16 +678,14 @@ pub fn print_table(results: &[DependencyResult], console: &mozart_core::console:
         }
         console_writeln!(
             console,
-            &format!(
-                "{:<name_w$}  {:<ver_w$}  {:<desc_w$}  {}",
-                console_format!("<info>{}</info>", r.package_name),
-                console_format!("<comment>{}</comment>", r.package_version),
-                r.link_description,
-                console_format!("<comment>{}</comment>", r.link_constraint),
-                name_w = name_w,
-                ver_w = ver_w,
-                desc_w = desc_w,
-            ),
+            "{:<name_w$}  {:<ver_w$}  {:<desc_w$}  {}",
+            console_format!("<info>{}</info>", r.package_name),
+            console_format!("<comment>{}</comment>", r.package_version),
+            r.link_description,
+            console_format!("<comment>{}</comment>", r.link_constraint),
+            name_w = name_w,
+            ver_w = ver_w,
+            desc_w = desc_w,
         );
     }
 }
@@ -712,10 +705,7 @@ pub fn print_tree(
     console: &mozart_core::console::Console,
 ) {
     if results.is_empty() && depth == 0 {
-        console_writeln!(
-            console,
-            &console_format!("<info>No relationships found.</info>"),
-        );
+        console_writeln!(console, "<info>No relationships found.</info>");
         return;
     }
 
@@ -726,14 +716,12 @@ pub fn print_tree(
 
         console_writeln!(
             console,
-            &format!(
-                "{}{:<}  {}  {}  {}",
-                prefix,
-                console_format!("<info>{}</info>", r.package_name),
-                console_format!("<comment>{}</comment>", r.package_version),
-                r.link_description,
-                console_format!("<comment>{}</comment>", r.link_constraint),
-            ),
+            "{}{:<}  {}  {}  {}",
+            prefix,
+            console_format!("<info>{}</info>", r.package_name),
+            console_format!("<comment>{}</comment>", r.package_version),
+            r.link_description,
+            console_format!("<comment>{}</comment>", r.link_constraint),
         );
 
         if !r.children.is_empty() {
