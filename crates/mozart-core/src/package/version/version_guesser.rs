@@ -1,14 +1,5 @@
-//! `VersionGuesser` — derive a package's current version from the working
-//! copy, mirroring `Composer\Package\Version\VersionGuesser`.
-//!
-//! Differences from the PHP version:
-//! - Fossil is not supported (Mozart has no Fossil driver).
-//! - `Platform::isInputCompletionProcess()` short-circuit is omitted.
-//! - `guess_feature_version` runs candidate comparisons sequentially.
-//!   Composer parallelises via `executeAsync`; ours is simpler at the
-//!   cost of speed when many candidate branches exist.
-
-use super::process::ProcessExecutor;
+use crate::package::version::VersionParser;
+use crate::vcs::process::ProcessExecutor;
 use mozart_semver::{Version, normalize_branch};
 use regex::Regex;
 use serde_json::Value;
@@ -16,25 +7,6 @@ use std::path::Path;
 use std::sync::LazyLock;
 
 const DEFAULT_BRANCH_ALIAS: &str = "9999999-dev";
-
-/// Mirrors `Composer\Package\Version\VersionParser` (itself a thin wrapper
-/// around `Composer\Semver\VersionParser`). In Rust, semver parsing is
-/// handled by `mozart_semver` directly, so this type carries no state;
-/// it exists to keep `VersionGuesser::new` signature compatible with the
-/// PHP constructor.
-pub struct VersionParser;
-
-impl Default for VersionParser {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl VersionParser {
-    pub fn new() -> Self {
-        Self
-    }
-}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GuessedVersion {

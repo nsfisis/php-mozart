@@ -1,30 +1,22 @@
 use crate::composer::Composer;
 use clap::Args;
-use mozart_core::composer::{InstallationSource, LocalPackage};
+use mozart_core::composer::InstallationSource;
 use mozart_core::console::IoInterface;
 use mozart_core::console_writeln;
 use mozart_core::console_writeln_error;
 use mozart_core::exit_code;
-use mozart_core::vcs::version_guesser::{VersionGuesser, VersionParser};
+use mozart_core::package::dumper::ArrayDumper;
+use mozart_core::package::version::{VersionGuesser, VersionParser};
 
 #[derive(Args)]
 pub struct StatusArgs {}
-
-struct VcsVerChange {
-    previous: VerRef,
-    current: VerRef,
-}
-
-struct VerRef {
-    version: String,
-    reference: String,
-}
 
 pub async fn execute(
     _args: &StatusArgs,
     cli: &super::Cli,
     io: std::sync::Arc<std::sync::Mutex<Box<dyn IoInterface>>>,
 ) -> anyhow::Result<()> {
+    // init repos
     let composer = Composer::require(cli.working_dir()?)?;
 
     let installed_repo = composer.repository_manager().local_repository();
@@ -40,6 +32,7 @@ pub async fn execute(
     let guesser = VersionGuesser::new(parser);
     let dumper = ArrayDumper::new();
 
+    // list packages
     for package in installed_repo.get_canonical_packages() {
         let Some(downloader) = dm.get_downloader_for_package(package) else {
             continue;
@@ -147,26 +140,30 @@ pub async fn execute(
             "<warning>You have version variations in the following dependencies:</warning>"
         );
 
-        for (path, change) in &vcs_version_changes {
+        for (path, changes) in &vcs_version_changes {
             if cli.is_verbose() {
-                let mut prev = if change.previous.version.is_empty() {
-                    change.previous.reference.clone()
+                // If we don't can't find a version, use the ref instead.
+                let mut current_version = if changes.current.version.is_empty() {
+                    changes.current.reference.clone()
                 } else {
-                    change.previous.version.clone()
+                    changes.current.version.clone()
                 };
-                let mut curr = if change.current.version.is_empty() {
-                    change.current.reference.clone()
+                let mut previous_version = if changes.previous.version.is_empty() {
+                    changes.previous.reference.clone()
                 } else {
-                    change.current.version.clone()
+                    changes.previous.version.clone()
                 };
+
                 if io.lock().unwrap().is_very_verbose() {
-                    prev.push_str(&format!(" ({})", change.previous.reference));
-                    curr.push_str(&format!(" ({})", change.current.reference));
+                    // Output the ref regardless of whether or not it's being used as the version
+                    current_version.push_str(&format!(" ({})", changes.current.reference));
+                    previous_version.push_str(&format!(" ({})", changes.previous.reference));
                 }
+
                 console_writeln!(io, "<info>{path}</info>:");
                 console_writeln!(
                     io,
-                    "    From <comment>{prev}</comment> to <comment>{curr}</comment>"
+                    "    From <comment>{previous_version}</comment> to <comment>{current_version}</comment>"
                 );
             } else {
                 console_writeln!(io, "{}", path);
@@ -191,62 +188,19 @@ pub async fn execute(
     Ok(())
 }
 
+struct VcsVerChange {
+    previous: VerRef,
+    current: VerRef,
+}
+
+struct VerRef {
+    version: String,
+    reference: String,
+}
+
 fn indent_block(s: &str) -> String {
     s.split('\n')
         .map(|line| format!("    {}", line.trim_start()))
         .collect::<Vec<_>>()
         .join("\n")
-}
-
-/// Mirrors `Composer\Package\Dumper\ArrayDumper`. Serialises a `LocalPackage`
-/// into the JSON shape that `VersionGuesser::guess_version` expects.
-struct ArrayDumper;
-
-impl ArrayDumper {
-    fn new() -> Self {
-        Self
-    }
-
-    fn dump(&self, package: &LocalPackage) -> serde_json::Value {
-        build_package_config(package)
-    }
-}
-
-/// Serialises a `LocalPackage` to the JSON shape consumed by
-/// `VersionGuesser::guess_version`. Mirrors `ArrayDumper::dump($package)` —
-/// we include all fields that `VersionGuesser` inspects.
-fn build_package_config(package: &LocalPackage) -> serde_json::Value {
-    let mut obj = serde_json::Map::new();
-    obj.insert("name".into(), package.pretty_name().into());
-    obj.insert("version".into(), package.pretty_version().into());
-    if let Some(t) = package.package_type() {
-        obj.insert("type".into(), t.into());
-    }
-    obj.insert("extra".into(), package.extra().clone());
-    if let Some(src) = package.source() {
-        let mut s = serde_json::Map::new();
-        s.insert("type".into(), src.kind.clone().into());
-        s.insert("url".into(), src.url.clone().into());
-        if let Some(r) = &src.reference {
-            s.insert("reference".into(), r.clone().into());
-        }
-        obj.insert("source".into(), serde_json::Value::Object(s));
-    }
-    if let Some(dist) = package.dist() {
-        let mut d = serde_json::Map::new();
-        d.insert("type".into(), dist.kind.clone().into());
-        d.insert("url".into(), dist.url.clone().into());
-        if let Some(r) = &dist.reference {
-            d.insert("reference".into(), r.clone().into());
-        }
-        obj.insert("dist".into(), serde_json::Value::Object(d));
-    }
-    if let Some(is) = package.installation_source() {
-        let s = match is {
-            InstallationSource::Source => "source",
-            InstallationSource::Dist => "dist",
-        };
-        obj.insert("installation-source".into(), s.into());
-    }
-    serde_json::Value::Object(obj)
 }

@@ -6,6 +6,8 @@ use std::fs;
 use std::path::Path;
 
 pub mod archiver;
+pub mod dumper;
+pub mod version;
 
 /// Package stability level.
 /// Higher value = less stable.
