@@ -1,5 +1,6 @@
 use clap::Args;
 use indexmap::{IndexMap, IndexSet};
+use mozart_core::console::IoInterface;
 use mozart_core::console_format;
 use mozart_core::console_writeln;
 use mozart_core::package::{self, RawPackageData, Stability};
@@ -144,14 +145,17 @@ struct CommandState {
 
 /// Reverts composer.json (and composer.lock) to their pre-command state.
 /// Mirrors Composer\Command\RequireCommand::revertComposerFile().
-fn revert_composer_file(state: &CommandState, console: &mozart_core::console::Console) {
+fn revert_composer_file(
+    state: &CommandState,
+    io: std::sync::Arc<std::sync::Mutex<Box<dyn IoInterface>>>,
+) {
     if state.newly_created {
-        console.write_error(&format!(
+        io.lock().unwrap().write_error(&format!(
             "\nInstallation failed, deleting {}.",
             state.json_path.display()
         ));
         if let Err(e) = std::fs::remove_file(&state.json_path) {
-            console.write_error(&format!(
+            io.lock().unwrap().write_error(&format!(
                 "Warning: Failed to delete {}: {e}",
                 state.json_path.display()
             ));
@@ -160,7 +164,7 @@ fn revert_composer_file(state: &CommandState, console: &mozart_core::console::Co
         if state.lock_path.exists()
             && let Err(e) = std::fs::remove_file(&state.lock_path)
         {
-            console.write_error(&format!(
+            io.lock().unwrap().write_error(&format!(
                 "Warning: Failed to delete {}: {e}",
                 state.lock_path.display()
             ));
@@ -171,12 +175,12 @@ fn revert_composer_file(state: &CommandState, console: &mozart_core::console::Co
         } else {
             " to its".to_string()
         };
-        console.write_error(&format!(
+        io.lock().unwrap().write_error(&format!(
             "\nInstallation failed, reverting {}{msg} original content.",
             state.json_path.display()
         ));
         if let Err(e) = std::fs::write(&state.json_path, &state.composer_backup) {
-            console.write_error(&format!(
+            io.lock().unwrap().write_error(&format!(
                 "Warning: Failed to revert {}: {e}",
                 state.json_path.display()
             ));
@@ -184,7 +188,7 @@ fn revert_composer_file(state: &CommandState, console: &mozart_core::console::Co
         if let Some(ref lock_content) = state.lock_backup
             && let Err(e) = std::fs::write(&state.lock_path, lock_content)
         {
-            console.write_error(&format!(
+            io.lock().unwrap().write_error(&format!(
                 "Warning: Failed to revert {}: {e}",
                 state.lock_path.display()
             ));
@@ -253,7 +257,7 @@ async fn update_requirements_after_resolution(
     _sort_packages: bool,
     _dry_run: bool,
     _fixed: bool,
-    _console: &mozart_core::console::Console,
+    _io: std::sync::Arc<std::sync::Mutex<Box<dyn IoInterface>>>,
 ) -> anyhow::Result<()> {
     Ok(())
 }
@@ -266,7 +270,7 @@ async fn do_update(
     cli: &super::Cli,
     raw: &RawPackageData,
     additions: &[(String, String, bool)],
-    console: &mozart_core::console::Console,
+    io: &std::sync::Arc<std::sync::Mutex<Box<dyn IoInterface>>>,
 ) -> anyhow::Result<()> {
     let working_dir = cli.working_dir()?;
     let vendor_dir = working_dir.join("vendor");
@@ -349,19 +353,23 @@ async fn do_update(
         block_insecure,
     };
 
-    console.info("Loading composer repositories with package information");
+    io.lock()
+        .unwrap()
+        .info("Loading composer repositories with package information");
     if dev_mode {
-        console.info("Updating dependencies (including require-dev)");
+        io.lock()
+            .unwrap()
+            .info("Updating dependencies (including require-dev)");
     } else {
-        console.info("Updating dependencies");
+        io.lock().unwrap().info("Updating dependencies");
     }
-    console.info("Resolving dependencies...");
+    io.lock().unwrap().info("Resolving dependencies...");
 
     let mut resolved = match resolver::resolve(&request).await {
         Ok(packages) => packages,
         Err(e) => {
             if !args.dry_run {
-                revert_composer_file(state, console);
+                revert_composer_file(state, io.clone());
             }
             // Suggest explicit version constraint retry for the first package without one.
             // Mirrors Composer\Command\RequireCommand::doUpdate() L496-502.
@@ -394,7 +402,7 @@ async fn do_update(
         match lockfile::LockFile::read_from_file(&state.lock_path) {
             Ok(l) => Some(l),
             Err(e) => {
-                console.info(&console_format!(
+                io.lock().unwrap().info(&console_format!(
                     "<warning>Could not read existing composer.lock: {e}. \
                      Treating as a fresh install.</warning>"
                 ));
@@ -467,7 +475,7 @@ async fn do_update(
         .filter(|c| matches!(c.kind, super::update::ChangeKind::Uninstall { .. }))
         .collect();
 
-    console.info(&format!(
+    io.lock().unwrap().info(&format!(
         "Package operations: {} install{}, {} update{}, {} removal{}",
         installs.len(),
         if installs.len() == 1 { "" } else { "s" },
@@ -481,19 +489,25 @@ async fn do_update(
         match &change.kind {
             super::update::ChangeKind::Uninstall { old_version } => {
                 if args.dry_run {
-                    console.info(&format!("  - Would remove {} ({old_version})", change.name));
+                    io.lock()
+                        .unwrap()
+                        .info(&format!("  - Would remove {} ({old_version})", change.name));
                 } else {
-                    console.info(&format!("  - Removing {} ({old_version})", change.name));
+                    io.lock()
+                        .unwrap()
+                        .info(&format!("  - Removing {} ({old_version})", change.name));
                 }
             }
             super::update::ChangeKind::Install { new_version } => {
                 if args.dry_run {
-                    console.info(&format!(
+                    io.lock().unwrap().info(&format!(
                         "  - Would install {} ({new_version})",
                         change.name
                     ));
                 } else {
-                    console.info(&format!("  - Installing {} ({new_version})", change.name));
+                    io.lock()
+                        .unwrap()
+                        .info(&format!("  - Installing {} ({new_version})", change.name));
                 }
             }
             super::update::ChangeKind::Update {
@@ -501,12 +515,12 @@ async fn do_update(
                 new_version,
             } => {
                 if args.dry_run {
-                    console.info(&format!(
+                    io.lock().unwrap().info(&format!(
                         "  - Would update {} ({old_version} => {new_version})",
                         change.name
                     ));
                 } else {
-                    console.info(&format!(
+                    io.lock().unwrap().info(&format!(
                         "  - Updating {} ({old_version} => {new_version})",
                         change.name
                     ));
@@ -516,7 +530,7 @@ async fn do_update(
     }
 
     if !args.dry_run {
-        console.info("Writing lock file");
+        io.lock().unwrap().info("Writing lock file");
         new_lock.write_to_file(&state.lock_path)?;
     }
 
@@ -528,7 +542,7 @@ async fn do_update(
                 .map(|s| s.eq_ignore_ascii_case("source"))
                 .unwrap_or(false);
         if prefer_source {
-            console.info(&console_format!(
+            io.lock().unwrap().info(&console_format!(
                 "<warning>Warning: Source installs are not yet supported. \
                  Falling back to dist.</warning>"
             ));
@@ -573,7 +587,7 @@ async fn do_update(
                 download_only: false,
                 prefer_source: args.prefer_source,
             },
-            console,
+            io.clone(),
             &mut executor,
         )
         .await?;
@@ -591,7 +605,7 @@ async fn interactive_search_packages(
     preferred_stability: Stability,
     fixed: bool,
     repo_cache: &mozart_core::repository::cache::Cache,
-    console: &mozart_core::console::Console,
+    io: &std::sync::Arc<std::sync::Mutex<Box<dyn IoInterface>>>,
 ) -> anyhow::Result<Vec<String>> {
     let stdin = std::io::stdin();
     if !stdin.is_terminal() {
@@ -623,7 +637,7 @@ async fn interactive_search_packages(
         let (results, total) = match packagist::search_packages(&query, None).await {
             Ok(r) => r,
             Err(e) => {
-                console.info(&console_format!(
+                io.lock().unwrap().info(&console_format!(
                     "<warning>Search failed: {e}. Try again.</warning>"
                 ));
                 continue;
@@ -637,13 +651,13 @@ async fn interactive_search_packages(
             .collect();
 
         if filtered.is_empty() {
-            console.info(&console_format!(
+            io.lock().unwrap().info(&console_format!(
                 "<warning>No new packages found for \"{query}\" (total: {total}).</warning>"
             ));
             continue;
         }
 
-        console.info(&format!(
+        io.lock().unwrap().info(&format!(
             "\nFound {} package{} for \"{}\":",
             filtered.len(),
             if filtered.len() == 1 { "" } else { "s" },
@@ -657,15 +671,17 @@ async fn interactive_search_packages(
             } else {
                 format!(" — {}", result.description)
             };
-            console.info(&format!(
+            io.lock().unwrap().info(&format!(
                 "  [{idx}] {:<width$}{desc}",
                 result.name,
                 idx = idx + 1,
                 width = name_width,
             ));
         }
-        console.info("  [0] Search again / enter full package name");
-        console.info("");
+        io.lock()
+            .unwrap()
+            .info("  [0] Search again / enter full package name");
+        io.lock().unwrap().info("");
 
         eprint!("Enter package # or name (leave empty to finish): ");
         let _ = std::io::stderr().flush();
@@ -689,7 +705,7 @@ async fn interactive_search_packages(
             } else if num <= filtered.len() {
                 filtered[num - 1].name.to_lowercase()
             } else {
-                console.info(&console_format!(
+                io.lock().unwrap().info(&console_format!(
                     "<warning>Invalid selection: {num}</warning>"
                 ));
                 continue;
@@ -702,19 +718,21 @@ async fn interactive_search_packages(
             match validation::parse_require_string(&package_name) {
                 Ok((n, v)) => (n.to_lowercase(), v),
                 Err(e) => {
-                    console.info(&console_format!("<warning>Invalid: {e}</warning>"));
+                    io.lock()
+                        .unwrap()
+                        .info(&console_format!("<warning>Invalid: {e}</warning>"));
                     continue;
                 }
             }
         } else {
             if !validation::validate_package_name(&package_name) {
-                console.info(&console_format!(
+                io.lock().unwrap().info(&console_format!(
                     "<warning>Invalid package name: \"{package_name}\"</warning>"
                 ));
                 continue;
             }
 
-            console.info(&console_format!(
+            io.lock().unwrap().info(&console_format!(
                 "<info>Using version constraint for {package_name} from Packagist...</info>"
             ));
 
@@ -732,13 +750,13 @@ async fn interactive_search_packages(
                                     stability,
                                 )
                             };
-                            console.info(&console_format!(
+                            io.lock().unwrap().info(&console_format!(
                                 "<info>Using version {c} for {package_name}</info>"
                             ));
                             (package_name, c)
                         }
                         None => {
-                            console.info(&console_format!(
+                            io.lock().unwrap().info(&console_format!(
                                 "<warning>Could not find a version of \"{package_name}\" \
                                  matching your minimum-stability. Try specifying it \
                                  explicitly.</warning>"
@@ -748,7 +766,7 @@ async fn interactive_search_packages(
                     }
                 }
                 Err(e) => {
-                    console.info(&console_format!(
+                    io.lock().unwrap().info(&console_format!(
                         "<warning>Could not fetch versions for \"{package_name}\": \
                          {e}</warning>"
                     ));
@@ -782,7 +800,7 @@ async fn interactive_search_packages(
 pub async fn execute(
     args: &RequireArgs,
     cli: &super::Cli,
-    console: &mozart_core::console::Console,
+    io: std::sync::Arc<std::sync::Mutex<Box<dyn IoInterface>>>,
 ) -> anyhow::Result<()> {
     let cache_config = mozart_core::repository::cache::build_cache_config(cli.no_cache);
     let repo_cache = mozart_core::repository::cache::Cache::repo(&cache_config);
@@ -790,19 +808,19 @@ pub async fn execute(
     // --- Deprecated flag warnings ---
     // Mirrors Composer\Command\RequireCommand::execute() L134-136.
     if args.no_suggest {
-        console.write_error(&console_format!(
+        io.lock().unwrap().write_error(&console_format!(
             "<warning>You are using the deprecated option \"--no-suggest\". \
              It has no effect and will break in Composer 3.</warning>"
         ));
     }
     if args.update_with_dependencies {
-        console.write_error(&console_format!(
+        io.lock().unwrap().write_error(&console_format!(
             "<warning>The -w / --update-with-dependencies flag is deprecated. \
              Use --with-dependencies instead.</warning>"
         ));
     }
     if args.update_with_all_dependencies {
-        console.write_error(&console_format!(
+        io.lock().unwrap().write_error(&console_format!(
             "<warning>The -W / --update-with-all-dependencies flag is deprecated. \
              Use --with-all-dependencies instead.</warning>"
         ));
@@ -841,7 +859,7 @@ pub async fn execute(
             preferred_stability,
             args.fixed,
             &repo_cache,
-            console,
+            &io,
         )
         .await?;
 
@@ -905,13 +923,13 @@ pub async fn execute(
             .filter(|t| !t.is_empty())
             .unwrap_or("library");
         if package_type != "project" && !args.dev {
-            console.write_error(&console_format!(
+            io.lock().unwrap().write_error(&console_format!(
                 "<error>The \"--fixed\" option is only allowed for packages with a \
                  \"project\" type or for dev dependencies to prevent possible \
                  misuses.</error>"
             ));
             if raw.package_type.is_none() {
-                console.write_error(&console_format!(
+                io.lock().unwrap().write_error(&console_format!(
                     "<error>If your package is not a library, you can explicitly specify \
                      the \"type\" by using \"mozart config type project\".</error>"
                 ));
@@ -948,7 +966,7 @@ pub async fn execute(
                 }
 
                 console_writeln!(
-                    console,
+                    io,
                     "<info>Using version constraint for {name} from Packagist...</info>"
                 );
 
@@ -966,10 +984,7 @@ pub async fn execute(
                 let constraint =
                     version_selector.find_recommended_require_version_string(&best, args.fixed);
 
-                console_writeln!(
-                    console,
-                    "<info>Using version {constraint} for {name}</info>",
-                );
+                console_writeln!(io, "<info>Using version {constraint} for {name}</info>",);
 
                 (name, constraint)
             }
@@ -1002,7 +1017,7 @@ pub async fn execute(
         } else {
             ("without", require_key)
         };
-        console.write_error(&console_format!(
+        io.lock().unwrap().write_error(&console_format!(
             "<warning>{pkg} is currently present in the {remove_key} key and you ran the \
              command {with_without} the --dev flag, which will move it to the \
              {target_key} key.</warning>"
@@ -1028,12 +1043,12 @@ pub async fn execute(
 
         if let Some(existing) = target.get(name) {
             console_writeln!(
-                console,
+                io,
                 "<comment>Updating {name} from {existing} to {constraint} in {section_name}</comment>",
             );
         } else {
             console_writeln!(
-                console,
+                io,
                 "<info>Adding {name} ({constraint}) to {section_name}</info>",
             );
         }
@@ -1061,7 +1076,7 @@ pub async fn execute(
     // Mirrors Composer\Command\RequireCommand::execute() L323-325.
     if args.dry_run {
         console_writeln!(
-            console,
+            io,
             "<comment>Dry run: composer.json not modified.</comment>",
         );
     } else {
@@ -1070,7 +1085,7 @@ pub async fn execute(
 
     // Print "has been created|updated".
     // Mirrors Composer\Command\RequireCommand::execute() L327.
-    console.info(&console_format!(
+    io.lock().unwrap().info(&console_format!(
         "<info>{} has been {}</info>",
         composer_path.display(),
         if newly_created { "created" } else { "updated" }
@@ -1079,14 +1094,14 @@ pub async fn execute(
     // --- --no-update: skip resolution ---
     if args.no_update {
         console_writeln!(
-            console,
+            io,
             "<comment>Not updating dependencies, only modifying composer.json.</comment>"
         );
         return Ok(());
     }
 
     // --- Resolution + lock + install ---
-    let update_result = do_update(&mut state, args, cli, &raw, &additions, console).await;
+    let update_result = do_update(&mut state, args, cli, &raw, &additions, &io).await;
 
     // Mirrors Composer's `finally` block: cleanup newly-created file on dry-run.
     if args.dry_run && state.newly_created {
@@ -1104,7 +1119,7 @@ pub async fn execute(
         sort_packages,
         args.dry_run,
         args.fixed,
-        console,
+        io,
     )
     .await?;
 

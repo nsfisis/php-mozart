@@ -1,9 +1,11 @@
 use crate::composer::Composer;
 use clap::Args;
+use mozart_core::console::IoInterface;
 use mozart_core::script_events;
 use mozart_core::{console_writeln, console_writeln_error};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 #[derive(Args)]
@@ -35,14 +37,14 @@ pub struct RunScriptArgs {
 pub async fn execute(
     args: &RunScriptArgs,
     cli: &super::Cli,
-    console: &mozart_core::console::Console,
+    io: std::sync::Arc<std::sync::Mutex<Box<dyn IoInterface>>>,
 ) -> anyhow::Result<()> {
     let working_dir = cli.working_dir()?;
 
     if args.list {
         Composer::require(&working_dir)?;
         let (scripts, descriptions) = load_scripts(&working_dir)?;
-        return list_scripts(&scripts, &descriptions, console);
+        return list_scripts(&scripts, &descriptions, io.clone());
     }
 
     let script = match &args.script {
@@ -106,7 +108,7 @@ pub async fn execute(
         dev_mode,
         &mut event_stack,
         cli.verbose,
-        console,
+        io,
     )?;
 
     if exit_code != 0 {
@@ -162,19 +164,19 @@ fn load_scripts(
 fn list_scripts(
     scripts: &BTreeMap<String, Vec<String>>,
     descriptions: &BTreeMap<String, String>,
-    console: &mozart_core::console::Console,
+    io: Arc<Mutex<Box<dyn IoInterface>>>,
 ) -> anyhow::Result<()> {
     if scripts.is_empty() {
         return Ok(());
     }
 
-    console_writeln_error!(console, "<info>scripts:</info>");
+    console_writeln_error!(io, "<info>scripts:</info>");
 
     let name_width = scripts.keys().map(|n| n.len() + 2).max().unwrap_or(0);
     for name in scripts.keys() {
         let desc = descriptions.get(name).map(|s| s.as_str()).unwrap_or("");
         let padded = format!("  {:<w$}", name, w = name_width - 2);
-        console_writeln!(console, "{}  {}", padded, desc);
+        console_writeln!(io, "{}  {}", padded, desc);
     }
     Ok(())
 }
@@ -190,7 +192,7 @@ fn run_script(
     dev_mode: bool,
     event_stack: &mut Vec<String>,
     verbose: u8,
-    console: &mozart_core::console::Console,
+    io: Arc<Mutex<Box<dyn IoInterface>>>,
 ) -> anyhow::Result<i32> {
     if event_stack.contains(&script.to_string()) {
         anyhow::bail!(
@@ -217,7 +219,7 @@ fn run_script(
             dev_mode,
             event_stack,
             verbose,
-            console,
+            io.clone(),
         )?;
         if code > max_exit_code {
             max_exit_code = code;
@@ -247,7 +249,7 @@ fn run_script_entry(
     dev_mode: bool,
     event_stack: &mut Vec<String>,
     verbose: u8,
-    console: &mozart_core::console::Console,
+    io: Arc<Mutex<Box<dyn IoInterface>>>,
 ) -> anyhow::Result<i32> {
     let suppress_additional_args = entry.contains("@no_additional_args");
     let effective_args: &[String] = if suppress_additional_args { &[] } else { args };
@@ -269,7 +271,7 @@ fn run_script_entry(
     };
 
     if is_php_callback(&entry) {
-        console.info(&format!(
+        io.lock().unwrap().info(&format!(
             "Skipping PHP callback '{}' -- Mozart cannot execute PHP class methods.",
             entry
         ));
@@ -301,7 +303,7 @@ fn run_script_entry(
             dev_mode,
             event_stack,
             verbose,
-            console,
+            io,
         );
     }
 
@@ -455,12 +457,10 @@ mod tests {
     use super::*;
     use std::fs;
 
-    fn test_console() -> mozart_core::console::Console {
-        mozart_core::console::Console {
-            interactive: false,
-            verbosity: mozart_core::console::Verbosity::Normal,
-            decorated: false,
-        }
+    fn test_console() -> Arc<Mutex<Box<dyn IoInterface>>> {
+        Arc::new(Mutex::new(Box::new(mozart_core::console::Console::new(
+            0, false, false, false, false,
+        )) as Box<dyn IoInterface>))
     }
 
     #[test]
@@ -594,7 +594,7 @@ mod tests {
         let mut descriptions = BTreeMap::new();
         descriptions.insert("test".to_string(), "Run tests".to_string());
 
-        let result = list_scripts(&scripts, &descriptions, &test_console());
+        let result = list_scripts(&scripts, &descriptions, test_console());
         assert!(result.is_ok());
     }
 
@@ -602,7 +602,7 @@ mod tests {
     fn test_list_scripts_empty_silent() {
         let scripts: BTreeMap<String, Vec<String>> = BTreeMap::new();
         let descriptions: BTreeMap<String, String> = BTreeMap::new();
-        let result = list_scripts(&scripts, &descriptions, &test_console());
+        let result = list_scripts(&scripts, &descriptions, test_console());
         assert!(result.is_ok());
     }
 
@@ -641,7 +641,7 @@ mod tests {
             true,
             &mut stack,
             0,
-            &test_console(),
+            test_console(),
         )
         .unwrap();
         assert_eq!(code, 0);
@@ -669,7 +669,7 @@ mod tests {
             true,
             &mut stack,
             0,
-            &test_console(),
+            test_console(),
         )
         .unwrap();
 
@@ -701,7 +701,7 @@ mod tests {
             true,
             &mut stack,
             0,
-            &test_console(),
+            test_console(),
         )
         .unwrap();
 
@@ -728,7 +728,7 @@ mod tests {
             true,
             &mut stack,
             0,
-            &test_console(),
+            test_console(),
         )
         .unwrap();
         assert_eq!(code, 0);
@@ -754,7 +754,7 @@ mod tests {
             true,
             &mut stack,
             0,
-            &test_console(),
+            test_console(),
         );
         assert!(result.is_err());
         let msg = result.unwrap_err().to_string();
@@ -783,7 +783,7 @@ mod tests {
             true,
             &mut stack,
             0,
-            &test_console(),
+            test_console(),
         )
         .unwrap();
         assert_eq!(code, 0);
@@ -811,7 +811,7 @@ mod tests {
             true,
             &mut stack,
             0,
-            &test_console(),
+            test_console(),
         )
         .unwrap();
         assert_eq!(code, 0);
@@ -839,7 +839,7 @@ mod tests {
             true,
             &mut stack,
             0,
-            &test_console(),
+            test_console(),
         )
         .unwrap();
         assert_eq!(code, 0);
@@ -929,7 +929,7 @@ mod tests {
         assert!(scripts.contains_key("test"));
         assert!(scripts.contains_key("lint"));
 
-        let result = list_scripts(&scripts, &descriptions, &test_console());
+        let result = list_scripts(&scripts, &descriptions, test_console());
         assert!(result.is_ok());
     }
 

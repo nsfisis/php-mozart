@@ -1,6 +1,7 @@
 use crate::composer::Composer;
 use clap::Args;
 use mozart_core::config_validator::{ValidationResult, ValidatorOptions, validate_manifest};
+use mozart_core::console::IoInterface;
 use mozart_core::console_format;
 use mozart_core::console_writeln;
 use mozart_core::package::RootPackageData;
@@ -54,7 +55,7 @@ fn should_check_lock(args: &ValidateArgs, config_lock: bool) -> bool {
 pub async fn execute(
     args: &ValidateArgs,
     cli: &super::Cli,
-    console: &mozart_core::console::Console,
+    io: std::sync::Arc<std::sync::Mutex<Box<dyn IoInterface>>>,
 ) -> anyhow::Result<()> {
     let working_dir = cli.working_dir()?;
 
@@ -134,7 +135,7 @@ pub async fn execute(
     let check_publish = !args.no_check_publish;
     let file_name = file.display().to_string();
     output_result(
-        console,
+        io.clone(),
         &file_name,
         &result,
         check_publish,
@@ -146,11 +147,12 @@ pub async fn execute(
     let (dep_errors, dep_warnings) = if args.with_dependencies {
         let vendor_dir = file.parent().unwrap_or(Path::new(".")).join("vendor");
         if let Some(comp) = &composer {
-            validate_dependencies(comp, args, console)
+            validate_dependencies(comp, args, io.clone())
         } else if vendor_dir.exists() {
-            validate_dependencies_vendor_walk(&vendor_dir, args, console)
+            validate_dependencies_vendor_walk(&vendor_dir, args, io.clone())
         } else {
-            console
+            io.lock()
+                .unwrap()
                 .info("No vendor directory found. Run `mozart install` to install dependencies.");
             (0, 0)
         }
@@ -185,7 +187,7 @@ pub async fn execute(
 fn validate_dependencies(
     composer: &Composer,
     args: &ValidateArgs,
-    console: &mozart_core::console::Console,
+    io: std::sync::Arc<std::sync::Mutex<Box<dyn IoInterface>>>,
 ) -> (u32, u32) {
     let mut dep_errors = 0u32;
     let mut dep_warnings = 0u32;
@@ -234,7 +236,7 @@ fn validate_dependencies(
 
         // Per-dep rendering — same header format as the root file
         output_result(
-            console,
+            io.clone(),
             package.pretty_name(),
             &dep_result,
             false, // check_publish: false for deps, matching Composer
@@ -251,7 +253,7 @@ fn validate_dependencies(
 fn validate_dependencies_vendor_walk(
     vendor_dir: &Path,
     args: &ValidateArgs,
-    console: &mozart_core::console::Console,
+    io: std::sync::Arc<std::sync::Mutex<Box<dyn IoInterface>>>,
 ) -> (u32, u32) {
     let mut dep_errors = 0u32;
     let mut dep_warnings = 0u32;
@@ -308,7 +310,7 @@ fn validate_dependencies_vendor_walk(
                 dep_warnings += dep_result.warnings.len() as u32;
             }
 
-            output_result(console, &pkg_name, &dep_result, false, false, &[]);
+            output_result(io.clone(), &pkg_name, &dep_result, false, false, &[]);
         }
     }
 
@@ -366,7 +368,7 @@ fn check_lock_freshness(
 /// (dependency), matching how Composer calls `outputResult($io, $file, …)`
 /// for the root and `outputResult($io, $package->getPrettyName(), …)` for deps.
 fn output_result(
-    console: &mozart_core::console::Console,
+    io: std::sync::Arc<std::sync::Mutex<Box<dyn IoInterface>>>,
     name: &str,
     result: &ValidationResult,
     check_publish: bool,
@@ -375,34 +377,34 @@ fn output_result(
 ) {
     // Print header message
     if result.has_errors() {
-        console.error(&console_format!(
+        io.lock().unwrap().error(&console_format!(
             "<error>{name} is invalid, the following errors/warnings were found:</error>"
         ));
     } else if result.has_publish_errors() && check_publish {
-        console.info(&console_format!(
+        io.lock().unwrap().info(&console_format!(
             "<info>{name} is valid for simple usage with Composer but has</info>"
         ));
-        console.info(&console_format!(
+        io.lock().unwrap().info(&console_format!(
             "<info>strict errors that make it unable to be published as a package</info>"
         ));
-        console.info(&console_format!(
+        io.lock().unwrap().info(&console_format!(
             "<warning>See https://getcomposer.org/doc/04-schema.md for details on the schema</warning>"
         ));
     } else if result.has_warnings() {
-        console.info(&console_format!(
+        io.lock().unwrap().info(&console_format!(
             "<info>{name} is valid, but with a few warnings</info>"
         ));
-        console.info(&console_format!(
+        io.lock().unwrap().info(&console_format!(
             "<warning>See https://getcomposer.org/doc/04-schema.md for details on the schema</warning>"
         ));
     } else if !lock_errors.is_empty() {
         let kind = if check_lock { "errors" } else { "warnings" };
         console_writeln!(
-            console,
+            io,
             "<info>{name} is valid but your composer.lock has some {kind}</info>",
         );
     } else {
-        console_writeln!(console, "<info>{name} i valid</info>");
+        console_writeln!(io, "<info>{name} i valid</info>");
     }
 
     // Collect error and warning message lines
@@ -444,14 +446,16 @@ fn output_result(
 
     // Print errors
     for msg in &all_errors {
-        console.error(msg);
+        io.lock().unwrap().error(msg);
     }
 
     for msg in &all_warnings {
         if msg.starts_with('#') {
-            console.info(&console_format!("<warning>{msg}</warning>"));
+            io.lock()
+                .unwrap()
+                .info(&console_format!("<warning>{msg}</warning>"));
         } else {
-            console.info(msg);
+            io.lock().unwrap().info(msg);
         }
     }
 }

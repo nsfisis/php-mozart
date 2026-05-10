@@ -1,7 +1,7 @@
 use crate::composer::Composer;
 use clap::Args;
 use mozart_core::composer::{InstallationSource, LocalPackage};
-use mozart_core::console::Console;
+use mozart_core::console::IoInterface;
 use mozart_core::console_writeln;
 use mozart_core::console_writeln_error;
 use mozart_core::exit_code;
@@ -23,7 +23,7 @@ struct VerRef {
 pub async fn execute(
     _args: &StatusArgs,
     cli: &super::Cli,
-    console: &Console,
+    io: std::sync::Arc<std::sync::Mutex<Box<dyn IoInterface>>>,
 ) -> anyhow::Result<()> {
     let composer = Composer::require(cli.working_dir()?)?;
 
@@ -105,45 +105,45 @@ pub async fn execute(
     }
 
     if errors.is_empty() && unpushed_changes.is_empty() && vcs_version_changes.is_empty() {
-        console_writeln_error!(console, "<info>No local changes</info>");
+        console_writeln_error!(io, "<info>No local changes</info>");
         return Ok(());
     }
 
     if !errors.is_empty() {
         console_writeln_error!(
-            console,
+            io,
             "<error>You have changes in the following dependencies:</error>"
         );
 
         for (path, changes) in &errors {
             if cli.is_verbose() {
-                console_writeln!(console, "<info>{path}</info>:");
-                console_writeln!(console, "{}", &indent_block(changes));
+                console_writeln!(io, "<info>{path}</info>:");
+                console_writeln!(io, "{}", &indent_block(changes));
             } else {
-                console_writeln!(console, "{}", path);
+                console_writeln!(io, "{}", path);
             }
         }
     }
 
     if !unpushed_changes.is_empty() {
         console_writeln_error!(
-            console,
+            io,
             "<warning>You have unpushed changes on the current branch in the following dependencies:</warning>"
         );
 
         for (path, changes) in &unpushed_changes {
             if cli.is_verbose() {
-                console_writeln!(console, "<info>{path}</info>:");
-                console_writeln!(console, "{}", &indent_block(changes));
+                console_writeln!(io, "<info>{path}</info>:");
+                console_writeln!(io, "{}", &indent_block(changes));
             } else {
-                console_writeln!(console, "{}", path);
+                console_writeln!(io, "{}", path);
             }
         }
     }
 
     if !vcs_version_changes.is_empty() {
         console_writeln_error!(
-            console,
+            io,
             "<warning>You have version variations in the following dependencies:</warning>"
         );
 
@@ -159,23 +159,23 @@ pub async fn execute(
                 } else {
                     change.current.version.clone()
                 };
-                if console.is_very_verbose() {
+                if io.lock().unwrap().is_very_verbose() {
                     prev.push_str(&format!(" ({})", change.previous.reference));
                     curr.push_str(&format!(" ({})", change.current.reference));
                 }
-                console_writeln!(console, "<info>{path}</info>:");
+                console_writeln!(io, "<info>{path}</info>:");
                 console_writeln!(
-                    console,
+                    io,
                     "    From <comment>{prev}</comment> to <comment>{curr}</comment>"
                 );
             } else {
-                console_writeln!(console, "{}", path);
+                console_writeln!(io, "{}", path);
             }
         }
     }
 
     if !cli.is_verbose() {
-        console_writeln_error!(console, "Use --verbose (-v) to see a list of files");
+        console_writeln_error!(io, "Use --verbose (-v) to see a list of files");
     }
 
     let code = (if !errors.is_empty() { 1 } else { 0 })

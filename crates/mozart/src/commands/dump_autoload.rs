@@ -2,6 +2,7 @@ use crate::composer::Composer;
 use clap::Args;
 use mozart_core::autoload::AutoloadGeneratorExt;
 use mozart_core::composer::AutoloadDumpOptions;
+use mozart_core::console::IoInterface;
 use mozart_core::console_writeln;
 
 #[derive(Args, Default)]
@@ -54,7 +55,7 @@ pub struct DumpAutoloadArgs {
 pub async fn execute(
     args: &DumpAutoloadArgs,
     cli: &super::Cli,
-    console: &mozart_core::console::Console,
+    io: std::sync::Arc<std::sync::Mutex<Box<dyn IoInterface>>>,
 ) -> anyhow::Result<()> {
     let composer = Composer::require(cli.working_dir()?)?;
 
@@ -71,7 +72,7 @@ pub async fn execute(
             {
                 missing = true;
                 console_writeln!(
-                    console,
+                    io,
                     r#"<warning>Not all dependencies are installed. Make sure to run a "composer install" to install missing dependencies</warning>"#,
                 );
                 break;
@@ -99,13 +100,13 @@ pub async fn execute(
 
     if authoritative {
         console_writeln!(
-            console,
+            io,
             "<info>Generating optimized autoload files (authoritative)</info>",
         );
     } else if optimize {
-        console_writeln!(console, "<info>Generating optimized autoload files</info>");
+        console_writeln!(io, "<info>Generating optimized autoload files</info>");
     } else {
-        console_writeln!(console, "<info>Generating autoload files</info>");
+        console_writeln!(io, "<info>Generating autoload files</info>");
     }
 
     let dev_mode = if args.dev {
@@ -147,16 +148,16 @@ pub async fn execute(
 
     if authoritative {
         console_writeln!(
-            console,
+            io,
             "<info>Generated optimized autoload files (authoritative) containing {number_of_classes} classes</info>",
         );
     } else if optimize {
         console_writeln!(
-            console,
+            io,
             "<info>Generated optimized autoload files containing {number_of_classes} classes</info>",
         );
     } else {
-        console_writeln!(console, "<info>Generated autoload files</info>");
+        console_writeln!(io, "<info>Generated autoload files</info>");
     }
 
     if missing_dependencies || args.strict_psr && class_map.has_psr_violations() {

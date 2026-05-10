@@ -1,7 +1,7 @@
 use anyhow::{Context, bail};
 use clap::Args;
 use colored::Colorize;
-use mozart_core::console;
+use mozart_core::console::IoInterface;
 use mozart_core::console_format;
 use mozart_core::package::{
     self, RawAuthor, RawAutoload, RawPackageData, RawRepository, Stability,
@@ -64,7 +64,7 @@ pub struct InitArgs {
 pub async fn execute(
     args: &InitArgs,
     cli: &super::Cli,
-    console: &console::Console,
+    io: std::sync::Arc<std::sync::Mutex<Box<dyn IoInterface>>>,
 ) -> anyhow::Result<()> {
     let cache_config = mozart_core::repository::cache::build_cache_config(cli.no_cache);
     let repo_cache = mozart_core::repository::cache::Cache::repo(&cache_config);
@@ -85,29 +85,31 @@ pub async fn execute(
         );
     }
 
-    let composer = if console.interactive {
-        build_interactive(args, console, &working_dir, &repo_cache).await?
+    let composer = if io.lock().unwrap().is_interactive() {
+        build_interactive(args, &io, &working_dir, &repo_cache).await?
     } else {
         build_non_interactive(args, &working_dir)?
     };
 
     let json = package::to_json_pretty(&composer)?;
 
-    if console.interactive {
-        console.info("");
-        console.info(&json);
-        console.info("");
+    if io.lock().unwrap().is_interactive() {
+        io.lock().unwrap().info("");
+        io.lock().unwrap().info(&json);
+        io.lock().unwrap().info("");
 
-        if !console.confirm(&console_format!(
+        if !io.lock().unwrap().confirm(&console_format!(
             "Do you confirm generation [<comment>yes</comment>]?"
         )) {
-            console.error("Command aborted");
+            io.lock().unwrap().error("Command aborted");
             return Err(mozart_core::exit_code::bail_silent(
                 mozart_core::exit_code::GENERAL_ERROR,
             ));
         }
     } else {
-        console.info(&format!("Writing {}", composer_file.display()));
+        io.lock()
+            .unwrap()
+            .info(&format!("Writing {}", composer_file.display()));
     }
 
     package::write_to_file(&composer, &composer_file).context("Failed to write composer.json")?;
@@ -129,17 +131,19 @@ pub async fn execute(
 
         if !has_dependencies {
             let dump_args = super::dump_autoload::DumpAutoloadArgs::default();
-            if let Err(e) = super::dump_autoload::execute(&dump_args, cli, console).await {
-                console.error(&format!("Could not run dump-autoload. ({e})"));
+            if let Err(e) = super::dump_autoload::execute(&dump_args, cli, io.clone()).await {
+                io.lock()
+                    .unwrap()
+                    .error(&format!("Could not run dump-autoload. ({e})"));
             }
         }
     }
 
     // Offer to add /vendor/ to .gitignore
-    if console.interactive && working_dir.join(".git").is_dir() {
+    if io.lock().unwrap().is_interactive() && working_dir.join(".git").is_dir() {
         let gitignore_path = working_dir.join(".gitignore");
         if !has_vendor_ignore(&gitignore_path)
-            && console.confirm(&console_format!(
+            && io.lock().unwrap().confirm(&console_format!(
                 "Would you like the <info>vendor</info> directory added to your <info>.gitignore</info> [<comment>yes</comment>]?"
             ))
         {
@@ -149,15 +153,15 @@ pub async fn execute(
 
     // Run `composer update` after init when the new project has dependencies
     // and the user confirms — Composer's L190-193.
-    if console.interactive
+    if io.lock().unwrap().is_interactive()
         && has_dependencies
-        && console.confirm(&console_format!(
+        && io.lock().unwrap().confirm(&console_format!(
             "Would you like to install dependencies now [<comment>yes</comment>]?"
         ))
     {
         let update_args = super::update::UpdateArgs::default();
-        if let Err(e) = super::update::execute(&update_args, cli, console).await {
-            console.error(&format!(
+        if let Err(e) = super::update::execute(&update_args, cli, io.clone()).await {
+            io.lock().unwrap().error(&format!(
                 "Could not update dependencies. Run `composer update` to see more information. ({e})"
             ));
         }
@@ -167,10 +171,10 @@ pub async fn execute(
     if let Some(ref autoload) = composer.autoload
         && let Some((ns, path)) = autoload.psr4.iter().next()
     {
-        console.info(&console_format!(
+        io.lock().unwrap().info(&console_format!(
             "PSR-4 autoloading configured. Use \"<comment>namespace {ns};</comment>\" in {path}"
         ));
-        console.info(&console_format!(
+        io.lock().unwrap().info(&console_format!(
             "Include the Composer autoloader with: <comment>require 'vendor/autoload.php';</comment>"
         ));
     }
@@ -233,31 +237,33 @@ fn build_non_interactive(args: &InitArgs, working_dir: &Path) -> anyhow::Result<
 
 async fn build_interactive(
     args: &InitArgs,
-    console: &console::Console,
+    io: &std::sync::Arc<std::sync::Mutex<Box<dyn IoInterface>>>,
     working_dir: &Path,
     repo_cache: &mozart_core::repository::cache::Cache,
 ) -> anyhow::Result<RawPackageData> {
-    console.info("");
-    console.info(&format!(
+    io.lock().unwrap().info("");
+    io.lock().unwrap().info(&format!(
         "  {}  ",
         "Welcome to the Mozart config generator".white().on_blue()
     ));
-    console.info("");
-    console.info("This command will guide you through creating your composer.json config.");
-    console.info("");
+    io.lock().unwrap().info("");
+    io.lock()
+        .unwrap()
+        .info("This command will guide you through creating your composer.json config.");
+    io.lock().unwrap().info("");
 
     // Package name
     let default_name = args
         .name
         .clone()
         .unwrap_or_else(|| get_default_package_name(working_dir));
-    let name = console.ask_validated(
+    let name = io.lock().unwrap().ask_validated(
         &console_format!(
             "Package name (<vendor>/<name>) [<comment>{}</comment>]",
             &default_name,
         ),
         &default_name,
-        |val| {
+        Box::new(|val| {
             if validation::validate_package_name(val) {
                 Ok(())
             } else {
@@ -265,13 +271,13 @@ async fn build_interactive(
                     "The package name {val} is invalid, it should be lowercase and have a vendor name, a forward slash, and a package name"
                 ))
             }
-        },
+        }),
     )
     .map_err(|e| anyhow::anyhow!(e))?;
 
     // Description
     let default_desc = args.description.clone().unwrap_or_default();
-    let description = console.ask(
+    let description = io.lock().unwrap().ask(
         &console_format!("Description [<comment>{}</comment>]", &default_desc),
         &default_desc,
     );
@@ -287,7 +293,7 @@ async fn build_interactive(
         .clone()
         .or_else(get_default_author)
         .unwrap_or_default();
-    let author_input = console.ask(
+    let author_input = io.lock().unwrap().ask(
         &if !default_author.is_empty() {
             console_format!("Author [<comment>{}</comment>, n to skip]", &default_author)
         } else {
@@ -311,14 +317,14 @@ async fn build_interactive(
     // validator throws InvalidArgumentException, Symfony's QuestionHelper
     // catches it and re-prompts when maxAttempts is null).
     let default_stability = args.stability.clone().unwrap_or_default();
-    let stability_input = console
+    let stability_input = io.lock().unwrap()
         .ask_validated(
             &console_format!(
                 "Minimum Stability [<comment>{}</comment>]",
                 &default_stability
             ),
             &default_stability,
-            |val| {
+            Box::new(|val| {
                 if val.is_empty() || validation::validate_stability(val) {
                     Ok(())
                 } else {
@@ -326,7 +332,7 @@ async fn build_interactive(
                         "Invalid minimum stability \"{val}\". Must be empty or one of: dev, alpha, beta, rc, stable"
                     ))
                 }
-            },
+            }),
         )
         .map_err(|e| anyhow::anyhow!(e))?;
     let minimum_stability = if stability_input.is_empty() {
@@ -337,7 +343,7 @@ async fn build_interactive(
 
     // Package Type
     let default_type = args.r#type.clone().unwrap_or_default();
-    let type_input = console.ask(
+    let type_input = io.lock().unwrap().ask(
         &console_format!(
             "Package Type (e.g. library, project, metapackage, composer-plugin) [<comment>{}</comment>]",
             &default_type,
@@ -357,7 +363,7 @@ async fn build_interactive(
         .clone()
         .or_else(|| std::env::var("COMPOSER_DEFAULT_LICENSE").ok())
         .unwrap_or_default();
-    let license_input = console.ask(
+    let license_input = io.lock().unwrap().ask(
         &console_format!("License [<comment>{}</comment>]", &default_license),
         &default_license,
     );
@@ -379,15 +385,17 @@ async fn build_interactive(
         .map(Stability::parse)
         .unwrap_or(Stability::Stable);
 
-    console.info("");
-    console.info(&console_format!("<info>Define your dependencies.</info>"));
-    console.info("");
+    io.lock().unwrap().info("");
+    io.lock()
+        .unwrap()
+        .info(&console_format!("<info>Define your dependencies.</info>"));
+    io.lock().unwrap().info("");
 
     // Composer (InitCommand::interact L389-403): if --require was passed,
     // skip the confirmation; otherwise ask before entering the discovery loop.
     let mut require = parse_requirements(&args.require)?;
     if !require.is_empty()
-        || console.confirm(&console_format!(
+        || io.lock().unwrap().confirm(&console_format!(
             "Would you like to define your dependencies (require) interactively [<comment>yes</comment>]?"
         ))
     {
@@ -396,7 +404,7 @@ async fn build_interactive(
             &require,
             preferred_stability,
             repo_cache,
-            console,
+            io,
         )
         .await?;
         for (name, constraint) in interactive_require {
@@ -405,15 +413,15 @@ async fn build_interactive(
     }
 
     // Dev Dependencies
-    console.info("");
-    console.info(&console_format!(
+    io.lock().unwrap().info("");
+    io.lock().unwrap().info(&console_format!(
         "<info>Define your dev dependencies.</info>"
     ));
-    console.info("");
+    io.lock().unwrap().info("");
 
     let mut require_dev = parse_requirements(&args.require_dev)?;
     if !require_dev.is_empty()
-        || console.confirm(&console_format!(
+        || io.lock().unwrap().confirm(&console_format!(
             "Would you like to define your dev dependencies (require-dev) interactively [<comment>yes</comment>]?"
         ))
     {
@@ -427,7 +435,7 @@ async fn build_interactive(
             &all_required,
             preferred_stability,
             repo_cache,
-            console,
+            io,
         )
         .await?;
         for (name, constraint) in interactive_dev {
@@ -439,14 +447,14 @@ async fn build_interactive(
     // via askAndValidate (loops until valid). `n`/`no` skips.
     let default_autoload = args.autoload.clone().unwrap_or_else(|| "src/".to_string());
     let namespace = validation::namespace_from_package_name(&name).unwrap_or_default();
-    let autoload_input = console
+    let autoload_input = io.lock().unwrap()
         .ask_validated(
             &console_format!(
                 "Add PSR-4 autoload mapping? Maps namespace \"{namespace}\" to the entered relative path. [<comment>{}</comment>, n to skip]",
                 &default_autoload,
             ),
             &default_autoload,
-            |val| {
+            Box::new(|val| {
                 if val == "n" || val == "no" || validation::validate_autoload_path(val) {
                     Ok(())
                 } else {
@@ -454,7 +462,7 @@ async fn build_interactive(
                         "The src folder name \"{val}\" is invalid. Please add a relative path with tailing forward slash. [A-Za-z0-9_-/]+/"
                     ))
                 }
-            },
+            }),
         )
         .map_err(|e| anyhow::anyhow!(e))?;
     let autoload = if autoload_input == "n" || autoload_input == "no" {
@@ -488,7 +496,7 @@ async fn interactive_search_packages(
     already_required: &BTreeMap<String, String>,
     preferred_stability: Stability,
     repo_cache: &mozart_core::repository::cache::Cache,
-    console: &console::Console,
+    io: &std::sync::Arc<std::sync::Mutex<Box<dyn IoInterface>>>,
 ) -> anyhow::Result<BTreeMap<String, String>> {
     let stdin = std::io::stdin();
     let mut selected: BTreeMap<String, String> = BTreeMap::new();
@@ -514,7 +522,7 @@ async fn interactive_search_packages(
         let (results, total) = match packagist::search_packages(&query, None).await {
             Ok(r) => r,
             Err(e) => {
-                console.info(&console_format!(
+                io.lock().unwrap().info(&console_format!(
                     "<warning>Search failed: {e}. Try again.</warning>"
                 ));
                 continue;
@@ -532,13 +540,13 @@ async fn interactive_search_packages(
             .collect();
 
         if filtered.is_empty() {
-            console.info(&console_format!(
+            io.lock().unwrap().info(&console_format!(
                 "<warning>No new packages found for \"{query}\" (total: {total}).</warning>"
             ));
             continue;
         }
 
-        console.info(&format!(
+        io.lock().unwrap().info(&format!(
             "\nFound {} package{} for \"{}\":",
             filtered.len(),
             if filtered.len() == 1 { "" } else { "s" },
@@ -552,15 +560,17 @@ async fn interactive_search_packages(
             } else {
                 format!(" — {}", result.description)
             };
-            console.info(&format!(
+            io.lock().unwrap().info(&format!(
                 "  [{idx}] {:<width$}{desc}",
                 result.name,
                 idx = idx + 1,
                 width = name_width,
             ));
         }
-        console.info("  [0] Search again / enter full package name");
-        console.info("");
+        io.lock()
+            .unwrap()
+            .info("  [0] Search again / enter full package name");
+        io.lock().unwrap().info("");
 
         // Ask user to pick
         eprint!("Enter package # or name (leave empty to finish): ");
@@ -586,7 +596,7 @@ async fn interactive_search_packages(
             } else if num <= filtered.len() {
                 filtered[num - 1].name.to_lowercase()
             } else {
-                console.info(&console_format!(
+                io.lock().unwrap().info(&console_format!(
                     "<warning>Invalid selection: {num}</warning>"
                 ));
                 continue;
@@ -600,19 +610,21 @@ async fn interactive_search_packages(
             match validation::parse_require_string(&package_name) {
                 Ok((n, v)) => (n.to_lowercase(), v),
                 Err(e) => {
-                    console.info(&console_format!("<warning>Invalid: {e}</warning>"));
+                    io.lock()
+                        .unwrap()
+                        .info(&console_format!("<warning>Invalid: {e}</warning>"));
                     continue;
                 }
             }
         } else {
             if !validation::validate_package_name(&package_name) {
-                console.info(&console_format!(
+                io.lock().unwrap().info(&console_format!(
                     "<warning>Invalid package name: \"{package_name}\"</warning>"
                 ));
                 continue;
             }
 
-            console.info(&console_format!(
+            io.lock().unwrap().info(&console_format!(
                 "<info>Using version constraint for {package_name} from Packagist...</info>"
             ));
 
@@ -626,13 +638,13 @@ async fn interactive_search_packages(
                                 &best.version_normalized,
                                 stability,
                             );
-                            console.info(&console_format!(
+                            io.lock().unwrap().info(&console_format!(
                                 "<info>Using version {c} for {package_name}</info>"
                             ));
                             (package_name, c)
                         }
                         None => {
-                            console.info(&console_format!(
+                            io.lock().unwrap().info(&console_format!(
                                 "<warning>Could not find a version of \"{package_name}\" matching \
                                  your minimum-stability. Try specifying it explicitly.</warning>"
                             ));
@@ -641,7 +653,7 @@ async fn interactive_search_packages(
                     }
                 }
                 Err(e) => {
-                    console.info(&console_format!(
+                    io.lock().unwrap().info(&console_format!(
                         "<warning>Could not fetch versions for \"{package_name}\": {e}</warning>"
                     ));
                     continue;

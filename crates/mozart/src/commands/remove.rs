@@ -1,5 +1,6 @@
 use clap::Args;
 use indexmap::{IndexMap, IndexSet};
+use mozart_core::console::IoInterface;
 use mozart_core::console_format;
 use mozart_core::console_writeln;
 use mozart_core::package;
@@ -100,7 +101,7 @@ pub struct RemoveArgs {
 pub async fn execute(
     args: &RemoveArgs,
     cli: &super::Cli,
-    console: &mozart_core::console::Console,
+    io: std::sync::Arc<std::sync::Mutex<Box<dyn IoInterface>>>,
 ) -> anyhow::Result<()> {
     let cache_config = mozart_core::repository::cache::build_cache_config(cli.no_cache);
     let repo_cache = mozart_core::repository::cache::Cache::repo(&cache_config);
@@ -111,7 +112,7 @@ pub async fn execute(
 
     // Only -w/--update-with-dependencies is deprecated in Composer; -W is an alias, not deprecated
     if args.update_with_dependencies {
-        console.write_error(&console_format!(
+        io.lock().unwrap().write_error(&console_format!(
             "<warning>You are using the deprecated option \"update-with-dependencies\". This is now default behaviour. The --no-update-with-dependencies option can be used to remove a package without its dependencies.</warning>"
         ));
     }
@@ -137,7 +138,7 @@ pub async fn execute(
             args,
             &repo_cache,
             cli.no_cache,
-            console,
+            &io,
         )
         .await;
     }
@@ -152,24 +153,24 @@ pub async fn execute(
 
         if args.dev {
             if composer.require_dev.contains_key(&name) {
-                console_writeln!(console, "<info>Removing {name} from require-dev</info>");
+                console_writeln!(io, "<info>Removing {name} from require-dev</info>");
                 composer.require_dev.remove(&name);
                 packages_removed.push(name);
             } else {
-                console.info(&console_format!(
+                io.lock().unwrap().info(&console_format!(
                     "<warning>{name} is not required in your composer.json and has not been removed</warning>"
                 ));
             }
         } else if composer.require.contains_key(&name) {
-            console_writeln!(console, "<info>Removing {name} from require</info>");
+            console_writeln!(io, "<info>Removing {name} from require</info>");
             composer.require.remove(&name);
             packages_removed.push(name);
         } else if composer.require_dev.contains_key(&name) {
-            console_writeln!(console, "<info>Removing {name} from require-dev</info>");
+            console_writeln!(io, "<info>Removing {name} from require-dev</info>");
             composer.require_dev.remove(&name);
             packages_removed.push(name);
         } else {
-            console.info(&console_format!(
+            io.lock().unwrap().info(&console_format!(
                 "<warning>{name} is not required in your composer.json and has not been removed</warning>"
             ));
         }
@@ -178,11 +179,11 @@ pub async fn execute(
     if !args.dry_run && !packages_removed.is_empty() {
         package::write_to_file(&composer, &composer_path)?;
     }
-    console.info("./composer.json has been updated");
+    io.lock().unwrap().info("./composer.json has been updated");
 
     if args.no_update {
         console_writeln!(
-            console,
+            io,
             "<comment>Not updating dependencies, only modifying composer.json.</comment>"
         );
         return Ok(());
@@ -269,16 +270,16 @@ pub async fn execute(
             block_insecure: false,
         };
 
-        console.info(&console_format!(
+        io.lock().unwrap().info(&console_format!(
             "<info>Running composer update {pkg_names}{flags}</info>"
         ));
-        console.info("Loading composer repositories with package information");
+        io.lock().unwrap().info("Loading composer repositories with package information");
         if dev_mode {
-            console.info("Updating dependencies (including require-dev)");
+            io.lock().unwrap().info("Updating dependencies (including require-dev)");
         } else {
-            console.info("Updating dependencies");
+            io.lock().unwrap().info("Updating dependencies");
         }
-        console.info("Resolving dependencies...");
+        io.lock().unwrap().info("Resolving dependencies...");
 
         let mut resolved = resolver::resolve(&request).await.map_err(|e| {
             mozart_core::exit_code::bail(
@@ -291,7 +292,7 @@ pub async fn execute(
             match lockfile::LockFile::read_from_file(&lock_path) {
                 Ok(l) => Some(l),
                 Err(e) => {
-                    console.info(&console_format!(
+                    io.lock().unwrap().info(&console_format!(
                         "<warning>Could not read existing composer.lock: {}. Treating as a fresh install.</warning>",
                         e
                     ));
@@ -324,7 +325,7 @@ pub async fn execute(
             };
 
             if args.minimal_changes {
-                console.info(&console_format!(
+                io.lock().unwrap().info(&console_format!(
                     "<info>Minimal changes mode: preserving locked versions for non-removed packages.</info>"
                 ));
             }
@@ -367,7 +368,7 @@ pub async fn execute(
             .filter(|c| matches!(c.kind, super::update::ChangeKind::Uninstall { .. }))
             .collect();
 
-        console.info(&console_format!(
+        io.lock().unwrap().info(&console_format!(
             "<info>Package operations: {} install{}, {} update{}, {} removal{}</info>",
             installs.len(),
             if installs.len() == 1 { "" } else { "s" },
@@ -381,12 +382,12 @@ pub async fn execute(
             match &change.kind {
                 super::update::ChangeKind::Uninstall { old_version } => {
                     if args.dry_run {
-                        console.info(&format!(
+                        io.lock().unwrap().info(&format!(
                             "  - Would remove {} ({})",
                             change.name, old_version
                         ));
                     } else {
-                        console.info(&format!(
+                        io.lock().unwrap().info(&format!(
                             "  - Removing {} ({})",
                             change.name, old_version
                         ));
@@ -394,12 +395,12 @@ pub async fn execute(
                 }
                 super::update::ChangeKind::Install { new_version } => {
                     if args.dry_run {
-                        console.info(&format!(
+                        io.lock().unwrap().info(&format!(
                             "  - Would install {} ({})",
                             change.name, new_version
                         ));
                     } else {
-                        console.info(&format!(
+                        io.lock().unwrap().info(&format!(
                             "  - Installing {} ({})",
                             change.name, new_version
                         ));
@@ -410,12 +411,12 @@ pub async fn execute(
                     new_version,
                 } => {
                     if args.dry_run {
-                        console.info(&format!(
+                        io.lock().unwrap().info(&format!(
                             "  - Would update {} ({} => {})",
                             change.name, old_version, new_version
                         ));
                     } else {
-                        console.info(&format!(
+                        io.lock().unwrap().info(&format!(
                             "  - Updating {} ({} => {})",
                             change.name, old_version, new_version
                         ));
@@ -425,7 +426,7 @@ pub async fn execute(
         }
 
         if !args.dry_run {
-            console.info("Writing lock file");
+            io.lock().unwrap().info("Writing lock file");
             new_lock.write_to_file(&lock_path)?;
         }
 
@@ -452,7 +453,7 @@ pub async fn execute(
                     download_only: false,
                     prefer_source: false,
                 },
-                console,
+                io.clone(),
                 &mut executor,
             )
             .await?;
@@ -465,7 +466,9 @@ pub async fn execute(
     if let Err(e) = pipeline_result {
         if !args.dry_run && !packages_removed.is_empty() {
             let _ = std::fs::write(&composer_path, &composer_backup);
-            console.error("\nRemoval failed, reverting ./composer.json to its original content.");
+            io.lock()
+                .unwrap()
+                .error("\nRemoval failed, reverting ./composer.json to its original content.");
         }
         return Err(e);
     }
@@ -480,7 +483,7 @@ pub async fn execute(
                 .iter()
                 .any(|p| p.name.eq_ignore_ascii_case(name))
             {
-                console.error(&format!(
+                io.lock().unwrap().error(&format!(
                     "Removal failed, {name} is still present, it may be required by another package. See `mozart why {name}`."
                 ));
                 still_present = true;
@@ -501,7 +504,7 @@ async fn remove_unused(
     args: &RemoveArgs,
     repo_cache: &mozart_core::repository::cache::Cache,
     no_cache: bool,
-    console: &mozart_core::console::Console,
+    io: &std::sync::Arc<std::sync::Mutex<Box<dyn IoInterface>>>,
 ) -> anyhow::Result<()> {
     let lock_path = working_dir.join("composer.lock");
 
@@ -573,7 +576,9 @@ async fn remove_unused(
         block_insecure: false,
     };
 
-    console.info("Resolving dependencies to detect unused packages...");
+    io.lock()
+        .unwrap()
+        .info("Resolving dependencies to detect unused packages...");
 
     let resolved = resolver::resolve(&request).await.map_err(|e| {
         mozart_core::exit_code::bail(
@@ -600,19 +605,23 @@ async fn remove_unused(
     }
 
     if unused.is_empty() {
-        console.info(&console_format!(
+        io.lock().unwrap().info(&console_format!(
             "<info>No unused packages to remove</info>"
         ));
         return Ok(());
     }
 
     for name in &unused {
-        console.info(&format!("  - Removing unused package: {name}"));
+        io.lock()
+            .unwrap()
+            .info(&format!("  - Removing unused package: {name}"));
     }
-    console.info(&format!("Found {} unused package(s).", unused.len()));
+    io.lock()
+        .unwrap()
+        .info(&format!("Found {} unused package(s).", unused.len()));
 
     if args.dry_run {
-        console.info(&console_format!(
+        io.lock().unwrap().info(&console_format!(
             "<comment>Dry run: lock file not modified.</comment>"
         ));
         return Ok(());
@@ -632,7 +641,7 @@ async fn remove_unused(
     })
     .await?;
 
-    console.info("Writing lock file");
+    io.lock().unwrap().info("Writing lock file");
     new_lock.write_to_file(&lock_path)?;
 
     if !args.no_install {
@@ -659,7 +668,7 @@ async fn remove_unused(
                 download_only: false,
                 prefer_source: false,
             },
-            console,
+            io.clone(),
             &mut executor,
         )
         .await?;

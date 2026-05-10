@@ -9,11 +9,11 @@
 //! Composer's PHPUnit suite uses.
 
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use clap::Parser;
 use mozart::commands::{Cli, Commands, install, update};
-use mozart_core::console::Console;
+use mozart_core::console::{Console, IoInterface};
 use mozart_core::exit_code::MozartError;
 use mozart_core::repository::installer_executor::TraceRecorderExecutor;
 use mozart_core::repository::repository::RepositorySet;
@@ -108,7 +108,10 @@ async fn run_fixture_in_process(test: &ParsedTest) -> anyhow::Result<InProcessRu
     // Quiet console: assertions run against the recorder + on-disk
     // artifacts, not captured stdout/stderr (Console doesn't yet support
     // buffered sinks). EXPECT-OUTPUT enforcement is a follow-up.
-    let console = Console::new(0, true, false, true, true);
+    let console: Arc<Mutex<Box<dyn IoInterface>>> = Arc::new(Mutex::new(Box::new(Console::new(
+        0, true, false, true, true,
+    ))
+        as Box<dyn IoInterface>));
     let repositories = Arc::new(RepositorySet::empty());
     let mut executor = TraceRecorderExecutor::new();
 
@@ -119,7 +122,7 @@ async fn run_fixture_in_process(test: &ParsedTest) -> anyhow::Result<InProcessRu
                 root,
                 Some(&path_repo_base),
                 args,
-                &console,
+                console.clone(),
                 repositories,
                 &mut executor,
             )
@@ -130,7 +133,7 @@ async fn run_fixture_in_process(test: &ParsedTest) -> anyhow::Result<InProcessRu
                 root,
                 Some(&path_repo_base),
                 args,
-                &console,
+                console.clone(),
                 repositories,
                 &mut executor,
             )

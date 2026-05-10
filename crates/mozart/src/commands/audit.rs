@@ -4,6 +4,7 @@ use crate::composer::Composer;
 use clap::Args;
 use indexmap::IndexMap;
 use mozart_core::advisory::{AbandonedHandling, AuditConfig, AuditFormat};
+use mozart_core::console::IoInterface;
 use mozart_core::repository::advisory::{AuditOptions, Auditor, PackageInfo};
 use mozart_core::repository::cache::{Cache, build_cache_config};
 use mozart_core::repository::repository::RepositorySet;
@@ -38,7 +39,7 @@ pub struct AuditArgs {
 pub async fn execute(
     args: &AuditArgs,
     cli: &super::Cli,
-    console: &mozart_core::console::Console,
+    io: std::sync::Arc<std::sync::Mutex<Box<dyn IoInterface>>>,
 ) -> anyhow::Result<()> {
     let working_dir = cli.working_dir()?;
 
@@ -84,7 +85,7 @@ pub async fn execute(
     let packages = get_packages(&composer, args)?;
 
     if packages.is_empty() {
-        console.info("No packages - skipping audit.");
+        io.lock().unwrap().info("No packages - skipping audit.");
         return Ok(());
     }
 
@@ -95,7 +96,7 @@ pub async fn execute(
     // Run audit
     let exit_code = Auditor::new()
         .audit(
-            console,
+            io.clone(),
             &repo_set,
             &packages,
             &AuditOptions {

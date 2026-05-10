@@ -67,6 +67,46 @@ pub fn hyperlink(url: &str, text: &str, decorated: bool) -> String {
 }
 
 // ---------------------------------------------------------------------------
+// IoInterface
+// ---------------------------------------------------------------------------
+
+/// The central IO abstraction, mirroring `\Composer\IO\IOInterface`.
+///
+/// All Mozart commands and library functions that need to produce output
+/// or interact with the user accept `&dyn IoInterface` (or an
+/// `Arc<Mutex<Box<dyn IoInterface>>>` at the top-level command boundary).
+pub trait IoInterface: Send + Sync {
+    fn write(&self, msg: &str, required: Verbosity);
+    fn write_stdout(&self, msg: &str, required: Verbosity);
+    fn write_error(&self, msg: &str);
+
+    fn info(&self, msg: &str);
+    fn verbose(&self, msg: &str);
+    fn very_verbose(&self, msg: &str);
+    fn debug(&self, msg: &str);
+    fn error(&self, msg: &str);
+
+    fn is_interactive(&self) -> bool;
+    fn is_decorated(&self) -> bool;
+    fn verbosity(&self) -> Verbosity;
+
+    fn is_verbose(&self) -> bool;
+    fn is_very_verbose(&self) -> bool;
+    fn is_debug(&self) -> bool;
+    fn is_quiet(&self) -> bool;
+
+    fn ask(&self, prompt: &str, default: &str) -> String;
+    #[allow(clippy::type_complexity)]
+    fn ask_validated(
+        &self,
+        prompt: &str,
+        default: &str,
+        validator: Box<dyn Fn(&str) -> Result<(), String>>,
+    ) -> Result<String, String>;
+    fn confirm(&self, prompt: &str) -> bool;
+}
+
+// ---------------------------------------------------------------------------
 // Verbosity
 // ---------------------------------------------------------------------------
 
@@ -212,6 +252,18 @@ impl Console {
     // Query methods
     // -----------------------------------------------------------------------
 
+    pub fn verbosity(&self) -> Verbosity {
+        self.verbosity
+    }
+
+    pub fn is_interactive(&self) -> bool {
+        self.interactive
+    }
+
+    pub fn is_decorated(&self) -> bool {
+        self.decorated
+    }
+
     pub fn is_verbose(&self) -> bool {
         self.verbosity >= Verbosity::Verbose
     }
@@ -245,15 +297,13 @@ impl Console {
             .unwrap_or_else(|_| default.to_string())
     }
 
-    pub fn ask_validated<F>(
+    #[allow(clippy::type_complexity)]
+    pub fn ask_validated(
         &self,
         prompt: &str,
         default: &str,
-        validator: F,
-    ) -> Result<String, String>
-    where
-        F: Fn(&str) -> Result<(), String>,
-    {
+        validator: Box<dyn Fn(&str) -> Result<(), String>>,
+    ) -> Result<String, String> {
         if !self.interactive {
             validator(default)?;
             return Ok(default.to_string());
@@ -289,6 +339,130 @@ impl Console {
     }
 }
 
+impl<T: IoInterface + ?Sized> IoInterface for Box<T> {
+    fn write(&self, msg: &str, required: Verbosity) {
+        (**self).write(msg, required)
+    }
+    fn write_stdout(&self, msg: &str, required: Verbosity) {
+        (**self).write_stdout(msg, required)
+    }
+    fn write_error(&self, msg: &str) {
+        (**self).write_error(msg)
+    }
+    fn info(&self, msg: &str) {
+        (**self).info(msg)
+    }
+    fn verbose(&self, msg: &str) {
+        (**self).verbose(msg)
+    }
+    fn very_verbose(&self, msg: &str) {
+        (**self).very_verbose(msg)
+    }
+    fn debug(&self, msg: &str) {
+        (**self).debug(msg)
+    }
+    fn error(&self, msg: &str) {
+        (**self).error(msg)
+    }
+    fn is_interactive(&self) -> bool {
+        (**self).is_interactive()
+    }
+    fn is_decorated(&self) -> bool {
+        (**self).is_decorated()
+    }
+    fn verbosity(&self) -> Verbosity {
+        (**self).verbosity()
+    }
+    fn is_verbose(&self) -> bool {
+        (**self).is_verbose()
+    }
+    fn is_very_verbose(&self) -> bool {
+        (**self).is_very_verbose()
+    }
+    fn is_debug(&self) -> bool {
+        (**self).is_debug()
+    }
+    fn is_quiet(&self) -> bool {
+        (**self).is_quiet()
+    }
+    fn ask(&self, prompt: &str, default: &str) -> String {
+        (**self).ask(prompt, default)
+    }
+    fn ask_validated(
+        &self,
+        prompt: &str,
+        default: &str,
+        validator: Box<dyn Fn(&str) -> Result<(), String>>,
+    ) -> Result<String, String> {
+        (**self).ask_validated(prompt, default, validator)
+    }
+    fn confirm(&self, prompt: &str) -> bool {
+        (**self).confirm(prompt)
+    }
+}
+
+impl IoInterface for Console {
+    fn write(&self, msg: &str, required: Verbosity) {
+        self.write(msg, required)
+    }
+    fn write_stdout(&self, msg: &str, required: Verbosity) {
+        self.write_stdout(msg, required)
+    }
+    fn write_error(&self, msg: &str) {
+        self.write_error(msg)
+    }
+    fn info(&self, msg: &str) {
+        self.info(msg)
+    }
+    fn verbose(&self, msg: &str) {
+        self.verbose(msg)
+    }
+    fn very_verbose(&self, msg: &str) {
+        self.very_verbose(msg)
+    }
+    fn debug(&self, msg: &str) {
+        self.debug(msg)
+    }
+    fn error(&self, msg: &str) {
+        self.error(msg)
+    }
+    fn is_interactive(&self) -> bool {
+        self.is_interactive()
+    }
+    fn is_decorated(&self) -> bool {
+        self.is_decorated()
+    }
+    fn verbosity(&self) -> Verbosity {
+        self.verbosity()
+    }
+    fn is_verbose(&self) -> bool {
+        self.is_verbose()
+    }
+    fn is_very_verbose(&self) -> bool {
+        self.is_very_verbose()
+    }
+    fn is_debug(&self) -> bool {
+        self.is_debug()
+    }
+    fn is_quiet(&self) -> bool {
+        self.is_quiet()
+    }
+    fn ask(&self, prompt: &str, default: &str) -> String {
+        self.ask(prompt, default)
+    }
+    fn ask_validated(
+        &self,
+        prompt: &str,
+        default: &str,
+        validator: Box<dyn Fn(&str) -> Result<(), String>>,
+    ) -> Result<String, String> {
+        self.ask_validated(prompt, default, validator)
+    }
+    fn confirm(&self, prompt: &str) -> bool {
+        self.confirm(prompt)
+    }
+}
+
 /// Writes a message to the output.
 ///
 /// ref: \Composer\IO\IOInterface::write()
@@ -304,7 +478,7 @@ macro_rules! console_writeln {
         $crate::console_writeln!($console, $verbosity, $fmt, $($arg)*,)
     };
     ($console:expr, $verbosity:expr, $fmt:literal, $($arg:tt)*) => {
-        if ($console).verbosity >= $verbosity {
+        if $console.lock().unwrap().verbosity() >= $verbosity {
             ::std::println!("{}", &::mozart_console_macros::console_format!($fmt, $($arg)*));
         }
     };
@@ -325,7 +499,7 @@ macro_rules! console_write {
         $crate::console_writeln!($console, $verbosity, $fmt, $($arg)*,)
     };
     ($console:expr, $verbosity:expr, $fmt:literal, $($arg:tt)*) => {
-        if ($console).verbosity >= $verbosity {
+        if $console.lock().unwrap().verbosity() >= $verbosity {
             ::std::print!("{}", &::mozart_console_macros::console_format!($fmt, $($arg)*));
         }
     };
@@ -346,7 +520,7 @@ macro_rules! console_writeln_error {
         $crate::console_writeln!($console, $verbosity, $fmt, $($arg)*,)
     };
     ($console:expr, $verbosity:expr, $fmt:literal, $($arg:tt)*) => {
-        if ($console).verbosity >= $verbosity {
+        if $console.lock().unwrap().verbosity() >= $verbosity {
             ::std::eprintln!("{}", &::mozart_console_macros::console_format!($fmt, $($arg)*));
         }
     };
@@ -367,7 +541,7 @@ macro_rules! console_write_error {
         $crate::console_writeln!($console, $verbosity, $fmt, $($arg)*,)
     };
     ($console:expr, $verbosity:expr, $fmt:literal, $($arg:tt)*) => {
-        if ($console).verbosity >= $verbosity {
+        if $console.lock().unwrap().verbosity() >= $verbosity {
             ::std::eprint!("{}", &::mozart_console_macros::console_format!($fmt, $($arg)*));
         }
     };

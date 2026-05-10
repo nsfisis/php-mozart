@@ -4,13 +4,13 @@
 //! `prohibits` (aka `why-not`) answers: "Which packages prevent version X of package Y from being
 //! installed?"
 
-use indexmap::IndexSet;
-use std::collections::BTreeMap;
-use std::path::Path;
-
 use anyhow::Result;
+use indexmap::IndexSet;
+use mozart_core::console::IoInterface;
 use mozart_core::console_format;
 use mozart_core::console_writeln;
+use std::collections::BTreeMap;
+use std::path::Path;
 
 /// Inputs for [`do_execute`], collected from the `depends` / `prohibits` CLI args.
 pub struct DoExecuteArgs<'a> {
@@ -31,7 +31,7 @@ pub struct DoExecuteArgs<'a> {
 /// "who prevents X version V from being installed?".
 pub fn do_execute(
     cli: &super::Cli,
-    console: &mozart_core::console::Console,
+    io: std::sync::Arc<std::sync::Mutex<Box<dyn IoInterface>>>,
     args: DoExecuteArgs<'_>,
 ) -> Result<()> {
     let DoExecuteArgs {
@@ -48,7 +48,7 @@ pub fn do_execute(
     let packages = load_packages(&working_dir, locked)?;
 
     if packages.is_empty() {
-        console.write_error(
+        io.lock().unwrap().write_error(
             "No dependencies installed. Try running mozart install or update, or use --locked.",
         );
         return Err(mozart_core::exit_code::bail_silent(
@@ -91,14 +91,14 @@ pub fn do_execute(
     if results.is_empty() {
         if inverted {
             console_writeln!(
-                console,
+                io,
                 "<info>{} {} can be installed.</info>",
                 package,
                 version.unwrap_or(""),
             );
             return Ok(());
         }
-        console.info(&format!(
+        io.lock().unwrap().info(&format!(
             "There is no installed package depending on \"{}\"",
             package
         ));
@@ -108,9 +108,9 @@ pub fn do_execute(
     }
 
     if tree {
-        print_tree(&results, 0, console);
+        print_tree(&results, 0, io.clone());
     } else {
-        print_table(&results, console);
+        print_table(&results, io.clone());
     }
 
     if !inverted {
@@ -142,7 +142,7 @@ pub fn do_execute(
         })
         .unwrap_or("update");
 
-    console.info(&format!(
+    io.lock().unwrap().info(&format!(
         "Not finding what you were looking for? Try calling `composer {} \"{}:{}\" --dry-run` to get another view on the problem.",
         composer_command,
         package,
@@ -644,9 +644,12 @@ fn sample_versions_from_constraint(
 /// Print results as a flat table.
 ///
 /// Columns: package name | version | link description | link constraint
-pub fn print_table(results: &[DependencyResult], console: &mozart_core::console::Console) {
+pub fn print_table(
+    results: &[DependencyResult],
+    io: std::sync::Arc<std::sync::Mutex<Box<dyn IoInterface>>>,
+) {
     if results.is_empty() {
-        console_writeln!(console, "<info>No relationships found.</info>");
+        console_writeln!(io, "<info>No relationships found.</info>");
         return;
     }
 
@@ -677,7 +680,7 @@ pub fn print_table(results: &[DependencyResult], console: &mozart_core::console:
             continue;
         }
         console_writeln!(
-            console,
+            io,
             "{:<name_w$}  {:<ver_w$}  {:<desc_w$}  {}",
             console_format!("<info>{}</info>", r.package_name),
             console_format!("<comment>{}</comment>", r.package_version),
@@ -702,10 +705,10 @@ pub fn print_table(results: &[DependencyResult], console: &mozart_core::console:
 pub fn print_tree(
     results: &[DependencyResult],
     depth: usize,
-    console: &mozart_core::console::Console,
+    io: std::sync::Arc<std::sync::Mutex<Box<dyn IoInterface>>>,
 ) {
     if results.is_empty() && depth == 0 {
-        console_writeln!(console, "<info>No relationships found.</info>");
+        console_writeln!(io, "<info>No relationships found.</info>");
         return;
     }
 
@@ -715,7 +718,7 @@ pub fn print_tree(
         let prefix = tree_prefix(depth, is_last);
 
         console_writeln!(
-            console,
+            io,
             "{}{:<}  {}  {}  {}",
             prefix,
             console_format!("<info>{}</info>", r.package_name),
@@ -725,7 +728,7 @@ pub fn print_tree(
         );
 
         if !r.children.is_empty() {
-            print_tree(&r.children, depth + 1, console);
+            print_tree(&r.children, depth + 1, io.clone());
         }
     }
 }
@@ -896,15 +899,21 @@ mod tests {
         );
     }
 
+    fn test_io() -> std::sync::Arc<std::sync::Mutex<Box<dyn IoInterface>>> {
+        std::sync::Arc::new(std::sync::Mutex::new(
+            Box::new(mozart_core::console::Console::new(
+                0, false, false, false, false,
+            )) as Box<dyn IoInterface>,
+        ))
+    }
+
     #[test]
     fn test_print_table_empty() {
-        let console = mozart_core::console::Console::new(0, false, false, false, false);
-        print_table(&[], &console);
+        print_table(&[], test_io());
     }
 
     #[test]
     fn test_print_table_single() {
-        let console = mozart_core::console::Console::new(0, false, false, false, false);
         let results = vec![DependencyResult {
             package_name: "vendor/a".to_string(),
             package_version: "1.0.0".to_string(),
@@ -913,18 +922,16 @@ mod tests {
             link_constraint: "^2.0".to_string(),
             children: vec![],
         }];
-        print_table(&results, &console);
+        print_table(&results, test_io());
     }
 
     #[test]
     fn test_print_tree_empty() {
-        let console = mozart_core::console::Console::new(0, false, false, false, false);
-        print_tree(&[], 0, &console);
+        print_tree(&[], 0, test_io());
     }
 
     #[test]
     fn test_print_tree_nested() {
-        let console = mozart_core::console::Console::new(0, false, false, false, false);
         let results = vec![DependencyResult {
             package_name: "vendor/a".to_string(),
             package_version: "1.0.0".to_string(),
@@ -940,6 +947,6 @@ mod tests {
                 children: vec![],
             }],
         }];
-        print_tree(&results, 0, &console);
+        print_tree(&results, 0, test_io());
     }
 }

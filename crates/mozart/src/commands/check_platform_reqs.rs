@@ -1,5 +1,5 @@
 use clap::Args;
-use mozart_core::console::Console;
+use mozart_core::console::IoInterface;
 use mozart_core::console_writeln;
 use mozart_core::console_writeln_error;
 use mozart_core::installer::{InstalledCandidate, InstalledRepoLite};
@@ -59,7 +59,7 @@ struct CheckRow {
 pub async fn execute(
     args: &CheckPlatformReqsArgs,
     cli: &super::Cli,
-    console: &Console,
+    io: std::sync::Arc<std::sync::Mutex<Box<dyn IoInterface>>>,
 ) -> anyhow::Result<()> {
     let working_dir = cli.working_dir()?;
     let composer_json_path = working_dir.join("composer.json");
@@ -82,7 +82,7 @@ pub async fn execute(
             anyhow::bail!("No composer.lock found. Run `mozart install` or `mozart update` first.");
         }
         console_writeln_error!(
-            console,
+            io,
             "<info>Checking {}platform requirements using the lock file</info>",
             dev_text,
         );
@@ -97,14 +97,14 @@ pub async fn execute(
             let installed =
                 mozart_core::repository::installed::InstalledPackages::read(&vendor_dir)?;
             console_writeln_error!(
-                console,
+                io,
                 "<info>Checking {}platform requirements for packages in the vendor dir</info>",
                 dev_text,
             );
             load_installed(&installed, args.no_dev, &mut installed_repo, &mut requires);
         } else {
             console_writeln_error!(
-                console,
+                io,
                 "<warning>No vendor dir present, checking {}platform requirements from the lock file</warning>",
                 dev_text,
             );
@@ -238,7 +238,7 @@ pub async fn execute(
         exit_code = exit_code.max(1);
     }
 
-    print_table(&results, format, console)?;
+    print_table(&results, format, io.clone())?;
 
     if exit_code != 0 {
         return Err(mozart_core::exit_code::bail_silent(exit_code));
@@ -369,7 +369,11 @@ fn push_platform_link(
     });
 }
 
-fn print_table(results: &[CheckRow], format: &str, console: &Console) -> anyhow::Result<()> {
+fn print_table(
+    results: &[CheckRow],
+    format: &str,
+    io: std::sync::Arc<std::sync::Mutex<Box<dyn IoInterface>>>,
+) -> anyhow::Result<()> {
     if format == "json" {
         let rows: Vec<serde_json::Value> = results
             .iter()
@@ -401,7 +405,7 @@ fn print_table(results: &[CheckRow], format: &str, console: &Console) -> anyhow:
                 })
             })
             .collect();
-        console_writeln!(console, "{}", &serde_json::to_string_pretty(&rows)?);
+        console_writeln!(io, "{}", &serde_json::to_string_pretty(&rows)?);
         return Ok(());
     }
 
@@ -440,19 +444,19 @@ fn print_table(results: &[CheckRow], format: &str, console: &Console) -> anyhow:
         match r.status {
             Status::Success => {
                 console_writeln!(
-                    console,
+                    io,
                     "<info>{padded_name}</info>  <comment>{padded_version}</comment>  {link_text}  <info>success</info>{provider_suffix}",
                 );
             }
             Status::Failed => {
                 console_writeln!(
-                    console,
+                    io,
                     "<comment>{padded_name}</comment>  <comment>{padded_version}</comment>  {link_text}  <error>failed</error>{provider_suffix}",
                 );
             }
             Status::Missing => {
                 console_writeln!(
-                    console,
+                    io,
                     "<comment>{padded_name}</comment>  <comment>{padded_version}</comment>  {link_text}  <error>missing</error>{provider_suffix}",
                 );
             }
@@ -465,11 +469,14 @@ fn print_table(results: &[CheckRow], format: &str, console: &Console) -> anyhow:
 #[cfg(test)]
 mod tests {
     use super::*;
+    use mozart_core::console::Console;
     use std::collections::BTreeMap;
     use tempfile::tempdir;
 
-    fn test_console() -> Console {
-        Console::new(0, true, false, true, true)
+    fn test_console() -> std::sync::Arc<std::sync::Mutex<Box<dyn IoInterface>>> {
+        std::sync::Arc::new(std::sync::Mutex::new(
+            Box::new(Console::new(0, true, false, true, true)) as Box<dyn IoInterface>,
+        ))
     }
 
     fn write_lock(
@@ -686,7 +693,7 @@ mod tests {
         let console = test_console();
         // Capture by rendering through serde directly (the print_table writer
         // goes to stdout via a macro — keep the assertion on the JSON shape).
-        print_table(&[row.clone()], "json", &console).unwrap();
+        print_table(&[row.clone()], "json", console).unwrap();
 
         // Reproduce the same shape and assert key invariants.
         let value = serde_json::json!({

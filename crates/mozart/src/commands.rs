@@ -1,3 +1,5 @@
+use mozart_core::console::IoInterface;
+
 pub mod about;
 pub mod archive;
 pub mod audit;
@@ -271,6 +273,9 @@ pub async fn execute(cli: &Cli) -> anyhow::Result<()> {
         cli.no_ansi,
         cli.no_interaction,
     );
+    let io = std::sync::Arc::new(std::sync::Mutex::new(
+        Box::new(console) as Box<dyn IoInterface>
+    ));
 
     // Initialize HTTPS root certificates from `config.cafile` / `config.capath`
     // before any command makes a network request.
@@ -279,41 +284,39 @@ pub async fn execute(cli: &Cli) -> anyhow::Result<()> {
 
     let command = cli.command.as_ref().expect("command must be set");
     match command {
-        Commands::About(args) => about::execute(args, cli, &console).await,
-        Commands::Archive(args) => archive::execute(args, cli, &console).await,
-        Commands::Audit(args) => audit::execute(args, cli, &console).await,
-        Commands::Browse(args) => browse::execute(args, cli, &console).await,
-        Commands::Bump(args) => bump::execute(args, cli, &console).await,
-        Commands::CheckPlatformReqs(args) => {
-            check_platform_reqs::execute(args, cli, &console).await
-        }
-        Commands::ClearCache(args) => clear_cache::execute(args, cli, &console).await,
-        Commands::Completion(args) => completion::execute(args, cli, &console).await,
-        Commands::Config(args) => config::execute(args, cli, &console).await,
-        Commands::CreateProject(args) => create_project::execute(args, cli, &console).await,
-        Commands::Depends(args) => depends::execute(args, cli, &console).await,
-        Commands::Diagnose(args) => diagnose::execute(args, cli, &console).await,
-        Commands::DumpAutoload(args) => dump_autoload::execute(args, cli, &console).await,
-        Commands::Exec(args) => exec::execute(args, cli, &console).await,
-        Commands::Fund(args) => fund::execute(args, cli, &console).await,
-        Commands::Global(args) => global::execute(args, cli, &console).await,
-        Commands::Init(args) => init::execute(args, cli, &console).await,
-        Commands::Install(args) => install::execute(args, cli, &console).await,
-        Commands::Licenses(args) => licenses::execute(args, cli, &console).await,
-        Commands::Outdated(args) => outdated::execute(args, cli, &console).await,
-        Commands::Prohibits(args) => prohibits::execute(args, cli, &console).await,
-        Commands::Reinstall(args) => reinstall::execute(args, cli, &console).await,
-        Commands::Remove(args) => remove::execute(args, cli, &console).await,
-        Commands::Repository(args) => repository::execute(args, cli, &console).await,
-        Commands::Require(args) => require::execute(args, cli, &console).await,
-        Commands::RunScript(args) => run_script::execute(args, cli, &console).await,
-        Commands::Search(args) => search::execute(args, cli, &console).await,
-        Commands::SelfUpdate(args) => self_update::execute(args, cli, &console).await,
-        Commands::Show(args) => show::execute(args, cli, &console).await,
-        Commands::Status(args) => status::execute(args, cli, &console).await,
-        Commands::Suggests(args) => suggests::execute(args, cli, &console).await,
-        Commands::Update(args) => update::execute(args, cli, &console).await,
-        Commands::Validate(args) => validate::execute(args, cli, &console).await,
+        Commands::About(args) => about::execute(args, cli, io).await,
+        Commands::Archive(args) => archive::execute(args, cli, io).await,
+        Commands::Audit(args) => audit::execute(args, cli, io).await,
+        Commands::Browse(args) => browse::execute(args, cli, io).await,
+        Commands::Bump(args) => bump::execute(args, cli, io).await,
+        Commands::CheckPlatformReqs(args) => check_platform_reqs::execute(args, cli, io).await,
+        Commands::ClearCache(args) => clear_cache::execute(args, cli, io).await,
+        Commands::Completion(args) => completion::execute(args, cli, io).await,
+        Commands::Config(args) => config::execute(args, cli, io).await,
+        Commands::CreateProject(args) => create_project::execute(args, cli, io).await,
+        Commands::Depends(args) => depends::execute(args, cli, io).await,
+        Commands::Diagnose(args) => diagnose::execute(args, cli, io).await,
+        Commands::DumpAutoload(args) => dump_autoload::execute(args, cli, io).await,
+        Commands::Exec(args) => exec::execute(args, cli, io).await,
+        Commands::Fund(args) => fund::execute(args, cli, io).await,
+        Commands::Global(args) => global::execute(args, cli, io).await,
+        Commands::Init(args) => init::execute(args, cli, io).await,
+        Commands::Install(args) => install::execute(args, cli, io).await,
+        Commands::Licenses(args) => licenses::execute(args, cli, io).await,
+        Commands::Outdated(args) => outdated::execute(args, cli, io).await,
+        Commands::Prohibits(args) => prohibits::execute(args, cli, io).await,
+        Commands::Reinstall(args) => reinstall::execute(args, cli, io).await,
+        Commands::Remove(args) => remove::execute(args, cli, io).await,
+        Commands::Repository(args) => repository::execute(args, cli, io).await,
+        Commands::Require(args) => require::execute(args, cli, io).await,
+        Commands::RunScript(args) => run_script::execute(args, cli, io).await,
+        Commands::Search(args) => search::execute(args, cli, io).await,
+        Commands::SelfUpdate(args) => self_update::execute(args, cli, io).await,
+        Commands::Show(args) => show::execute(args, cli, io).await,
+        Commands::Status(args) => status::execute(args, cli, io).await,
+        Commands::Suggests(args) => suggests::execute(args, cli, io).await,
+        Commands::Update(args) => update::execute(args, cli, io).await,
+        Commands::Validate(args) => validate::execute(args, cli, io).await,
     }
 }
 

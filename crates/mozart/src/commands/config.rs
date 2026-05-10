@@ -5,6 +5,7 @@ use anyhow::anyhow;
 use clap::Args;
 use mozart_core::composer::composer_home;
 use mozart_core::config::resolve_references;
+use mozart_core::console::IoInterface;
 use mozart_core::console_writeln;
 use mozart_core::factory::create_config;
 use std::collections::BTreeMap;
@@ -407,7 +408,7 @@ fn load_config_section(
 pub async fn execute(
     args: &ConfigArgs,
     cli: &super::Cli,
-    console: &mozart_core::console::Console,
+    io: std::sync::Arc<std::sync::Mutex<Box<dyn IoInterface>>>,
 ) -> anyhow::Result<()> {
     // 1. Handle --editor mode
     if args.editor {
@@ -429,7 +430,7 @@ pub async fn execute(
     }
 
     // 4b. Read mode
-    execute_read(args, cli, &config_file_path, console)
+    execute_read(args, cli, &config_file_path, io.clone())
 }
 
 fn execute_editor(args: &ConfigArgs, cli: &super::Cli) -> anyhow::Result<()> {
@@ -972,7 +973,7 @@ fn execute_read(
     args: &ConfigArgs,
     cli: &super::Cli,
     config_file_path: &Path,
-    console: &mozart_core::console::Console,
+    io: std::sync::Arc<std::sync::Mutex<Box<dyn IoInterface>>>,
 ) -> anyhow::Result<()> {
     // Build the effective config for config-section keys.
     // Global baseline (defaults + platform dirs + $COMPOSER_HOME/config.json),
@@ -997,7 +998,7 @@ fn execute_read(
     if args.list {
         for (key, value) in config.entries() {
             console_writeln!(
-                console,
+                io,
                 mozart_core::console::Verbosity::Quiet,
                 "[{}] {}",
                 key,
@@ -1020,7 +1021,7 @@ fn execute_read(
                     for entry in repos {
                         if entry.get("name").and_then(|n| n.as_str()) == Some(repo_name) {
                             console_writeln!(
-                                console,
+                                io,
                                 mozart_core::console::Verbosity::Quiet,
                                 "{}",
                                 &render_value(entry),
@@ -1037,7 +1038,7 @@ fn execute_read(
                 let raw = read_json_file(config_file_path, args.global)?;
                 if let Some(v) = get_nested(&raw, key) {
                     console_writeln!(
-                        console,
+                        io,
                         mozart_core::console::Verbosity::Quiet,
                         "{}",
                         &render_value(v),
@@ -1052,7 +1053,7 @@ fn execute_read(
                 let raw = read_json_file(config_file_path, args.global)?;
                 if let Some(v) = raw.get(key.as_str()) {
                     console_writeln!(
-                        console,
+                        io,
                         mozart_core::console::Verbosity::Quiet,
                         "{}",
                         &render_value(v),
@@ -1066,7 +1067,7 @@ fn execute_read(
             match config.get(key) {
                 Some(value) => {
                     console_writeln!(
-                        console,
+                        io,
                         mozart_core::console::Verbosity::Quiet,
                         "{}",
                         &render_value(&value),

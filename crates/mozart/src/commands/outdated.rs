@@ -1,4 +1,5 @@
 use clap::Args;
+use mozart_core::console::IoInterface;
 
 #[derive(Args)]
 pub struct OutdatedArgs {
@@ -62,7 +63,7 @@ pub struct OutdatedArgs {
 pub async fn execute(
     args: &OutdatedArgs,
     cli: &super::Cli,
-    console: &mozart_core::console::Console,
+    io: std::sync::Arc<std::sync::Mutex<Box<dyn IoInterface>>>,
 ) -> anyhow::Result<()> {
     let show_args = super::show::ShowArgs {
         package: args.package.clone(),
@@ -83,5 +84,5 @@ pub async fn execute(
         ..Default::default()
     };
 
-    super::show::execute(&show_args, cli, console).await
+    super::show::execute(&show_args, cli, io).await
 }

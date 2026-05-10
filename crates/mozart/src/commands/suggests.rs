@@ -1,6 +1,6 @@
 use clap::Args;
 use indexmap::IndexSet;
-use mozart_core::console;
+use mozart_core::console::IoInterface;
 use mozart_core::installer::{
     InstalledRepoLite, MODE_BY_PACKAGE, MODE_BY_SUGGESTION, MODE_LIST, RootInfo,
     SuggestedPackagesReporter,
@@ -37,8 +37,10 @@ pub struct SuggestsArgs {
 pub async fn execute(
     args: &SuggestsArgs,
     cli: &super::Cli,
-    console: &console::Console,
+    io: std::sync::Arc<std::sync::Mutex<Box<dyn IoInterface>>>,
 ) -> anyhow::Result<()> {
+    let io_guard = io.lock().unwrap();
+    let console = &**io_guard;
     let working_dir = cli.working_dir()?;
 
     let lock_path = working_dir.join("composer.lock");
@@ -314,8 +316,8 @@ mod tests {
         }
     }
 
-    fn console() -> console::Console {
-        console::Console::new(0, false, false, true, true)
+    fn console() -> mozart_core::console::Console {
+        mozart_core::console::Console::new(0, false, false, true, true)
     }
 
     #[test]

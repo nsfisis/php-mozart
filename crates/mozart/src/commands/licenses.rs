@@ -1,7 +1,7 @@
 use crate::composer::Composer;
 use clap::Args;
 use indexmap::IndexMap;
-use mozart_core::console::Console;
+use mozart_core::console::IoInterface;
 use mozart_core::console::hyperlink;
 use mozart_core::console_writeln;
 use mozart_core::package::Package;
@@ -68,7 +68,7 @@ impl PackageUrls for LicenseEntry {
 pub async fn execute(
     args: &LicensesArgs,
     cli: &super::Cli,
-    console: &Console,
+    io: std::sync::Arc<std::sync::Mutex<Box<dyn IoInterface>>>,
 ) -> anyhow::Result<()> {
     let working_dir = cli.working_dir()?;
     let format = args.format.as_deref().unwrap_or("text");
@@ -113,15 +113,15 @@ pub async fn execute(
             &root_version,
             &root_licenses,
             &entries,
-            console,
+            io,
         )?,
-        "summary" => render_summary(&entries, console),
+        "summary" => render_summary(&entries, io.clone()),
         _ => render_text(
             &root_pretty_name,
             &root_version,
             &root_licenses,
             &entries,
-            console,
+            io,
         ),
     }
 
@@ -271,18 +271,18 @@ fn render_text(
     root_version: &str,
     root_licenses: &[String],
     entries: &[LicenseEntry],
-    console: &Console,
+    io: std::sync::Arc<std::sync::Mutex<Box<dyn IoInterface>>>,
 ) {
     let license_display = if root_licenses.is_empty() {
         "none".to_string()
     } else {
         root_licenses.join(", ")
     };
-    console_writeln!(console, "Name: <comment>{root_pretty_name}</comment>");
-    console_writeln!(console, "Version: <comment>{root_version}</comment>");
-    console_writeln!(console, "Licenses: <comment>{license_display}</comment>");
-    console_writeln!(console, "Dependencies:");
-    console_writeln!(console, "");
+    console_writeln!(io, "Name: <comment>{root_pretty_name}</comment>");
+    console_writeln!(io, "Version: <comment>{root_version}</comment>");
+    console_writeln!(io, "Licenses: <comment>{license_display}</comment>");
+    console_writeln!(io, "Dependencies:");
+    console_writeln!(io, "");
 
     if entries.is_empty() {
         return;
@@ -302,7 +302,7 @@ fn render_text(
         .max("Version".len());
 
     console_writeln!(
-        console,
+        io,
         "{:<nw$}  {:<vw$}  Licenses",
         "Name",
         "Version",
@@ -318,11 +318,11 @@ fn render_text(
         };
         let padded_name = format!("{:<nw$}", entry.pretty_name, nw = name_width);
         let name_cell = match package_info::view_source_or_homepage_url(entry) {
-            Some(url) => hyperlink(&url, &padded_name, console.decorated),
+            Some(url) => hyperlink(&url, &padded_name, io.lock().unwrap().is_decorated()),
             None => padded_name,
         };
         console_writeln!(
-            console,
+            io,
             "{}  {:<vw$}  {}",
             name_cell,
             entry.version,
@@ -337,7 +337,7 @@ fn render_json(
     root_version: &str,
     root_licenses: &[String],
     entries: &[LicenseEntry],
-    console: &Console,
+    io: std::sync::Arc<std::sync::Mutex<Box<dyn IoInterface>>>,
 ) -> anyhow::Result<()> {
     let root_license_arr: Vec<serde_json::Value> = root_licenses
         .iter()
@@ -371,15 +371,18 @@ fn render_json(
     let formatter = serde_json::ser::PrettyFormatter::with_indent(b"    ");
     let mut ser = serde_json::Serializer::with_formatter(buf, formatter);
     output.serialize(&mut ser)?;
-    console_writeln!(console, "{}", &String::from_utf8(ser.into_inner())?);
+    console_writeln!(io, "{}", &String::from_utf8(ser.into_inner())?);
     Ok(())
 }
 
-fn render_summary(entries: &[LicenseEntry], console: &Console) {
+fn render_summary(
+    entries: &[LicenseEntry],
+    io: std::sync::Arc<std::sync::Mutex<Box<dyn IoInterface>>>,
+) {
     let counts = tally_licenses(entries);
 
     if counts.is_empty() {
-        console_writeln!(console, "No dependencies found.");
+        console_writeln!(io, "No dependencies found.");
         return;
     }
 
@@ -401,19 +404,19 @@ fn render_summary(entries: &[LicenseEntry], console: &Console) {
     let border_col1 = "-".repeat(license_width + 2);
     let border_col2 = "-".repeat(count_width + 2);
 
-    console_writeln!(console, " {} {}", border_col1, border_col2);
+    console_writeln!(io, " {} {}", border_col1, border_col2);
     console_writeln!(
-        console,
+        io,
         "  {:<lw$}   {:<cw$}",
         "License",
         COL2_HEADER,
         lw = license_width,
         cw = count_width,
     );
-    console_writeln!(console, " {} {}", border_col1, border_col2);
+    console_writeln!(io, " {} {}", border_col1, border_col2);
     for (license, count) in &counts {
         console_writeln!(
-            console,
+            io,
             "  {:<lw$}   {:<cw$}",
             license,
             count,
@@ -421,7 +424,7 @@ fn render_summary(entries: &[LicenseEntry], console: &Console) {
             cw = count_width,
         );
     }
-    console_writeln!(console, " {} {}", border_col1, border_col2);
+    console_writeln!(io, " {} {}", border_col1, border_col2);
 }
 
 /// Mirror of `LicensesCommand::execute`'s `summary` accumulator.

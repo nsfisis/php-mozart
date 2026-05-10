@@ -1,10 +1,10 @@
-use std::{borrow::Cow, path::Path};
-
 use crate::composer::Composer;
 use clap::Args;
+use mozart_core::console::IoInterface;
 use mozart_core::console_writeln_error;
 use mozart_core::factory::create_config;
 use mozart_core::repository::cache::Cache;
+use std::{borrow::Cow, path::Path};
 
 #[derive(Args)]
 pub struct ClearCacheArgs {
@@ -16,7 +16,7 @@ pub struct ClearCacheArgs {
 pub async fn execute(
     args: &ClearCacheArgs,
     cli: &super::Cli,
-    console: &mozart_core::console::Console,
+    io: std::sync::Arc<std::sync::Mutex<Box<dyn IoInterface>>>,
 ) -> anyhow::Result<()> {
     let composer = Composer::try_load(cli.working_dir()?)?;
     let config = if let Some(composer) = &composer {
@@ -42,7 +42,7 @@ pub async fn execute(
 
         if !path.exists() {
             console_writeln_error!(
-                console,
+                io,
                 "<info>Cache directory does not exist ({key}): {}</info>",
                 path.display(),
             );
@@ -52,7 +52,7 @@ pub async fn execute(
         let cache = Cache::new(path.to_owned(), config.cache_read_only);
         if !cache.is_enabled() {
             console_writeln_error!(
-                console,
+                io,
                 "<info>Cache is not enabled ({key}): {}</info>",
                 path.display(),
             );
@@ -61,7 +61,7 @@ pub async fn execute(
 
         if args.gc {
             console_writeln_error!(
-                console,
+                io,
                 "<info>Garbage-collecting cache ({key}): {}</info>",
                 path.display(),
             );
@@ -73,7 +73,7 @@ pub async fn execute(
             };
         } else {
             console_writeln_error!(
-                console,
+                io,
                 "<info>Clearing cache ({key}): {}</info>",
                 path.display(),
             );
@@ -82,9 +82,9 @@ pub async fn execute(
     }
 
     if args.gc {
-        console_writeln_error!(console, "<info>All caches garbage-collected.</info>");
+        console_writeln_error!(io, "<info>All caches garbage-collected.</info>");
     } else {
-        console_writeln_error!(console, "<info>All caches cleared.</info>");
+        console_writeln_error!(io, "<info>All caches cleared.</info>");
     }
 
     Ok(())

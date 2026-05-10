@@ -1,4 +1,5 @@
 use clap::Args;
+use mozart_core::console::IoInterface;
 
 #[derive(Args)]
 pub struct ProhibitsArgs {
@@ -24,11 +25,11 @@ pub struct ProhibitsArgs {
 pub async fn execute(
     args: &ProhibitsArgs,
     cli: &super::Cli,
-    console: &mozart_core::console::Console,
+    io: std::sync::Arc<std::sync::Mutex<Box<dyn IoInterface>>>,
 ) -> anyhow::Result<()> {
     super::dependency::do_execute(
         cli,
-        console,
+        io,
         super::dependency::DoExecuteArgs {
             package: &args.package,
             version: Some(&args.version),

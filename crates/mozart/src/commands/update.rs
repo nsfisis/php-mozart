@@ -1,6 +1,7 @@
 use crate::composer::Composer;
 use clap::Args;
 use indexmap::{IndexMap, IndexSet};
+use mozart_core::console::IoInterface;
 use mozart_core::console_format;
 use mozart_core::package;
 use mozart_core::platform::is_platform_package;
@@ -468,7 +469,7 @@ pub fn expand_wildcards(
     specifiers: &[String],
     lock: &lockfile::LockFile,
     root_requires: &IndexSet<String>,
-    console: &mozart_core::console::Console,
+    io: std::sync::Arc<std::sync::Mutex<Box<dyn IoInterface>>>,
 ) -> Vec<String> {
     // Collect all locked package names (prod + dev) plus the current root
     // require names. Mirrors Composer's
@@ -519,7 +520,7 @@ pub fn expand_wildcards(
             }
         }
         if !matched {
-            console.info(&console_format!(
+            io.lock().unwrap().info(&console_format!(
                 "<warning>Package '{}' listed for update is not in the lock file. Specifier will be ignored.</warning>",
                 spec
             ));
@@ -748,10 +749,10 @@ pub fn expand_packages(
     with_all_dependencies: bool,
     root_requires: &IndexSet<String>,
     repo_requires: &IndexMap<String, IndexSet<String>>,
-    console: &mozart_core::console::Console,
+    io: std::sync::Arc<std::sync::Mutex<Box<dyn IoInterface>>>,
 ) -> Vec<String> {
     let mut packages: Vec<String> = if let Some(lock) = lock {
-        expand_wildcards(specifiers, lock, root_requires, console)
+        expand_wildcards(specifiers, lock, root_requires, io)
     } else {
         // No lock file: pass through as-is (no wildcards can be resolved)
         specifiers.iter().map(|s| s.to_lowercase()).collect()
@@ -779,19 +780,21 @@ pub fn expand_packages(
 /// returns the full package list unchanged.
 pub fn interactive_select_packages(
     packages: Vec<String>,
-    console: &mozart_core::console::Console,
+    io: std::sync::Arc<std::sync::Mutex<Box<dyn IoInterface>>>,
 ) -> Vec<String> {
     use std::io::{self, BufRead, IsTerminal, Write};
 
     let stdin = io::stdin();
     if !stdin.is_terminal() {
-        console.info(&console_format!(
+        io.lock().unwrap().info(&console_format!(
             "<warning>Interactive mode requires a TTY. Running non-interactively with all packages.</warning>"
         ));
         return packages;
     }
 
-    console.info("Select packages to update (y/n for each):");
+    io.lock()
+        .unwrap()
+        .info("Select packages to update (y/n for each):");
 
     let mut selected = Vec::new();
     let stdin_locked = stdin.lock();
@@ -814,7 +817,7 @@ pub fn interactive_select_packages(
                             break;
                         }
                         _ => {
-                            console.info("  Please answer y or n.");
+                            io.lock().unwrap().info("  Please answer y or n.");
                         }
                     }
                 }
@@ -921,7 +924,7 @@ fn major_minor(version: &str) -> (u64, u64) {
 pub async fn execute(
     args: &UpdateArgs,
     cli: &super::Cli,
-    console: &mozart_core::console::Console,
+    io: std::sync::Arc<std::sync::Mutex<Box<dyn IoInterface>>>,
 ) -> anyhow::Result<()> {
     let cache_config = mozart_core::repository::cache::build_cache_config(cli.no_cache);
     let repositories = std::sync::Arc::new(
@@ -937,7 +940,7 @@ pub async fn execute(
         &working_dir,
         None,
         args,
-        console,
+        io.clone(),
         repositories,
         &mut executor,
     )
@@ -962,25 +965,27 @@ pub async fn run(
     working_dir: &std::path::Path,
     path_repo_base_override: Option<&std::path::Path>,
     args: &UpdateArgs,
-    console: &mozart_core::console::Console,
+    io: std::sync::Arc<std::sync::Mutex<Box<dyn IoInterface>>>,
     repositories: std::sync::Arc<mozart_core::repository::repository::RepositorySet>,
     executor: &mut dyn mozart_core::repository::installer_executor::InstallerExecutor,
 ) -> anyhow::Result<()> {
     // Step 2: Handle deprecated flags
     if args.dev {
-        console.info(&console_format!(
+        io.lock().unwrap().info(&console_format!(
             "<warning>The --dev option is deprecated. Dev packages are updated by default.</warning>"
         ));
     }
     if args.no_suggest {
-        console.info(&console_format!(
+        io.lock().unwrap().info(&console_format!(
             "<warning>You are using the deprecated option \"--no-suggest\". It has no effect and will break in Composer 3.</warning>"
         ));
     }
 
     // --root-reqs: if no packages specified, auto-populate with root requirements
     if args.root_reqs && args.packages.is_empty() {
-        console.info("Using root requirements as the update list (--root-reqs).");
+        io.lock()
+            .unwrap()
+            .info("Using root requirements as the update list (--root-reqs).");
     }
 
     // Step 3: Read composer.json
@@ -1183,7 +1188,7 @@ pub async fn run(
                         args.with_all_dependencies,
                         &root_requires,
                         &repo_requires,
-                        console,
+                        io.clone(),
                     )
                     .into_iter()
                     .collect();
@@ -1439,11 +1444,15 @@ pub async fn run(
     };
 
     // Step 6: Print header and run resolver
-    console.info("Loading composer repositories with package information");
+    io.lock()
+        .unwrap()
+        .info("Loading composer repositories with package information");
     if dev_mode {
-        console.info("Updating dependencies (including require-dev)");
+        io.lock()
+            .unwrap()
+            .info("Updating dependencies (including require-dev)");
     } else {
-        console.info("Updating dependencies");
+        io.lock().unwrap().info("Updating dependencies");
     }
     let mut resolved = match resolver::resolve(&request).await {
         Ok(packages) => packages,
@@ -1460,7 +1469,7 @@ pub async fn run(
         match lockfile::LockFile::read_from_file(&lock_path) {
             Ok(l) => Some(l),
             Err(e) => {
-                console.info(&console_format!(
+                io.lock().unwrap().info(&console_format!(
                     "<warning>Could not read existing composer.lock: {}. Treating as a fresh install.</warning>",
                     e
                 ));
@@ -1518,12 +1527,12 @@ pub async fn run(
                     args.with_all_dependencies,
                     &root_requires,
                     &repo_requires,
-                    console,
+                    io.clone(),
                 );
 
                 // 2. Interactive selection (filter the expanded list)
                 if args.interactive {
-                    expanded = interactive_select_packages(expanded, console);
+                    expanded = interactive_select_packages(expanded, io.clone());
                 }
 
                 expanded
@@ -1535,7 +1544,7 @@ pub async fn run(
         if args.interactive {
             match &old_lock {
                 None => {
-                    console.info(&console_format!(
+                    io.lock().unwrap().info(&console_format!(
                         "<warning>No lock file found. --interactive mode skipped.</warning>"
                     ));
                     vec![]
@@ -1552,7 +1561,7 @@ pub async fn run(
                                 .map(|p| p.name.to_lowercase()),
                         )
                         .collect();
-                    interactive_select_packages(all_names, console)
+                    interactive_select_packages(all_names, io.clone())
                 }
             }
         } else {
@@ -1574,14 +1583,18 @@ pub async fn run(
             }
         }
     } else if args.minimal_changes && update_packages.is_empty() && old_lock.is_some() {
-        console.info("Minimal changes mode: preserving locked versions where possible.");
+        io.lock()
+            .unwrap()
+            .info("Minimal changes mode: preserving locked versions where possible.");
     }
 
     // Apply --patch-only filter: restrict updates to patch-level changes only
     if args.patch_only
         && let Some(ref lock) = old_lock
     {
-        console.info("Patch-only mode: restricting updates to patch-level changes.");
+        io.lock()
+            .unwrap()
+            .info("Patch-only mode: restricting updates to patch-level changes.");
         resolved = apply_patch_only(resolved, lock);
     }
 
@@ -1647,7 +1660,7 @@ pub async fn run(
         .filter(|c| matches!(c.kind, ChangeKind::Uninstall { .. }))
         .collect();
 
-    console.info(&console_format!(
+    io.lock().unwrap().info(&console_format!(
         "<info>Lock file operations: {} install{}, {} update{}, {} removal{}</info>",
         installs.len(),
         if installs.len() == 1 { "" } else { "s" },
@@ -1662,13 +1675,13 @@ pub async fn run(
         match &change.kind {
             ChangeKind::Uninstall { old_version } => {
                 if args.dry_run {
-                    console.info(&console_format!(
+                    io.lock().unwrap().info(&console_format!(
                         "  - Would remove <info>{}</info> (<comment>{}</comment>)",
                         change.name,
                         old_version
                     ));
                 } else {
-                    console.info(&console_format!(
+                    io.lock().unwrap().info(&console_format!(
                         "  - Removing <info>{}</info> (<comment>{}</comment>)",
                         change.name,
                         old_version
@@ -1677,13 +1690,13 @@ pub async fn run(
             }
             ChangeKind::Install { new_version } => {
                 if args.dry_run {
-                    console.info(&console_format!(
+                    io.lock().unwrap().info(&console_format!(
                         "  - Would lock <info>{}</info> (<comment>{}</comment>)",
                         change.name,
                         new_version
                     ));
                 } else {
-                    console.info(&console_format!(
+                    io.lock().unwrap().info(&console_format!(
                         "  - Locking <info>{}</info> (<comment>{}</comment>)",
                         change.name,
                         new_version
@@ -1705,7 +1718,7 @@ pub async fn run(
                 } else {
                     "Upgrading"
                 };
-                console.info(&console_format!(
+                io.lock().unwrap().info(&console_format!(
                     "  - {} <info>{}</info> (<comment>{}</comment> => <comment>{}</comment>)",
                     direction,
                     change.name,
@@ -1718,7 +1731,9 @@ pub async fn run(
 
     // Step 11: Write lock file (unless --dry-run)
     if !args.dry_run {
-        console.info(&console_format!("<info>Writing lock file</info>"));
+        io.lock()
+            .unwrap()
+            .info(&console_format!("<info>Writing lock file</info>"));
         new_lock.write_to_file(&lock_path)?;
     }
 
@@ -1734,7 +1749,7 @@ pub async fn run(
         let no_dev_only = mode == "no-dev";
         let bump_composer = Composer::require(working_dir)?;
         let bump_exit = super::bump::do_bump(
-            console,
+            io.clone(),
             &bump_composer,
             dev_only,
             no_dev_only,
@@ -1776,7 +1791,7 @@ pub async fn run(
                 download_only: false,
                 prefer_source,
             },
-            console,
+            io.clone(),
             executor,
         )
         .await?;
@@ -1845,12 +1860,12 @@ mod tests {
         }
     }
 
-    fn test_console() -> mozart_core::console::Console {
-        mozart_core::console::Console {
-            interactive: false,
-            verbosity: mozart_core::console::Verbosity::Normal,
-            decorated: false,
-        }
+    fn test_console() -> std::sync::Arc<std::sync::Mutex<Box<dyn IoInterface>>> {
+        std::sync::Arc::new(std::sync::Mutex::new(
+            Box::new(mozart_core::console::Console::new(
+                0, false, false, false, false,
+            )) as Box<dyn IoInterface>,
+        ))
     }
 
     #[test]
@@ -2178,7 +2193,7 @@ mod tests {
             .map(String::from)
             .collect();
         let specs = vec!["psr/log".to_string(), "nonexistent/pkg".to_string()];
-        let result = expand_wildcards(&specs, &lock, &root_requires, &test_console());
+        let result = expand_wildcards(&specs, &lock, &root_requires, test_console());
         assert_eq!(result, vec!["psr/log", "nonexistent/pkg"]);
     }
 
@@ -2191,7 +2206,7 @@ mod tests {
         ]);
         let specs = vec!["symfony/*".to_string()];
         let root_requires: IndexSet<String> = IndexSet::new();
-        let mut result = expand_wildcards(&specs, &lock, &root_requires, &test_console());
+        let mut result = expand_wildcards(&specs, &lock, &root_requires, test_console());
         result.sort();
         assert_eq!(result, vec!["symfony/console", "symfony/http-kernel"]);
     }
@@ -2202,7 +2217,7 @@ mod tests {
         let specs = vec!["unknown/*".to_string()];
         let root_requires: IndexSet<String> = IndexSet::new();
         // Should return empty (no match), no panic
-        let result = expand_wildcards(&specs, &lock, &root_requires, &test_console());
+        let result = expand_wildcards(&specs, &lock, &root_requires, test_console());
         assert!(result.is_empty());
     }
 
@@ -2211,7 +2226,7 @@ mod tests {
         let lock = minimal_lock(vec![make_locked_package("psr/log", "3.0.0")]);
         let specs = vec!["psr/log".to_string(), "psr/log".to_string()];
         let root_requires: IndexSet<String> = IndexSet::new();
-        let result = expand_wildcards(&specs, &lock, &root_requires, &test_console());
+        let result = expand_wildcards(&specs, &lock, &root_requires, test_console());
         assert_eq!(result.len(), 1);
         assert_eq!(result[0], "psr/log");
     }
@@ -2222,7 +2237,7 @@ mod tests {
         lock.packages_dev = Some(vec![make_locked_package("phpunit/phpunit", "11.0.0")]);
         let specs = vec!["phpunit/*".to_string()];
         let root_requires: IndexSet<String> = IndexSet::new();
-        let result = expand_wildcards(&specs, &lock, &root_requires, &test_console());
+        let result = expand_wildcards(&specs, &lock, &root_requires, test_console());
         assert_eq!(result, vec!["phpunit/phpunit"]);
     }
 
@@ -2354,7 +2369,7 @@ mod tests {
             false, // with_all_dependencies
             &IndexSet::new(),
             &IndexMap::new(),
-            &test_console(),
+            test_console(),
         );
 
         assert!(result.contains(&"symfony/console".to_string()));

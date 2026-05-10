@@ -2,6 +2,7 @@ use crate::composer::Composer;
 use clap::Args;
 use mozart_core::autoload::AutoloadGeneratorExt;
 use mozart_core::composer::{AutoloadDumpOptions, LocalPackage};
+use mozart_core::console::IoInterface;
 use mozart_core::console_format;
 use mozart_core::validation::package_name_to_regexp;
 
@@ -62,7 +63,7 @@ pub struct ReinstallArgs {
 pub async fn execute(
     args: &ReinstallArgs,
     cli: &super::Cli,
-    console: &mozart_core::console::Console,
+    io: std::sync::Arc<std::sync::Mutex<Box<dyn IoInterface>>>,
 ) -> anyhow::Result<()> {
     let working_dir = cli.working_dir()?;
     let composer = Composer::require(&working_dir)?;
@@ -101,7 +102,7 @@ pub async fn execute(
                 }
             }
             if !matched {
-                console.error(&console_format!(
+                io.lock().unwrap().error(&console_format!(
                     "<warning>Pattern \"{}\" does not match any currently installed packages.</warning>",
                     pattern
                 ));
@@ -110,7 +111,7 @@ pub async fn execute(
     }
 
     if packages_to_reinstall.is_empty() {
-        console.error(&console_format!(
+        io.lock().unwrap().error(&console_format!(
             "<warning>Found no packages to reinstall, aborting.</warning>"
         ));
         return Err(mozart_core::exit_code::bail_silent(
@@ -146,7 +147,7 @@ pub async fn execute(
         let dist = match package.dist() {
             Some(d) => d,
             None => {
-                console.info(&format!(
+                io.lock().unwrap().info(&format!(
                     "  Warning: {} has no dist information; skipping.",
                     package.pretty_name()
                 ));
@@ -154,7 +155,7 @@ pub async fn execute(
             }
         };
 
-        console.info(&format!(
+        io.lock().unwrap().info(&format!(
             "  - Reinstalling {} ({})",
             package.pretty_name(),
             package.pretty_version()

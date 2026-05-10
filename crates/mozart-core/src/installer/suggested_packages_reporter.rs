@@ -5,7 +5,7 @@
 //! Composer's reporter exposes so other entry points (install/update) can
 //! emit a minimalistic post-install hint with the same code path.
 
-use crate::console::{Console, Verbosity};
+use crate::console::{IoInterface, Verbosity};
 use crate::console_format;
 use crate::installer::installed_repo::InstalledRepoLite;
 use indexmap::IndexSet;
@@ -82,14 +82,14 @@ impl RootInfo {
 /// install/update one-liner).
 pub struct SuggestedPackagesReporter<'a> {
     suggested_packages: Vec<Suggestion>,
-    console: &'a Console,
+    io: &'a dyn IoInterface,
 }
 
 impl<'a> SuggestedPackagesReporter<'a> {
-    pub fn new(console: &'a Console) -> Self {
+    pub fn new(io: &'a dyn IoInterface) -> Self {
         Self {
             suggested_packages: Vec::new(),
-            console,
+            io,
         }
     }
 
@@ -204,7 +204,7 @@ impl<'a> SuggestedPackagesReporter<'a> {
     ) {
         let suggestions = self.get_filtered_suggestions(installed_repo, only_dependents_of);
         if !suggestions.is_empty() {
-            self.console.write(
+            self.io.write(
                 &console_format!(
                     "<info>{} package suggestions were added by new dependencies, use `composer suggest` to see details.</info>",
                     suggestions.len()
@@ -215,7 +215,7 @@ impl<'a> SuggestedPackagesReporter<'a> {
     }
 
     fn write_line(&self, msg: &str) {
-        if self.console.verbosity >= Verbosity::Normal {
+        if self.io.verbosity() >= Verbosity::Normal {
             println!("{msg}");
         }
     }

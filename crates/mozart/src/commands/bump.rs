@@ -2,7 +2,7 @@ use crate::composer::Composer;
 use clap::Args;
 use indexmap::IndexMap;
 use mozart_core::composer::LocalRepository;
-use mozart_core::console::Console;
+use mozart_core::console::IoInterface;
 use mozart_core::package::{Link, Package};
 use mozart_core::{console_writeln, console_writeln_error};
 use std::collections::BTreeMap;
@@ -29,12 +29,16 @@ pub struct BumpArgs {
     pub dry_run: bool,
 }
 
-pub async fn execute(args: &BumpArgs, cli: &super::Cli, console: &Console) -> anyhow::Result<()> {
+pub async fn execute(
+    args: &BumpArgs,
+    cli: &super::Cli,
+    io: std::sync::Arc<std::sync::Mutex<Box<dyn IoInterface>>>,
+) -> anyhow::Result<()> {
     let working_dir = cli.working_dir()?;
     let composer = Composer::require(&working_dir)?;
 
     let exit = do_bump(
-        console,
+        io,
         &composer,
         args.dev_only,
         args.no_dev_only,
@@ -57,7 +61,7 @@ pub async fn execute(args: &BumpArgs, cli: &super::Cli, console: &Console) -> an
 /// warning when the package has no `type` set. `bump` itself passes `--dev-only`;
 /// `update --bump` will pass its own combined option name once that command is ported.
 pub async fn do_bump(
-    io: &Console,
+    io: std::sync::Arc<std::sync::Mutex<Box<dyn IoInterface>>>,
     composer: &Composer,
     dev_only: bool,
     no_dev_only: bool,
@@ -435,12 +439,12 @@ mod tests {
         }
     }
 
-    fn quiet_console() -> Console {
-        Console {
-            interactive: false,
-            verbosity: mozart_core::console::Verbosity::Normal,
-            decorated: false,
-        }
+    fn quiet_io() -> std::sync::Arc<std::sync::Mutex<Box<dyn IoInterface>>> {
+        std::sync::Arc::new(std::sync::Mutex::new(
+            Box::new(mozart_core::console::Console::new(
+                0, false, false, false, false,
+            )) as Box<dyn IoInterface>,
+        ))
     }
 
     #[tokio::test]
@@ -465,8 +469,7 @@ mod tests {
             dry_run: false,
         };
         let cli = make_cli(dir.path());
-        let console = quiet_console();
-        execute(&args, &cli, &console).await.unwrap();
+        execute(&args, &cli, quiet_io()).await.unwrap();
 
         let updated = std::fs::read_to_string(dir.path().join("composer.json")).unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&updated).unwrap();
@@ -495,8 +498,7 @@ mod tests {
             dry_run: true,
         };
         let cli = make_cli(dir.path());
-        let console = quiet_console();
-        let result = execute(&args, &cli, &console).await;
+        let result = execute(&args, &cli, quiet_io()).await;
 
         // dry-run with changes returns exit code 1 (for CI usage)
         let err = result.unwrap_err();
@@ -533,8 +535,7 @@ mod tests {
             dry_run: false,
         };
         let cli = make_cli(dir.path());
-        let console = quiet_console();
-        execute(&args, &cli, &console).await.unwrap();
+        execute(&args, &cli, quiet_io()).await.unwrap();
 
         // No changes should be made
         let content = std::fs::read_to_string(dir.path().join("composer.json")).unwrap();
@@ -570,8 +571,7 @@ mod tests {
             dry_run: false,
         };
         let cli = make_cli(dir.path());
-        let console = quiet_console();
-        execute(&args, &cli, &console).await.unwrap();
+        execute(&args, &cli, quiet_io()).await.unwrap();
 
         let content = std::fs::read_to_string(dir.path().join("composer.json")).unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
@@ -609,8 +609,7 @@ mod tests {
             dry_run: false,
         };
         let cli = make_cli(dir.path());
-        let console = quiet_console();
-        execute(&args, &cli, &console).await.unwrap();
+        execute(&args, &cli, quiet_io()).await.unwrap();
 
         let content = std::fs::read_to_string(dir.path().join("composer.json")).unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
@@ -644,8 +643,7 @@ mod tests {
             dry_run: false,
         };
         let cli = make_cli(dir.path());
-        let console = quiet_console();
-        let result = execute(&args, &cli, &console).await;
+        let result = execute(&args, &cli, quiet_io()).await;
 
         // stale lock file should return exit code 2 (ERROR_LOCK_OUTDATED)
         let err = result.unwrap_err();
@@ -677,8 +675,7 @@ mod tests {
             dry_run: false,
         };
         let cli = make_cli(dir.path());
-        let console = quiet_console();
-        execute(&args, &cli, &console).await.unwrap();
+        execute(&args, &cli, quiet_io()).await.unwrap();
 
         // The lock file content-hash should now match the updated composer.json
         let updated_composer = std::fs::read_to_string(dir.path().join("composer.json")).unwrap();
@@ -727,8 +724,7 @@ mod tests {
             dry_run: false,
         };
         let cli = make_cli(dir.path());
-        let console = quiet_console();
-        execute(&args, &cli, &console).await.unwrap();
+        execute(&args, &cli, quiet_io()).await.unwrap();
 
         let content = std::fs::read_to_string(dir.path().join("composer.json")).unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
@@ -785,8 +781,7 @@ mod tests {
             dry_run: false,
         };
         let cli = make_cli(dir.path());
-        let console = quiet_console();
-        execute(&args, &cli, &console).await.unwrap();
+        execute(&args, &cli, quiet_io()).await.unwrap();
 
         let content = std::fs::read_to_string(dir.path().join("composer.json")).unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
@@ -827,8 +822,7 @@ mod tests {
             dry_run: false,
         };
         let cli = make_cli(dir.path());
-        let console = quiet_console();
-        execute(&args, &cli, &console).await.unwrap();
+        execute(&args, &cli, quiet_io()).await.unwrap();
 
         let content = std::fs::read_to_string(dir.path().join("composer.json")).unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
@@ -869,8 +863,7 @@ mod tests {
             dry_run: false,
         };
         let cli = make_cli(dir.path());
-        let console = quiet_console();
-        execute(&args, &cli, &console).await.unwrap();
+        execute(&args, &cli, quiet_io()).await.unwrap();
 
         let content = std::fs::read_to_string(dir.path().join("composer.json")).unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();

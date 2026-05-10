@@ -1,6 +1,6 @@
 use crate::composer::Composer;
 use clap::Args;
-use mozart_core::console::Console;
+use mozart_core::console::IoInterface;
 use mozart_core::console_writeln;
 use mozart_core::console_writeln_error;
 use mozart_core::exit_code;
@@ -24,7 +24,11 @@ pub struct BrowseArgs {
     pub show: bool,
 }
 
-pub async fn execute(args: &BrowseArgs, cli: &super::Cli, console: &Console) -> anyhow::Result<()> {
+pub async fn execute(
+    args: &BrowseArgs,
+    cli: &super::Cli,
+    io: std::sync::Arc<std::sync::Mutex<Box<dyn IoInterface>>>,
+) -> anyhow::Result<()> {
     let working_dir = cli.working_dir()?;
     let cache = Cache::repo(&build_cache_config(cli.no_cache));
 
@@ -33,7 +37,7 @@ pub async fn execute(args: &BrowseArgs, cli: &super::Cli, console: &Console) -> 
 
     let packages: Vec<String> = if args.packages.is_empty() {
         console_writeln_error!(
-            console,
+            io,
             "No package specified, opening homepage for the root package"
         );
         // Mirrors HomeCommand's `$this->requireComposer()->getPackage()->getName()`.
@@ -55,7 +59,7 @@ pub async fn execute(args: &BrowseArgs, cli: &super::Cli, console: &Console) -> 
         'outer: for repo in repos.iter() {
             for view in repo.find_packages(package_name).await? {
                 package_exists = true;
-                if handle_package(&view, args.homepage, args.show, console)? {
+                if handle_package(&view, args.homepage, args.show, io.clone())? {
                     handled = true;
                     break 'outer;
                 }
@@ -64,11 +68,7 @@ pub async fn execute(args: &BrowseArgs, cli: &super::Cli, console: &Console) -> 
 
         if !package_exists {
             return_code = 1;
-            console_writeln_error!(
-                console,
-                "<warning>Package {} not found</warning>",
-                package_name,
-            );
+            console_writeln_error!(io, "<warning>Package {} not found</warning>", package_name,);
         }
 
         if !handled {
@@ -78,7 +78,7 @@ pub async fn execute(args: &BrowseArgs, cli: &super::Cli, console: &Console) -> 
             } else {
                 "Invalid or missing repository URL"
             };
-            console_writeln_error!(console, "<warning>{} for {}</warning>", kind, package_name);
+            console_writeln_error!(io, "<warning>{} for {}</warning>", kind, package_name);
         }
     }
 
@@ -108,7 +108,7 @@ fn handle_package(
     view: &CompletePackageView,
     show_homepage: bool,
     show_only: bool,
-    console: &Console,
+    io: std::sync::Arc<std::sync::Mutex<Box<dyn IoInterface>>>,
 ) -> anyhow::Result<bool> {
     let mut url = view
         .support_source
@@ -123,10 +123,11 @@ fn handle_package(
     };
 
     if show_only {
-        console_writeln!(console, "<info>{}</info>", url);
+        console_writeln!(io, "<info>{}</info>", url);
     } else {
-        open_browser(&url, console)?;
+        open_browser(&url, io)?;
     }
+
     Ok(true)
 }
 
@@ -134,7 +135,10 @@ fn is_valid_url(url: &str) -> bool {
     url::Url::parse(url).is_ok()
 }
 
-fn open_browser(url: &str, console: &Console) -> anyhow::Result<()> {
+fn open_browser(
+    url: &str,
+    io: std::sync::Arc<std::sync::Mutex<Box<dyn IoInterface>>>,
+) -> anyhow::Result<()> {
     #[cfg(target_os = "windows")]
     {
         Command::new("cmd")
@@ -153,7 +157,7 @@ fn open_browser(url: &str, console: &Console) -> anyhow::Result<()> {
             Command::new("open").arg(url).status()?;
         } else {
             console_writeln_error!(
-                console,
+                io,
                 "No suitable browser opening command found, open yourself: {}",
                 url,
             );
@@ -175,8 +179,12 @@ fn which(cmd: &str) -> bool {
 mod tests {
     use super::*;
 
-    fn console() -> Console {
-        Console::new(0, false, false, false, true)
+    fn console() -> std::sync::Arc<std::sync::Mutex<Box<dyn IoInterface>>> {
+        std::sync::Arc::new(std::sync::Mutex::new(
+            Box::new(mozart_core::console::Console::new(
+                0, false, false, false, true,
+            )) as Box<dyn IoInterface>,
+        ))
     }
 
     fn view(
@@ -212,7 +220,7 @@ mod tests {
             Some("https://github.com/vendor/pkg.git"),
             Some("https://vendor.example.com"),
         );
-        assert!(handle_package(&v, false, true, &console()).unwrap());
+        assert!(handle_package(&v, false, true, console()).unwrap());
     }
 
     #[test]
@@ -222,13 +230,13 @@ mod tests {
             Some("https://github.com/vendor/pkg.git"),
             Some("https://vendor.example.com"),
         );
-        assert!(handle_package(&v, false, true, &console()).unwrap());
+        assert!(handle_package(&v, false, true, console()).unwrap());
     }
 
     #[test]
     fn handle_package_falls_back_to_homepage_when_no_source() {
         let v = view(None, None, Some("https://vendor.example.com"));
-        assert!(handle_package(&v, false, true, &console()).unwrap());
+        assert!(handle_package(&v, false, true, console()).unwrap());
     }
 
     #[test]
@@ -238,23 +246,23 @@ mod tests {
             Some("https://github.com/vendor/pkg.git"),
             Some("https://vendor.example.com"),
         );
-        assert!(handle_package(&v, true, true, &console()).unwrap());
+        assert!(handle_package(&v, true, true, console()).unwrap());
     }
 
     #[test]
     fn handle_package_returns_false_when_no_valid_url() {
         let v = view(None, None, None);
-        assert!(!handle_package(&v, false, true, &console()).unwrap());
+        assert!(!handle_package(&v, false, true, console()).unwrap());
 
         // Invalid URL strings still cause `handlePackage` to bail.
         let bad = view(Some("not-a-url"), None, None);
-        assert!(!handle_package(&bad, false, true, &console()).unwrap());
+        assert!(!handle_package(&bad, false, true, console()).unwrap());
     }
 
     #[test]
     fn handle_package_show_homepage_with_missing_homepage_returns_false() {
         let v = view(Some("https://github.com/vendor/pkg"), None, None);
         // -H and homepage absent → falls through and bails.
-        assert!(!handle_package(&v, true, true, &console()).unwrap());
+        assert!(!handle_package(&v, true, true, console()).unwrap());
     }
 }

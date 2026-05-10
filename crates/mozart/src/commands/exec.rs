@@ -1,7 +1,7 @@
 use crate::composer::Composer;
 use clap::Args;
-use mozart_core::console_writeln;
 use mozart_core::package::Package;
+use mozart_core::{console::IoInterface, console_writeln};
 use std::path::{Path, PathBuf};
 
 #[derive(Args)]
@@ -21,7 +21,7 @@ pub struct ExecArgs {
 pub async fn execute(
     args: &ExecArgs,
     cli: &super::Cli,
-    console: &mozart_core::console::Console,
+    io: std::sync::Arc<std::sync::Mutex<Box<dyn IoInterface>>>,
 ) -> anyhow::Result<()> {
     let working_dir = cli.working_dir()?;
 
@@ -36,12 +36,12 @@ pub async fn execute(
                 bin_dir.display(),
             );
         }
-        console_writeln!(console, "<comment>Available binaries:</comment>");
+        console_writeln!(io, "<comment>Available binaries:</comment>");
         for (bin, is_local) in &bins {
             if *is_local {
-                console_writeln!(console, "<info>- {bin} (local)</info>");
+                console_writeln!(io, "<info>- {bin} (local)</info>");
             } else {
-                console_writeln!(console, "<info>- {bin}</info>");
+                console_writeln!(io, "<info>- {bin}</info>");
             }
         }
         return Ok(());

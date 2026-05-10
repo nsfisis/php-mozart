@@ -1,5 +1,6 @@
 use clap::Args;
 use indexmap::{IndexMap, IndexSet};
+use mozart_core::console::IoInterface;
 use mozart_core::console_format;
 use mozart_core::console_writeln;
 use mozart_core::console_writeln_error;
@@ -108,7 +109,7 @@ pub struct ShowArgs {
 pub async fn execute(
     args: &ShowArgs,
     cli: &super::Cli,
-    console: &mozart_core::console::Console,
+    io: std::sync::Arc<std::sync::Mutex<Box<dyn IoInterface>>>,
 ) -> anyhow::Result<()> {
     let cache_config = mozart_core::repository::cache::build_cache_config(cli.no_cache);
     let repo_cache = mozart_core::repository::cache::Cache::repo(&cache_config);
@@ -116,7 +117,7 @@ pub async fn execute(
     // A9: --installed deprecation warning (mirrors Composer 143-145)
     if args.installed && !args.self_info {
         console_writeln_error!(
-            console,
+            io,
             "<warning>You are using the deprecated option \"installed\". Only installed packages are shown by default now. The --all option can be used to show all packages.</warning>",
         );
     }
@@ -167,7 +168,7 @@ pub async fn execute(
     // --ignore without --outdated warning
     if !args.ignore.is_empty() && !args.outdated {
         console_writeln_error!(
-            console,
+            io,
             "<warning>You are using the option \"ignore\" for action other than \"outdated\", it will be ignored.</warning>",
         );
     }
@@ -176,31 +177,31 @@ pub async fn execute(
 
     // --platform: show detected platform packages
     if args.platform {
-        return show_platform(args, &working_dir, console);
+        return show_platform(args, &working_dir, io.clone());
     }
 
     // --self: show root package info
     if args.self_info && !args.installed && !args.locked {
-        return show_self(args, &working_dir, console);
+        return show_self(args, &working_dir, io.clone());
     }
 
     // --tree: show dependency tree
     if args.tree {
-        return show_tree(args, &working_dir, console);
+        return show_tree(args, &working_dir, io.clone());
     }
 
     // --available: show available versions
     if args.available {
-        return show_available(args, &working_dir, &repo_cache, console).await;
+        return show_available(args, &working_dir, &repo_cache, &io).await;
     }
 
     // --locked: show from lock file
     if args.locked {
-        return execute_locked(args, &working_dir, &repo_cache, console).await;
+        return execute_locked(args, &working_dir, &repo_cache, &io).await;
     }
 
     // Default: installed mode
-    execute_installed(args, &working_dir, &repo_cache, console).await
+    execute_installed(args, &working_dir, &repo_cache, &io).await
 }
 
 // ============================================================================
@@ -534,7 +535,7 @@ fn render_package_list(
     entries: &mut [PackageEntry],
     args: &ShowArgs,
     section_key: &str,
-    console: &mozart_core::console::Console,
+    io: std::sync::Arc<std::sync::Mutex<Box<dyn IoInterface>>>,
 ) -> anyhow::Result<bool> {
     let show_latest = args.latest || args.outdated;
 
@@ -546,13 +547,13 @@ fn render_package_list(
     let has_outdated = entries.iter().any(|e| e.latest_info.is_some());
 
     if args.format == "json" {
-        render_list_json(entries, section_key, console)?;
+        render_list_json(entries, section_key, io)?;
         return Ok(has_outdated);
     }
 
     // A6: Color legend (mirrors Composer 626-642)
     if show_latest && !entries.is_empty() {
-        print_color_legend(console);
+        print_color_legend(io.clone());
     }
 
     // A7: Direct/Transitive split (mirrors Composer 671-695)
@@ -563,28 +564,28 @@ fn render_package_list(
             entries.iter().filter(|e| !e.is_direct).collect();
 
         console_writeln!(
-            console,
+            io,
             "<info>Direct dependencies required in composer.json:</info>",
         );
         if direct_entries.is_empty() {
-            console_writeln!(console, "Everything up to date");
+            console_writeln!(io, "Everything up to date");
         } else {
-            print_package_rows(&direct_entries, args, console);
+            print_package_rows(&direct_entries, args, io.clone());
         }
 
-        console_writeln!(console, "");
+        console_writeln!(io, "");
         console_writeln!(
-            console,
+            io,
             "<info>Transitive dependencies not required in composer.json:</info>",
         );
         if transitive_entries.is_empty() {
-            console_writeln!(console, "Everything up to date");
+            console_writeln!(io, "Everything up to date");
         } else {
-            print_package_rows(&transitive_entries, args, console);
+            print_package_rows(&transitive_entries, args, io.clone());
         }
     } else {
         let all_refs: Vec<&PackageEntry> = entries.iter().collect();
-        print_package_rows(&all_refs, args, console);
+        print_package_rows(&all_refs, args, io);
     }
 
     Ok(has_outdated)
@@ -595,7 +596,7 @@ fn render_package_list(
 fn print_package_rows(
     entries: &[&PackageEntry],
     args: &ShowArgs,
-    console: &mozart_core::console::Console,
+    io: std::sync::Arc<std::sync::Mutex<Box<dyn IoInterface>>>,
 ) {
     let show_latest = args.latest || args.outdated;
 
@@ -654,7 +655,7 @@ fn print_package_rows(
         );
 
         // A6: ASCII prefix markers for non-decorated terminals (Composer 736/1438)
-        let ascii_prefix = if !console.decorated && show_latest {
+        let ascii_prefix = if !io.lock().unwrap().is_decorated() && show_latest {
             match category {
                 Some(ListUpdateKind::Compatible) => "! ",
                 Some(ListUpdateKind::Incompatible) => "~ ",
@@ -692,7 +693,7 @@ fn print_package_rows(
                 None => format!("{:<width$}", "", width = latest_width),
             };
             console_writeln!(
-                console,
+                io,
                 "{}{} {} {} {}",
                 ascii_prefix,
                 name_str,
@@ -702,7 +703,7 @@ fn print_package_rows(
             );
         } else {
             console_writeln!(
-                console,
+                io,
                 "{}{} {} {}",
                 ascii_prefix,
                 name_str,
@@ -726,40 +727,41 @@ fn print_package_rows(
                     entry.name, replacement
                 )
             };
-            console_writeln_error!(console, "<warning>{}</warning>", msg);
+            console_writeln_error!(io, "<warning>{}</warning>", msg);
         }
     }
 }
 
 /// Print the color legend before the list (A6, mirrors Composer 626-642).
-fn print_color_legend(console: &mozart_core::console::Console) {
-    if console.decorated {
-        console_writeln!(console, "<info>Color legend:</info>");
+fn print_color_legend(io: std::sync::Arc<std::sync::Mutex<Box<dyn IoInterface>>>) {
+    let is_decorated = io.lock().unwrap().is_decorated();
+    if is_decorated {
+        console_writeln!(io, "<info>Color legend:</info>");
         console_writeln!(
-            console,
+            io,
             "- {} release available - update recommended",
             console_format!("<highlight>patch or minor</highlight>"),
         );
         console_writeln!(
-            console,
+            io,
             "- {} release available - update possible",
             console_format!("<comment>major</comment>"),
         );
         console_writeln!(
-            console,
+            io,
             "- {} version",
             console_format!("<info>up to date</info>"),
         );
     } else {
-        console_writeln!(console, "Legend:");
+        console_writeln!(io, "Legend:");
         console_writeln!(
-            console,
+            io,
             "! patch or minor release available - update recommended",
         );
-        console_writeln!(console, "~ major release available - update possible");
-        console_writeln!(console, "= up to date version");
+        console_writeln!(io, "~ major release available - update possible");
+        console_writeln!(io, "= up to date version");
     }
-    console_writeln!(console, "");
+    console_writeln!(io, "");
 }
 
 /// Emit the JSON list output. Uses `section_key` as the top-level key
@@ -767,7 +769,7 @@ fn print_color_legend(console: &mozart_core::console::Console) {
 fn render_list_json(
     entries: &[PackageEntry],
     section_key: &str,
-    console: &mozart_core::console::Console,
+    io: std::sync::Arc<std::sync::Mutex<Box<dyn IoInterface>>>,
 ) -> anyhow::Result<()> {
     let json_entries: Vec<serde_json::Value> = entries
         .iter()
@@ -794,7 +796,7 @@ fn render_list_json(
         .collect();
 
     let output = serde_json::json!({ section_key: json_entries });
-    console_writeln!(console, "{}", &serde_json::to_string_pretty(&output)?);
+    console_writeln!(io, "{}", &serde_json::to_string_pretty(&output)?);
     Ok(())
 }
 
@@ -929,32 +931,32 @@ async fn print_package_detail(
     detail: &PackageDetail,
     args: &ShowArgs,
     repo_cache: &mozart_core::repository::cache::Cache,
-    console: &mozart_core::console::Console,
+    io: &std::sync::Arc<std::sync::Mutex<Box<dyn IoInterface>>>,
 ) -> anyhow::Result<()> {
     if args.format == "json" {
-        return print_package_detail_json(detail, args, repo_cache, console).await;
+        return print_package_detail_json(detail, args, repo_cache, io).await;
     }
 
     console_writeln!(
-        console,
+        io,
         "{} : {}",
         console_format!("<info>name</info>"),
         detail.name,
     );
     console_writeln!(
-        console,
+        io,
         "{} : {}",
         console_format!("<info>descrip.</info>"),
         detail.description,
     );
     console_writeln!(
-        console,
+        io,
         "{} : {}",
         console_format!("<info>keywords</info>"),
         detail.keywords.join(", "),
     );
     console_writeln!(
-        console,
+        io,
         "{} : {}",
         console_format!("<info>versions</info>"),
         format_version_highlight(&detail.version),
@@ -963,7 +965,7 @@ async fn print_package_detail(
     // A13: released
     if let Some(ref date) = detail.release_date {
         console_writeln!(
-            console,
+            io,
             "{} : {}",
             console_format!("<info>released</info>"),
             date,
@@ -989,7 +991,7 @@ async fn print_package_detail(
                 }
             };
             console_writeln!(
-                console,
+                io,
                 "{} : {}",
                 console_format!("<info>latest</info>"),
                 latest_str,
@@ -998,7 +1000,7 @@ async fn print_package_detail(
     }
 
     console_writeln!(
-        console,
+        io,
         "{} : {}",
         console_format!("<info>type</info>"),
         detail.package_type.as_deref().unwrap_or("library"),
@@ -1006,7 +1008,7 @@ async fn print_package_detail(
 
     for license_id in &detail.licenses {
         console_writeln!(
-            console,
+            io,
             "{} : {}",
             console_format!("<info>license</info>"),
             format_license_for_show(license_id),
@@ -1015,7 +1017,7 @@ async fn print_package_detail(
 
     if let Some(ref homepage) = detail.homepage {
         console_writeln!(
-            console,
+            io,
             "{} : {}",
             console_format!("<info>homepage</info>"),
             homepage,
@@ -1026,7 +1028,7 @@ async fn print_package_detail(
         let src_type = detail.source_type.as_deref().unwrap_or("");
         let src_ref = detail.source_ref.as_deref().unwrap_or("");
         console_writeln!(
-            console,
+            io,
             "{} : [{}] {} {}",
             console_format!("<info>source</info>"),
             src_type,
@@ -1039,7 +1041,7 @@ async fn print_package_detail(
         let dist_type = detail.dist_type.as_deref().unwrap_or("");
         let dist_ref = detail.dist_ref.as_deref().unwrap_or("");
         console_writeln!(
-            console,
+            io,
             "{} : [{}] {} {}",
             console_format!("<info>dist</info>"),
             dist_type,
@@ -1049,18 +1051,13 @@ async fn print_package_detail(
     }
 
     if let Some(ref path) = detail.install_path {
-        console_writeln!(
-            console,
-            "{} : {}",
-            console_format!("<info>path</info>"),
-            path,
-        );
+        console_writeln!(io, "{} : {}", console_format!("<info>path</info>"), path,);
     }
 
     // A13: names (when multiple)
     if detail.names.len() > 1 {
         console_writeln!(
-            console,
+            io,
             "{} : {}",
             console_format!("<info>names</info>"),
             detail.names.join(", "),
@@ -1072,12 +1069,12 @@ async fn print_package_detail(
         && let Some(obj) = support.as_object()
         && !obj.is_empty()
     {
-        console_writeln!(console, "");
-        console_writeln!(console, "<info>support</info>");
+        console_writeln!(io, "");
+        console_writeln!(io, "<info>support</info>");
         for (key, val) in obj {
             let v = val.as_str().unwrap_or("");
             console_writeln!(
-                console,
+                io,
                 "{} {}",
                 key,
                 console_format!("<comment>{}</comment>", v),
@@ -1087,8 +1084,8 @@ async fn print_package_detail(
 
     // A13: autoload
     if let Some(ref autoload) = detail.autoload {
-        console_writeln!(console, "");
-        console_writeln!(console, "<info>autoload</info>");
+        console_writeln!(io, "");
+        console_writeln!(io, "<info>autoload</info>");
         if let Some(obj) = autoload.as_object() {
             for (loader_type, config) in obj {
                 match config {
@@ -1096,7 +1093,7 @@ async fn print_package_detail(
                         for (k, v) in map {
                             let v_str = v.as_str().unwrap_or("");
                             console_writeln!(
-                                console,
+                                io,
                                 "{}: {} => {}",
                                 loader_type,
                                 k,
@@ -1108,7 +1105,7 @@ async fn print_package_detail(
                         for item in arr {
                             let v_str = item.as_str().unwrap_or("");
                             console_writeln!(
-                                console,
+                                io,
                                 "{}: {}",
                                 loader_type,
                                 console_format!("<comment>{}</comment>", v_str),
@@ -1122,12 +1119,12 @@ async fn print_package_detail(
     }
 
     // Links: requires, requires-dev, conflict, provide, replace, suggests (A12)
-    print_links_section("requires", &detail.require, console);
-    print_links_section("requires (dev)", &detail.require_dev, console);
-    print_links_section("conflict", &detail.conflict, console);
-    print_links_section("provide", &detail.provide, console);
-    print_links_section("replace", &detail.replace, console);
-    print_links_section("suggests", &detail.suggest, console);
+    print_links_section("requires", &detail.require, io.clone());
+    print_links_section("requires (dev)", &detail.require_dev, io.clone());
+    print_links_section("conflict", &detail.conflict, io.clone());
+    print_links_section("provide", &detail.provide, io.clone());
+    print_links_section("replace", &detail.replace, io.clone());
+    print_links_section("suggests", &detail.suggest, io.clone());
 
     Ok(())
 }
@@ -1136,16 +1133,16 @@ async fn print_package_detail(
 fn print_links_section(
     label: &str,
     links: &BTreeMap<String, String>,
-    console: &mozart_core::console::Console,
+    io: std::sync::Arc<std::sync::Mutex<Box<dyn IoInterface>>>,
 ) {
     if links.is_empty() {
         return;
     }
-    console_writeln!(console, "");
-    console_writeln!(console, "<info>{}</info>", label);
+    console_writeln!(io, "");
+    console_writeln!(io, "<info>{}</info>", label);
     for (name, constraint) in links {
         console_writeln!(
-            console,
+            io,
             "{} {}",
             name,
             console_format!("<comment>{}</comment>", constraint),
@@ -1159,7 +1156,7 @@ async fn print_package_detail_json(
     detail: &PackageDetail,
     args: &ShowArgs,
     repo_cache: &mozart_core::repository::cache::Cache,
-    console: &mozart_core::console::Console,
+    io: &std::sync::Arc<std::sync::Mutex<Box<dyn IoInterface>>>,
 ) -> anyhow::Result<()> {
     let mut obj = serde_json::json!({
         "name": detail.name,
@@ -1215,7 +1212,7 @@ async fn print_package_detail_json(
         }
     }
 
-    console_writeln!(console, "{}", &serde_json::to_string_pretty(&obj)?);
+    console_writeln!(io, "{}", &serde_json::to_string_pretty(&obj)?);
     Ok(())
 }
 
@@ -1227,7 +1224,7 @@ async fn execute_installed(
     args: &ShowArgs,
     working_dir: &Path,
     repo_cache: &mozart_core::repository::cache::Cache,
-    console: &mozart_core::console::Console,
+    io: &std::sync::Arc<std::sync::Mutex<Box<dyn IoInterface>>>,
 ) -> anyhow::Result<()> {
     let vendor_dir = working_dir.join("vendor");
     let installed = mozart_core::repository::installed::InstalledPackages::read(&vendor_dir)?;
@@ -1238,7 +1235,7 @@ async fn execute_installed(
             let root = mozart_core::package::read_from_file(&composer_json_path)?;
             if !root.require.is_empty() || !root.require_dev.is_empty() {
                 console_writeln_error!(
-                    console,
+                    io,
                     "<warning>No dependencies installed. Try running mozart install or update.</warning>",
                 );
             }
@@ -1259,7 +1256,7 @@ async fn execute_installed(
             Some(p) => {
                 let install_path = vendor_dir.join(&p.name);
                 let path_str = resolve_path(&install_path);
-                console_writeln!(console, "{} {}", p.name, path_str);
+                console_writeln!(io, "{} {}", p.name, path_str);
             }
             None => {
                 anyhow::bail!(
@@ -1296,7 +1293,7 @@ async fn execute_installed(
                 }
             };
             let detail = installed_to_detail(pkg, &vendor_dir);
-            return print_package_detail(&detail, args, repo_cache, console).await;
+            return print_package_detail(&detail, args, repo_cache, io).await;
         }
     }
 
@@ -1305,7 +1302,7 @@ async fn execute_installed(
         for pkg in &packages {
             let install_path = vendor_dir.join(&pkg.name);
             let path_str = resolve_path(&install_path);
-            console_writeln!(console, "{} {}", pkg.name, path_str);
+            console_writeln!(io, "{} {}", pkg.name, path_str);
         }
         return Ok(());
     }
@@ -1314,7 +1311,7 @@ async fn execute_installed(
     let show_latest = args.latest || args.outdated;
     if args.name_only && !show_latest {
         for pkg in &packages {
-            console_writeln!(console, "{}", &pkg.name);
+            console_writeln!(io, "{}", &pkg.name);
         }
         return Ok(());
     }
@@ -1327,13 +1324,13 @@ async fn execute_installed(
 
     if args.name_only {
         for e in &entries {
-            console_writeln!(console, "{}", &e.name);
+            console_writeln!(io, "{}", &e.name);
         }
         return Ok(());
     }
 
     // A10: --strict exit code
-    let has_outdated = render_package_list(&mut entries, args, "installed", console)?;
+    let has_outdated = render_package_list(&mut entries, args, "installed", io.clone())?;
     if args.strict && has_outdated {
         return Err(mozart_core::exit_code::bail_silent(
             mozart_core::exit_code::GENERAL_ERROR,
@@ -1378,7 +1375,7 @@ async fn execute_locked(
     args: &ShowArgs,
     working_dir: &Path,
     repo_cache: &mozart_core::repository::cache::Cache,
-    console: &mozart_core::console::Console,
+    io: &std::sync::Arc<std::sync::Mutex<Box<dyn IoInterface>>>,
 ) -> anyhow::Result<()> {
     let lock_path = working_dir.join("composer.lock");
     if !lock_path.exists() {
@@ -1424,14 +1421,14 @@ async fn execute_locked(
                 }
             };
             let detail = locked_to_detail(pkg);
-            return print_package_detail(&detail, args, repo_cache, console).await;
+            return print_package_detail(&detail, args, repo_cache, io).await;
         }
     }
 
     // --path list mode
     if args.path {
         console_writeln_error!(
-            console,
+            io,
             "<warning>--path is not supported with --locked</warning>",
         );
         return Ok(());
@@ -1441,7 +1438,7 @@ async fn execute_locked(
     let show_latest = args.latest || args.outdated;
     if args.name_only && !show_latest {
         for pkg in &packages {
-            console_writeln!(console, "{}", &pkg.name);
+            console_writeln!(io, "{}", &pkg.name);
         }
         return Ok(());
     }
@@ -1454,13 +1451,13 @@ async fn execute_locked(
 
     if args.name_only {
         for e in &entries {
-            console_writeln!(console, "{}", &e.name);
+            console_writeln!(io, "{}", &e.name);
         }
         return Ok(());
     }
 
     // A10: --strict exit code; A14: use "locked" as the JSON key
-    let has_outdated = render_package_list(&mut entries, args, "locked", console)?;
+    let has_outdated = render_package_list(&mut entries, args, "locked", io.clone())?;
     if args.strict && has_outdated {
         return Err(mozart_core::exit_code::bail_silent(
             mozart_core::exit_code::GENERAL_ERROR,
@@ -1477,7 +1474,7 @@ async fn execute_locked(
 fn show_self(
     args: &ShowArgs,
     working_dir: &Path,
-    console: &mozart_core::console::Console,
+    io: std::sync::Arc<std::sync::Mutex<Box<dyn IoInterface>>>,
 ) -> anyhow::Result<()> {
     let composer_json_path = working_dir.join("composer.json");
     if !composer_json_path.exists() {
@@ -1486,31 +1483,31 @@ fn show_self(
     let root = mozart_core::package::read_from_file(&composer_json_path)?;
 
     if args.name_only {
-        console_writeln!(console, "{}", &root.name);
+        console_writeln!(io, "{}", &root.name);
         return Ok(());
     }
 
     console_writeln!(
-        console,
+        io,
         "{} : {}",
         console_format!("<info>name</info>"),
         root.name,
     );
     console_writeln!(
-        console,
+        io,
         "{} : {}",
         console_format!("<info>descrip.</info>"),
         root.description.as_deref().unwrap_or(""),
     );
     console_writeln!(
-        console,
+        io,
         "{} : {}",
         console_format!("<info>type</info>"),
         root.package_type.as_deref().unwrap_or("project"),
     );
     if let Some(ref license) = root.license {
         console_writeln!(
-            console,
+            io,
             "{} : {}",
             console_format!("<info>license</info>"),
             format_license_for_show(license),
@@ -1518,7 +1515,7 @@ fn show_self(
     }
     if let Some(ref homepage) = root.homepage {
         console_writeln!(
-            console,
+            io,
             "{} : {}",
             console_format!("<info>homepage</info>"),
             homepage,
@@ -1527,11 +1524,11 @@ fn show_self(
 
     // Requires
     if !root.require.is_empty() {
-        console_writeln!(console, "");
-        console_writeln!(console, "<info>requires</info>");
+        console_writeln!(io, "");
+        console_writeln!(io, "<info>requires</info>");
         for (name, constraint) in &root.require {
             console_writeln!(
-                console,
+                io,
                 "{} {}",
                 name,
                 console_format!("<comment>{}</comment>", constraint),
@@ -1541,11 +1538,11 @@ fn show_self(
 
     // Requires (dev)
     if !root.require_dev.is_empty() {
-        console_writeln!(console, "");
-        console_writeln!(console, "<info>requires (dev)</info>");
+        console_writeln!(io, "");
+        console_writeln!(io, "<info>requires (dev)</info>");
         for (name, constraint) in &root.require_dev {
             console_writeln!(
-                console,
+                io,
                 "{} {}",
                 name,
                 console_format!("<comment>{}</comment>", constraint),
@@ -1563,7 +1560,7 @@ fn show_self(
 fn show_tree(
     args: &ShowArgs,
     working_dir: &Path,
-    console: &mozart_core::console::Console,
+    io: std::sync::Arc<std::sync::Mutex<Box<dyn IoInterface>>>,
 ) -> anyhow::Result<()> {
     let lock_path = working_dir.join("composer.lock");
     let composer_json_path = working_dir.join("composer.json");
@@ -1604,7 +1601,7 @@ fn show_tree(
     };
 
     console_writeln!(
-        console,
+        io,
         "<info>{}</info> <comment>{}</comment>",
         &root.name,
         root.description.as_deref().unwrap_or(""),
@@ -1625,7 +1622,7 @@ fn show_tree(
             child_prefix,
             &mut visited_global,
             0,
-            console,
+            io.clone(),
         );
     }
 
@@ -1641,7 +1638,7 @@ fn print_tree_node(
     child_prefix: &str,
     visited: &mut IndexSet<String>,
     depth: usize,
-    console: &mozart_core::console::Console,
+    io: std::sync::Arc<std::sync::Mutex<Box<dyn IoInterface>>>,
 ) {
     const MAX_DEPTH: usize = 10;
 
@@ -1652,7 +1649,7 @@ fn print_tree_node(
         let version = format_version(&pkg.version);
 
         console_writeln!(
-            console,
+            io,
             "{} {} {}",
             prefix,
             console_format!("<info>{}</info> <comment>{}</comment>", pkg_name, &version),
@@ -1661,12 +1658,7 @@ fn print_tree_node(
 
         if visited.contains(&key) || depth >= MAX_DEPTH {
             if visited.contains(&key) {
-                console_writeln!(
-                    console,
-                    "{}    {} (circular dependency)",
-                    child_prefix,
-                    pkg_name,
-                );
+                console_writeln!(io, "{}    {} (circular dependency)", child_prefix, pkg_name,);
             }
             return;
         }
@@ -1704,7 +1696,7 @@ fn print_tree_node(
                 &grandchild_prefix,
                 visited,
                 depth + 1,
-                console,
+                io.clone(),
             );
         }
 
@@ -1712,7 +1704,7 @@ fn print_tree_node(
     } else {
         if !is_platform_package(&key) {
             console_writeln!(
-                console,
+                io,
                 "{} {} {} (not installed)",
                 prefix,
                 console_format!("<comment>{}</comment>", pkg_name),
@@ -1729,7 +1721,7 @@ fn print_tree_node(
 fn show_platform(
     args: &ShowArgs,
     working_dir: &Path,
-    console: &mozart_core::console::Console,
+    io: std::sync::Arc<std::sync::Mutex<Box<dyn IoInterface>>>,
 ) -> anyhow::Result<()> {
     let mut platform_packages: Vec<(String, String, String)> = Vec::new();
 
@@ -1785,7 +1777,7 @@ fn show_platform(
             })
             .collect();
         console_writeln!(
-            console,
+            io,
             "{}",
             &serde_json::to_string_pretty(&serde_json::json!({ "platform": json_entries }))?,
         );
@@ -1793,7 +1785,7 @@ fn show_platform(
     }
 
     if platform_packages.is_empty() {
-        console.info(
+        io.lock().unwrap().info(
             "No platform packages detected. Install PHP or add platform requirements to composer.json.",
         );
         return Ok(());
@@ -1801,7 +1793,7 @@ fn show_platform(
 
     if args.name_only {
         for (name, _, _) in &platform_packages {
-            console_writeln!(console, "{}", name);
+            console_writeln!(io, "{}", name);
         }
         return Ok(());
     }
@@ -1819,7 +1811,7 @@ fn show_platform(
 
     for (name, version, _source) in &platform_packages {
         console_writeln!(
-            console,
+            io,
             "{} {}",
             console_format!("<info>{:<width$}</info>", name, width = name_width),
             console_format!(
@@ -1841,10 +1833,10 @@ async fn show_available(
     args: &ShowArgs,
     working_dir: &Path,
     repo_cache: &mozart_core::repository::cache::Cache,
-    console: &mozart_core::console::Console,
+    io: &std::sync::Arc<std::sync::Mutex<Box<dyn IoInterface>>>,
 ) -> anyhow::Result<()> {
     if let Some(ref pkg_name) = args.package {
-        return show_available_versions(pkg_name, repo_cache, args, console).await;
+        return show_available_versions(pkg_name, repo_cache, args, io).await;
     }
 
     let vendor_dir = working_dir.join("vendor");
@@ -1857,10 +1849,10 @@ async fn show_available(
             if lock_path.exists() {
                 let lock = mozart_core::repository::lockfile::LockFile::read_from_file(&lock_path)?;
                 console_writeln!(
-                    console,
+                    io,
                     "<info>Available versions for locked packages (from Packagist):</info>",
                 );
-                console_writeln!(console, "");
+                console_writeln!(io, "");
 
                 let mut all_packages: Vec<&mozart_core::repository::lockfile::LockedPackage> =
                     lock.packages.iter().collect();
@@ -1874,13 +1866,13 @@ async fn show_available(
                     if is_platform_package(&pkg.name) {
                         continue;
                     }
-                    show_available_versions_inline(&pkg.name, repo_cache, console).await;
+                    show_available_versions_inline(&pkg.name, repo_cache, io).await;
                 }
                 return Ok(());
             }
 
             console_writeln_error!(
-                console,
+                io,
                 "<warning>No dependencies installed. Try running mozart install or update.</warning>",
             );
             return Ok(());
@@ -1888,10 +1880,10 @@ async fn show_available(
     };
 
     console_writeln!(
-        console,
+        io,
         "<info>Available versions for installed packages (from Packagist):</info>",
     );
-    console_writeln!(console, "");
+    console_writeln!(io, "");
 
     if args.format == "json" {
         let mut json_entries: Vec<serde_json::Value> = Vec::new();
@@ -1921,7 +1913,7 @@ async fn show_available(
             }
         }
         let output = serde_json::json!({ "packages": json_entries });
-        console_writeln!(console, "{}", &serde_json::to_string_pretty(&output)?);
+        console_writeln!(io, "{}", &serde_json::to_string_pretty(&output)?);
         return Ok(());
     }
 
@@ -1929,7 +1921,7 @@ async fn show_available(
         if is_platform_package(&pkg.name) {
             continue;
         }
-        show_available_versions_inline(&pkg.name, repo_cache, console).await;
+        show_available_versions_inline(&pkg.name, repo_cache, io).await;
     }
 
     Ok(())
@@ -1939,12 +1931,12 @@ async fn show_available_versions(
     pkg_name: &str,
     repo_cache: &mozart_core::repository::cache::Cache,
     args: &ShowArgs,
-    console: &mozart_core::console::Console,
+    io: &std::sync::Arc<std::sync::Mutex<Box<dyn IoInterface>>>,
 ) -> anyhow::Result<()> {
     let versions =
         mozart_core::repository::packagist::fetch_package_versions(pkg_name, repo_cache).await?;
     if versions.is_empty() {
-        console_writeln!(console, "No versions found for {pkg_name}");
+        console_writeln!(io, "No versions found for {pkg_name}");
         return Ok(());
     }
 
@@ -1954,14 +1946,14 @@ async fn show_available_versions(
             "name": pkg_name,
             "versions": version_strings,
         });
-        console_writeln!(console, "{}", &serde_json::to_string_pretty(&output)?);
+        console_writeln!(io, "{}", &serde_json::to_string_pretty(&output)?);
         return Ok(());
     }
 
-    console_writeln!(console, "<info>Available versions for {pkg_name}:</info>");
+    console_writeln!(io, "<info>Available versions for {pkg_name}:</info>");
     for v in &versions {
         console_writeln!(
-            console,
+            io,
             "  {}",
             console_format!("<comment>{}</comment>", &v.version),
         );
@@ -1972,13 +1964,13 @@ async fn show_available_versions(
 async fn show_available_versions_inline(
     pkg_name: &str,
     repo_cache: &mozart_core::repository::cache::Cache,
-    console: &mozart_core::console::Console,
+    io: &std::sync::Arc<std::sync::Mutex<Box<dyn IoInterface>>>,
 ) {
     match mozart_core::repository::packagist::fetch_package_versions(pkg_name, repo_cache).await {
         Ok(versions) => {
             if versions.is_empty() {
                 console_writeln!(
-                    console,
+                    io,
                     "{}: no versions found",
                     console_format!("<info>{}</info>", pkg_name),
                 );
@@ -1995,7 +1987,7 @@ async fn show_available_versions_inline(
                 String::new()
             };
             console_writeln!(
-                console,
+                io,
                 "{}: {}{}",
                 console_format!("<info>{}</info>", pkg_name),
                 console_format!("<comment>{}</comment>", &shown.join(", ")),
@@ -2004,7 +1996,7 @@ async fn show_available_versions_inline(
         }
         Err(_) => {
             console_writeln!(
-                console,
+                io,
                 "{}: (could not fetch from Packagist)",
                 console_format!("<comment>{}</comment>", pkg_name),
             );

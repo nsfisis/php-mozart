@@ -1,5 +1,6 @@
 use anyhow::anyhow;
 use clap::Args;
+use mozart_core::console::IoInterface;
 use mozart_core::console_writeln;
 
 use super::base_config::BaseConfigContext;
@@ -43,17 +44,17 @@ pub struct RepositoryArgs {
 pub async fn execute(
     args: &RepositoryArgs,
     cli: &super::Cli,
-    console: &mozart_core::console::Console,
+    io: std::sync::Arc<std::sync::Mutex<Box<dyn IoInterface>>>,
 ) -> anyhow::Result<()> {
     let action = args.action.as_deref().unwrap_or("list");
     let ctx = BaseConfigContext::initialize(args.global, args.file.as_deref(), cli)?;
 
     match action {
-        "list" | "ls" | "show" => list_repositories(&ctx, console),
+        "list" | "ls" | "show" => list_repositories(&ctx, io.clone()),
         "add" => execute_add(&ctx, args),
         "remove" | "rm" | "delete" => execute_remove(&ctx, args),
         "set-url" | "seturl" => execute_set_url(&ctx, args),
-        "get-url" | "geturl" => execute_get_url(&ctx, args, console),
+        "get-url" | "geturl" => execute_get_url(&ctx, args, io.clone()),
         "disable" => execute_disable(&ctx, args),
         "enable" => execute_enable(&ctx, args),
         _ => Err(anyhow!(
@@ -68,7 +69,7 @@ pub async fn execute(
 /// repository with a host ending in `packagist.org` is already in the list.
 fn list_repositories(
     ctx: &BaseConfigContext,
-    console: &mozart_core::console::Console,
+    io: std::sync::Arc<std::sync::Mutex<Box<dyn IoInterface>>>,
 ) -> anyhow::Result<()> {
     let json = ctx.config_source.read()?;
     let repos_raw = &json["repositories"];
@@ -94,7 +95,7 @@ fn list_repositories(
     }
 
     if display_repos.is_empty() {
-        console_writeln!(console, "No repositories configured");
+        console_writeln!(io, "No repositories configured");
         return Ok(());
     }
 
@@ -104,7 +105,7 @@ fn list_repositories(
             && let Some((key, val)) = obj.iter().next()
             && val == &serde_json::Value::Bool(false)
         {
-            console_writeln!(console, "[{key}] disabled");
+            console_writeln!(io, "[{key}] disabled");
             continue;
         }
 
@@ -118,7 +119,7 @@ fn list_repositories(
             .unwrap_or("unknown");
         let url = entry.get("url").map(render_value).unwrap_or_default();
 
-        console_writeln!(console, "[{name}] {repo_type} {url}");
+        console_writeln!(io, "[{name}] {repo_type} {url}");
     }
 
     Ok(())
@@ -210,7 +211,7 @@ fn execute_set_url(ctx: &BaseConfigContext, args: &RepositoryArgs) -> anyhow::Re
 fn execute_get_url(
     ctx: &BaseConfigContext,
     args: &RepositoryArgs,
-    console: &mozart_core::console::Console,
+    io: std::sync::Arc<std::sync::Mutex<Box<dyn IoInterface>>>,
 ) -> anyhow::Result<()> {
     let name = args
         .name
@@ -223,7 +224,7 @@ fn execute_get_url(
     // Assoc-keyed fast path (mirrors Composer's `isset($repos[$name])` check).
     if let Some(repo) = repos_raw.as_object().and_then(|obj| obj.get(name)) {
         if let Some(url) = repo.get("url").and_then(|u| u.as_str()) {
-            console_writeln!(console, "{}", url);
+            console_writeln!(io, "{}", url);
             return Ok(());
         }
         anyhow::bail!("The {} repository does not have a URL", name);
@@ -234,7 +235,7 @@ fn execute_get_url(
     for repo in &repos {
         if repo.get("name").and_then(|n| n.as_str()) == Some(name) {
             if let Some(url) = repo.get("url").and_then(|u| u.as_str()) {
-                console_writeln!(console, "{}", url);
+                console_writeln!(io, "{}", url);
                 return Ok(());
             }
             anyhow::bail!("The {} repository does not have a URL", name);
@@ -283,6 +284,11 @@ fn execute_enable(ctx: &BaseConfigContext, args: &RepositoryArgs) -> anyhow::Res
 mod tests {
     use super::*;
 
+    fn make_io() -> std::sync::Arc<std::sync::Mutex<Box<dyn IoInterface>>> {
+        let console = mozart_core::console::Console::new(0, false, false, false, false);
+        std::sync::Arc::new(std::sync::Mutex::new(Box::new(console)))
+    }
+
     fn make_args(
         action: Option<&str>,
         name: Option<&str>,
@@ -317,9 +323,9 @@ mod tests {
         args.file = Some(file.to_str().unwrap().to_string());
 
         let cli = make_cli();
-        let console = mozart_core::console::Console::new(0, false, false, false, false);
+        let io = make_io();
         // Empty repos → synthesises [packagist.org] disabled
-        let result = execute(&args, &cli, &console).await;
+        let result = execute(&args, &cli, io).await;
         assert!(result.is_ok());
     }
 
@@ -336,8 +342,8 @@ mod tests {
         args.file = Some(file.to_str().unwrap().to_string());
 
         let cli = make_cli();
-        let console = mozart_core::console::Console::new(0, false, false, false, false);
-        let result = execute(&args, &cli, &console).await;
+        let io = make_io();
+        let result = execute(&args, &cli, io).await;
         assert!(result.is_ok());
     }
 
@@ -351,8 +357,8 @@ mod tests {
         args.file = Some(file.to_str().unwrap().to_string());
 
         let cli = make_cli();
-        let console = mozart_core::console::Console::new(0, false, false, false, false);
-        let result = execute(&args, &cli, &console).await;
+        let io = make_io();
+        let result = execute(&args, &cli, io).await;
         assert!(result.is_ok());
     }
 
@@ -372,8 +378,8 @@ mod tests {
         args.file = Some(file.to_str().unwrap().to_string());
 
         let cli = make_cli();
-        let console = mozart_core::console::Console::new(0, false, false, false, false);
-        let result = execute(&args, &cli, &console).await;
+        let io = make_io();
+        let result = execute(&args, &cli, io).await;
         assert!(result.is_ok());
     }
 
@@ -392,8 +398,8 @@ mod tests {
         args.file = Some(file.to_str().unwrap().to_string());
 
         let cli = make_cli();
-        let console = mozart_core::console::Console::new(0, false, false, false, false);
-        execute(&args, &cli, &console).await.unwrap();
+        let io = make_io();
+        execute(&args, &cli, io).await.unwrap();
 
         let json: serde_json::Value =
             serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
@@ -419,8 +425,8 @@ mod tests {
         args.file = Some(file.to_str().unwrap().to_string());
 
         let cli = make_cli();
-        let console = mozart_core::console::Console::new(0, false, false, false, false);
-        execute(&args, &cli, &console).await.unwrap();
+        let io = make_io();
+        execute(&args, &cli, io).await.unwrap();
 
         let json: serde_json::Value =
             serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
@@ -447,8 +453,8 @@ mod tests {
         args.file = Some(file.to_str().unwrap().to_string());
 
         let cli = make_cli();
-        let console = mozart_core::console::Console::new(0, false, false, false, false);
-        execute(&args, &cli, &console).await.unwrap();
+        let io = make_io();
+        execute(&args, &cli, io).await.unwrap();
 
         let json: serde_json::Value =
             serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
@@ -476,8 +482,8 @@ mod tests {
         args.append = true;
 
         let cli = make_cli();
-        let console = mozart_core::console::Console::new(0, false, false, false, false);
-        execute(&args, &cli, &console).await.unwrap();
+        let io = make_io();
+        execute(&args, &cli, io).await.unwrap();
 
         let json: serde_json::Value =
             serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
@@ -505,8 +511,8 @@ mod tests {
         args.before = Some("b".to_string());
 
         let cli = make_cli();
-        let console = mozart_core::console::Console::new(0, false, false, false, false);
-        execute(&args, &cli, &console).await.unwrap();
+        let io = make_io();
+        execute(&args, &cli, io).await.unwrap();
 
         let json: serde_json::Value =
             serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
@@ -535,8 +541,8 @@ mod tests {
         args.after = Some("a".to_string());
 
         let cli = make_cli();
-        let console = mozart_core::console::Console::new(0, false, false, false, false);
-        execute(&args, &cli, &console).await.unwrap();
+        let io = make_io();
+        execute(&args, &cli, io).await.unwrap();
 
         let json: serde_json::Value =
             serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
@@ -563,8 +569,8 @@ mod tests {
         args.after = Some("b".to_string());
 
         let cli = make_cli();
-        let console = mozart_core::console::Console::new(0, false, false, false, false);
-        let result = execute(&args, &cli, &console).await;
+        let io = make_io();
+        let result = execute(&args, &cli, io).await;
         assert!(result.is_err());
     }
 
@@ -578,8 +584,8 @@ mod tests {
         args.file = Some(file.to_str().unwrap().to_string());
 
         let cli = make_cli();
-        let console = mozart_core::console::Console::new(0, false, false, false, false);
-        let result = execute(&args, &cli, &console).await;
+        let io = make_io();
+        let result = execute(&args, &cli, io).await;
         assert!(result.is_err());
     }
 
@@ -593,8 +599,8 @@ mod tests {
         args.file = Some(file.to_str().unwrap().to_string());
 
         let cli = make_cli();
-        let console = mozart_core::console::Console::new(0, false, false, false, false);
-        let result = execute(&args, &cli, &console).await;
+        let io = make_io();
+        let result = execute(&args, &cli, io).await;
         assert!(result.is_err());
     }
 
@@ -611,8 +617,8 @@ mod tests {
         args.file = Some(file.to_str().unwrap().to_string());
 
         let cli = make_cli();
-        let console = mozart_core::console::Console::new(0, false, false, false, false);
-        execute(&args, &cli, &console).await.unwrap();
+        let io = make_io();
+        execute(&args, &cli, io).await.unwrap();
 
         let json: serde_json::Value =
             serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
@@ -629,8 +635,8 @@ mod tests {
         args.file = Some(file.to_str().unwrap().to_string());
 
         let cli = make_cli();
-        let console = mozart_core::console::Console::new(0, false, false, false, false);
-        execute(&args, &cli, &console).await.unwrap();
+        let io = make_io();
+        execute(&args, &cli, io).await.unwrap();
 
         let json: serde_json::Value =
             serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
@@ -651,8 +657,8 @@ mod tests {
         args.file = Some(file.to_str().unwrap().to_string());
 
         let cli = make_cli();
-        let console = mozart_core::console::Console::new(0, false, false, false, false);
-        execute(&args, &cli, &console).await.unwrap();
+        let io = make_io();
+        execute(&args, &cli, io).await.unwrap();
 
         let json: serde_json::Value =
             serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
@@ -669,8 +675,8 @@ mod tests {
         args.file = Some(file.to_str().unwrap().to_string());
 
         let cli = make_cli();
-        let console = mozart_core::console::Console::new(0, false, false, false, false);
-        let result = execute(&args, &cli, &console).await;
+        let io = make_io();
+        let result = execute(&args, &cli, io).await;
         assert!(result.is_err());
     }
 
@@ -693,8 +699,8 @@ mod tests {
         args.file = Some(file.to_str().unwrap().to_string());
 
         let cli = make_cli();
-        let console = mozart_core::console::Console::new(0, false, false, false, false);
-        execute(&args, &cli, &console).await.unwrap();
+        let io = make_io();
+        execute(&args, &cli, io).await.unwrap();
 
         let json: serde_json::Value =
             serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
@@ -716,8 +722,8 @@ mod tests {
         args.file = Some(file.to_str().unwrap().to_string());
 
         let cli = make_cli();
-        let console = mozart_core::console::Console::new(0, false, false, false, false);
-        let result = execute(&args, &cli, &console).await;
+        let io = make_io();
+        let result = execute(&args, &cli, io).await;
         assert!(result.is_err());
     }
 
@@ -740,8 +746,8 @@ mod tests {
         args.file = Some(file.to_str().unwrap().to_string());
 
         let cli = make_cli();
-        let console = mozart_core::console::Console::new(0, false, false, false, false);
-        execute(&args, &cli, &console).await.unwrap();
+        let io = make_io();
+        execute(&args, &cli, io).await.unwrap();
 
         let json: serde_json::Value =
             serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
@@ -761,8 +767,8 @@ mod tests {
         args.file = Some(file.to_str().unwrap().to_string());
 
         let cli = make_cli();
-        let console = mozart_core::console::Console::new(0, false, false, false, false);
-        let result = execute(&args, &cli, &console).await;
+        let io = make_io();
+        let result = execute(&args, &cli, io).await;
         assert!(result.is_ok());
     }
 
@@ -776,8 +782,8 @@ mod tests {
         args.file = Some(file.to_str().unwrap().to_string());
 
         let cli = make_cli();
-        let console = mozart_core::console::Console::new(0, false, false, false, false);
-        let result = execute(&args, &cli, &console).await;
+        let io = make_io();
+        let result = execute(&args, &cli, io).await;
         assert!(result.is_err());
     }
 
@@ -791,8 +797,8 @@ mod tests {
         args.file = Some(file.to_str().unwrap().to_string());
 
         let cli = make_cli();
-        let console = mozart_core::console::Console::new(0, false, false, false, false);
-        execute(&args, &cli, &console).await.unwrap();
+        let io = make_io();
+        execute(&args, &cli, io).await.unwrap();
 
         let json: serde_json::Value =
             serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
@@ -811,8 +817,8 @@ mod tests {
         args.file = Some(file.to_str().unwrap().to_string());
 
         let cli = make_cli();
-        let console = mozart_core::console::Console::new(0, false, false, false, false);
-        execute(&args, &cli, &console).await.unwrap();
+        let io = make_io();
+        execute(&args, &cli, io).await.unwrap();
 
         let json: serde_json::Value =
             serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
@@ -831,8 +837,8 @@ mod tests {
         args.file = Some(file.to_str().unwrap().to_string());
 
         let cli = make_cli();
-        let console = mozart_core::console::Console::new(0, false, false, false, false);
-        let result = execute(&args, &cli, &console).await;
+        let io = make_io();
+        let result = execute(&args, &cli, io).await;
         assert!(result.is_err());
     }
 
@@ -847,8 +853,8 @@ mod tests {
         args.file = Some(file.to_str().unwrap().to_string());
 
         let cli = make_cli();
-        let console = mozart_core::console::Console::new(0, false, false, false, false);
-        let result = execute(&args, &cli, &console).await;
+        let io = make_io();
+        let result = execute(&args, &cli, io).await;
         assert!(result.is_err());
     }
 
@@ -862,8 +868,8 @@ mod tests {
         args.file = Some(file.to_str().unwrap().to_string());
 
         let cli = make_cli();
-        let console = mozart_core::console::Console::new(0, false, false, false, false);
-        execute(&args, &cli, &console).await.unwrap();
+        let io = make_io();
+        execute(&args, &cli, io).await.unwrap();
 
         let json: serde_json::Value =
             serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
@@ -880,8 +886,8 @@ mod tests {
         args.file = Some(file.to_str().unwrap().to_string());
 
         let cli = make_cli();
-        let console = mozart_core::console::Console::new(0, false, false, false, false);
-        let result = execute(&args, &cli, &console).await;
+        let io = make_io();
+        let result = execute(&args, &cli, io).await;
         assert!(result.is_err());
     }
 
@@ -899,8 +905,8 @@ mod tests {
         args.file = Some(file.to_str().unwrap().to_string());
 
         let cli = make_cli();
-        let console = mozart_core::console::Console::new(0, false, false, false, false);
-        let result = execute(&args, &cli, &console).await;
+        let io = make_io();
+        let result = execute(&args, &cli, io).await;
         assert!(result.is_ok());
     }
 
@@ -918,8 +924,8 @@ mod tests {
         args.file = Some(file.to_str().unwrap().to_string());
 
         let cli = make_cli();
-        let console = mozart_core::console::Console::new(0, false, false, false, false);
-        let result = execute(&args, &cli, &console).await;
+        let io = make_io();
+        let result = execute(&args, &cli, io).await;
         assert!(result.is_ok());
     }
 
@@ -937,8 +943,8 @@ mod tests {
         args.file = Some(file.to_str().unwrap().to_string());
 
         let cli = make_cli();
-        let console = mozart_core::console::Console::new(0, false, false, false, false);
-        let result = execute(&args, &cli, &console).await;
+        let io = make_io();
+        let result = execute(&args, &cli, io).await;
         assert!(result.is_err());
         let msg = result.unwrap_err().to_string();
         assert!(
@@ -957,8 +963,8 @@ mod tests {
         args.file = Some(file.to_str().unwrap().to_string());
 
         let cli = make_cli();
-        let console = mozart_core::console::Console::new(0, false, false, false, false);
-        let result = execute(&args, &cli, &console).await;
+        let io = make_io();
+        let result = execute(&args, &cli, io).await;
         assert!(result.is_err());
         let msg = result.unwrap_err().to_string();
         assert!(msg.contains("There is no"), "unexpected message: {msg}");
@@ -984,8 +990,8 @@ mod tests {
         args.file = Some(file.to_str().unwrap().to_string());
 
         let cli = make_cli();
-        let console = mozart_core::console::Console::new(0, false, false, false, false);
-        execute(&args, &cli, &console).await.unwrap();
+        let io = make_io();
+        execute(&args, &cli, io).await.unwrap();
 
         let json: serde_json::Value =
             serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
@@ -1008,8 +1014,8 @@ mod tests {
         args.file = Some(file.to_str().unwrap().to_string());
 
         let cli = make_cli();
-        let console = mozart_core::console::Console::new(0, false, false, false, false);
-        execute(&args, &cli, &console).await.unwrap();
+        let io = make_io();
+        execute(&args, &cli, io).await.unwrap();
 
         let json: serde_json::Value =
             serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
@@ -1071,8 +1077,8 @@ mod tests {
         args.file = Some(file.to_str().unwrap().to_string());
 
         let cli = make_cli();
-        let console = mozart_core::console::Console::new(0, false, false, false, false);
-        let result = execute(&args, &cli, &console).await;
+        let io = make_io();
+        let result = execute(&args, &cli, io).await;
         assert!(result.is_err());
     }
 
@@ -1096,8 +1102,8 @@ mod tests {
         args.before = Some("b".to_string());
 
         let cli = make_cli();
-        let console = mozart_core::console::Console::new(0, false, false, false, false);
-        execute(&args, &cli, &console).await.unwrap();
+        let io = make_io();
+        execute(&args, &cli, io).await.unwrap();
 
         let json: serde_json::Value =
             serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
@@ -1127,8 +1133,8 @@ mod tests {
         args.after = Some("a".to_string());
 
         let cli = make_cli();
-        let console = mozart_core::console::Console::new(0, false, false, false, false);
-        execute(&args, &cli, &console).await.unwrap();
+        let io = make_io();
+        execute(&args, &cli, io).await.unwrap();
 
         let json: serde_json::Value =
             serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
@@ -1154,8 +1160,8 @@ mod tests {
         args.before = Some("nonexistent".to_string());
 
         let cli = make_cli();
-        let console = mozart_core::console::Console::new(0, false, false, false, false);
-        let result = execute(&args, &cli, &console).await;
+        let io = make_io();
+        let result = execute(&args, &cli, io).await;
         assert!(result.is_err());
     }
 }

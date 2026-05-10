@@ -4,7 +4,7 @@ use colored::Colorize;
 use mozart_core::MOZART_VERSION;
 use mozart_core::config::Config;
 use mozart_core::config_validator::{ValidatorOptions, validate_manifest};
-use mozart_core::console::Console;
+use mozart_core::console::IoInterface;
 use mozart_core::console_writeln;
 use mozart_core::factory::create_config;
 use mozart_core::http::HttpDownloader;
@@ -53,37 +53,42 @@ impl CheckResult {
 /// messages, `<error>FAIL</>` + messages, or `<info>SKIP</>` + reason.
 ///
 /// Ratchets `exit_code`: `Warning` → 1 (if currently 0), `Fail` → 2 (always).
-fn output_result(label: &str, result: &CheckResult, exit_code: &mut i32, console: &Console) {
+fn output_result(
+    label: &str,
+    result: &CheckResult,
+    exit_code: &mut i32,
+    io: std::sync::Arc<std::sync::Mutex<Box<dyn IoInterface>>>,
+) {
     let prefix = format!("Checking {label}: ");
     match result {
         CheckResult::Ok(detail) => {
             let ok = "OK".green().bold();
             match detail {
                 Some(d) => {
-                    console_writeln!(console, "{prefix}{ok} {}", format!("({d})").bright_black())
+                    console_writeln!(io, "{prefix}{ok} {}", format!("({d})").bright_black())
                 }
-                None => console_writeln!(console, "{prefix}{ok}"),
+                None => console_writeln!(io, "{prefix}{ok}"),
             }
         }
         CheckResult::Warning(msgs) => {
-            console_writeln!(console, "{prefix}{}", "WARNING".yellow().bold());
+            console_writeln!(io, "{prefix}{}", "WARNING".yellow().bold());
             for msg in msgs {
-                console_writeln!(console, "{}", msg.yellow());
+                console_writeln!(io, "{}", msg.yellow());
             }
             if *exit_code < 1 {
                 *exit_code = 1;
             }
         }
         CheckResult::Fail(msgs) => {
-            console_writeln!(console, "{prefix}{}", "FAIL".red().bold());
+            console_writeln!(io, "{prefix}{}", "FAIL".red().bold());
             for msg in msgs {
-                console_writeln!(console, "{}", msg.red());
+                console_writeln!(io, "{}", msg.red());
             }
             *exit_code = 2;
         }
         CheckResult::Skip(reason) => {
             console_writeln!(
-                console,
+                io,
                 "{prefix}{} {}",
                 "SKIP".cyan().bold(),
                 format!("({reason})").bright_black(),
@@ -351,7 +356,7 @@ fn parse_df_available_kib(df_output: &str) -> Option<u64> {
 pub async fn execute(
     _args: &DiagnoseArgs,
     cli: &super::Cli,
-    console: &Console,
+    io: std::sync::Arc<std::sync::Mutex<Box<dyn IoInterface>>>,
 ) -> anyhow::Result<()> {
     let working_dir = cli.working_dir()?;
 
@@ -370,7 +375,7 @@ pub async fn execute(
     // Step 4b (`checkVersion`) is deferred until self-update lands.
 
     // Step 5: Mozart version line.
-    console_writeln!(console, "Mozart version {MOZART_VERSION}");
+    console_writeln!(io, "Mozart version {MOZART_VERSION}");
 
     // Step 6: Mozart and its dependencies for vulnerabilities. Deferred — needs
     // a Mozart Auditor port.
@@ -378,7 +383,7 @@ pub async fn execute(
         "Mozart and its dependencies for vulnerabilities",
         &CheckResult::Skip("audit is not yet implemented in Mozart".to_string()),
         &mut exit_code,
-        console,
+        io.clone(),
     );
 
     // Steps 7-8 (PHP/OpenSSL/curl/zip detection) are PHP-runtime concerns
@@ -390,7 +395,7 @@ pub async fn execute(
             "composer.json",
             &check_composer_schema(&working_dir),
             &mut exit_code,
-            console,
+            io.clone(),
         );
 
         let lock_path = working_dir.join("composer.lock");
@@ -399,7 +404,7 @@ pub async fn execute(
                 "composer.lock",
                 &check_composer_lock_schema(&lock_path),
                 &mut exit_code,
-                console,
+                io.clone(),
             );
         }
     }
@@ -409,24 +414,24 @@ pub async fn execute(
         "platform settings",
         &CheckResult::Skip("platform settings checks are not applicable to Mozart".to_string()),
         &mut exit_code,
-        console,
+        io.clone(),
     );
 
     // Step 11: git settings.
-    output_result("git settings", &check_git(), &mut exit_code, console);
+    output_result("git settings", &check_git(), &mut exit_code, io.clone());
 
     // Step 12: HTTP / HTTPS connectivity to packagist.
     output_result(
         "http connectivity to packagist",
         &check_http("http", &http_downloader, &config).await,
         &mut exit_code,
-        console,
+        io.clone(),
     );
     output_result(
         "https connectivity to packagist",
         &check_http("https", &http_downloader, &config).await,
         &mut exit_code,
-        console,
+        io.clone(),
     );
 
     // Step 13: every additional `composer`-type repo.
@@ -448,7 +453,7 @@ pub async fn execute(
                 &format!("connectivity to {url}"),
                 &check_composer_repo(url, &http_downloader, &config).await,
                 &mut exit_code,
-                console,
+                io.clone(),
             );
         }
     }
@@ -463,7 +468,7 @@ pub async fn execute(
         "disk free space",
         &check_disk_space(&config),
         &mut exit_code,
-        console,
+        io.clone(),
     );
 
     // Mirrors the `COMPOSER_IPRESOLVE` warning emitted by `checkPlatform`.
@@ -471,7 +476,7 @@ pub async fn execute(
         && (val == "4" || val == "6")
     {
         console_writeln!(
-            console,
+            io,
             "{}",
             format!("The COMPOSER_IPRESOLVE env var is set to {val} which may result in network failures below.").yellow(),
         );
@@ -536,28 +541,32 @@ mod tests {
 
     #[test]
     fn test_output_result_exit_code_ratcheting() {
-        let console = Console::new(0, false, false, false, false);
+        let console: std::sync::Arc<std::sync::Mutex<Box<dyn IoInterface>>> = std::sync::Arc::new(
+            std::sync::Mutex::new(Box::new(mozart_core::console::Console::new(
+                0, false, false, false, false,
+            )) as Box<dyn IoInterface>),
+        );
         let mut exit_code = 0i32;
 
-        output_result("label", &CheckResult::ok(), &mut exit_code, &console);
+        output_result("label", &CheckResult::ok(), &mut exit_code, console.clone());
         assert_eq!(exit_code, 0);
 
         output_result(
             "label",
             &CheckResult::warn("warn"),
             &mut exit_code,
-            &console,
+            console.clone(),
         );
         assert_eq!(exit_code, 1);
 
-        output_result("label", &CheckResult::ok(), &mut exit_code, &console);
+        output_result("label", &CheckResult::ok(), &mut exit_code, console.clone());
         assert_eq!(exit_code, 1);
 
         output_result(
             "label",
             &CheckResult::fail("fail"),
             &mut exit_code,
-            &console,
+            console.clone(),
         );
         assert_eq!(exit_code, 2);
 
@@ -565,7 +574,7 @@ mod tests {
             "label",
             &CheckResult::warn("another warn"),
             &mut exit_code,
-            &console,
+            console,
         );
         assert_eq!(exit_code, 2);
     }

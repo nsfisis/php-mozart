@@ -1,5 +1,6 @@
 use crate::composer::Composer;
 use clap::Args;
+use mozart_core::console::IoInterface;
 use mozart_core::console_writeln;
 use mozart_core::factory::create_config;
 use mozart_core::package::archiver::{ArchiveManager, ArchivePackage};
@@ -34,7 +35,7 @@ pub struct ArchiveArgs {
 pub async fn execute(
     args: &ArchiveArgs,
     cli: &super::Cli,
-    io: &mozart_core::console::Console,
+    io: std::sync::Arc<std::sync::Mutex<Box<dyn IoInterface>>>,
 ) -> anyhow::Result<()> {
     let working_dir = cli.working_dir()?;
 
@@ -49,7 +50,7 @@ pub async fn execute(
     let dir = args.dir.as_deref().unwrap_or(&config.archive_dir);
 
     archive(
-        io,
+        &io,
         args.package.as_deref(),
         args.version.as_deref(),
         format,
@@ -64,7 +65,7 @@ pub async fn execute(
 
 #[allow(clippy::too_many_arguments)]
 async fn archive(
-    io: &mozart_core::console::Console,
+    io: &std::sync::Arc<std::sync::Mutex<Box<dyn IoInterface>>>,
     package_name: Option<&str>,
     version: Option<&str>,
     format: &str,
@@ -92,7 +93,9 @@ async fn archive(
         working_dir.join(dest)
     };
 
-    io.info(&format!("Creating the archive into \"{}\".", dest));
+    io.lock()
+        .unwrap()
+        .info(&format!("Creating the archive into \"{}\".", dest));
     let package_path = archive_manager
         .archive(
             &package,
@@ -135,7 +138,7 @@ fn load_root_package(working_dir: &Path) -> anyhow::Result<ArchivePackage> {
 }
 
 async fn select_package(
-    io: &mozart_core::console::Console,
+    io: &std::sync::Arc<std::sync::Mutex<Box<dyn IoInterface>>>,
     package_name: &str,
     version: Option<&str>,
     repo_cache: &mozart_core::repository::cache::Cache,
@@ -143,7 +146,9 @@ async fn select_package(
     use mozart_core::package::Stability;
     use mozart_core::repository::version::find_best_candidate;
 
-    io.info("Searching for the specified package.");
+    io.lock()
+        .unwrap()
+        .info("Searching for the specified package.");
 
     // Strip @stability suffix from the version constraint (e.g. "^1.0@beta" → "^1.0", Stability::Beta)
     let (version, min_stability) = if let Some(raw) = version {
@@ -180,12 +185,12 @@ async fn select_package(
         }
         let package = matches[0];
         if matches.len() > 1 {
-            io.info(&format!(
+            io.lock().unwrap().info(&format!(
                 "Found multiple matches, selected {} {}.",
                 package_name, package.version
             ));
         } else {
-            io.info(&format!(
+            io.lock().unwrap().info(&format!(
                 "Found an exact match {} {}.",
                 package_name, package.version
             ));
@@ -197,7 +202,7 @@ async fn select_package(
             .ok_or_else(|| {
                 anyhow::anyhow!("No suitable version found for package \"{}\"", package_name)
             })?;
-        io.info(&format!(
+        io.lock().unwrap().info(&format!(
             "Found an exact match {} {}.",
             package_name, package.version
         ));

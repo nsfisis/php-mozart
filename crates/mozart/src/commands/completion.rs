@@ -1,6 +1,7 @@
 use clap::Args;
 use clap::CommandFactory;
 use clap_complete::aot::Shell;
+use mozart_core::console::IoInterface;
 
 #[derive(Args)]
 pub struct CompletionArgs {
@@ -12,7 +13,7 @@ pub struct CompletionArgs {
 pub async fn execute(
     args: &CompletionArgs,
     _cli: &super::Cli,
-    _console: &mozart_core::console::Console,
+    _io: std::sync::Arc<std::sync::Mutex<Box<dyn IoInterface>>>,
 ) -> anyhow::Result<()> {
     let shell = match args.shell {
         Some(s) => s,

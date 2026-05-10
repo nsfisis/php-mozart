@@ -1,7 +1,7 @@
 use super::packagist::SecurityAdvisory;
 use super::repository::RepositorySet;
 use crate::advisory::{AbandonedHandling, AuditFormat};
-use crate::console::Console;
+use crate::console::IoInterface;
 use crate::{console_writeln, console_writeln_error};
 use indexmap::IndexMap;
 use std::collections::BTreeMap;
@@ -88,7 +88,7 @@ impl Auditor {
     /// Returns a bitmask: 0=ok, 1=vulnerable, 2=abandoned, 3=both.
     pub async fn audit(
         &self,
-        console: &Console,
+        io: std::sync::Arc<std::sync::Mutex<Box<dyn IoInterface>>>,
         repo_set: &RepositorySet,
         packages: &[PackageInfo],
         options: &AuditOptions<'_>,
@@ -132,7 +132,7 @@ impl Auditor {
                 &ignored_advisories,
                 &unreachable_repos,
                 &abandoned_packages,
-                console,
+                &io,
             );
             return Ok(bitmask);
         }
@@ -152,8 +152,8 @@ impl Auditor {
                 let msg = format!(
                     "Found {ignored_total} ignored security vulnerability advisor{plurality} affecting {ignored_pkg_count} package{pkg_plurality}{punctuation}"
                 );
-                console_writeln_error!(console, "<info>{msg}</info>");
-                self.output_advisories_ignored(console, &ignored_advisories, format);
+                console_writeln_error!(io, "<info>{msg}</info>");
+                self.output_advisories_ignored(&io, &ignored_advisories, format);
             }
 
             if active_pkg_count > 0 {
@@ -168,38 +168,35 @@ impl Auditor {
                     "Found {active_total} security vulnerability advisor{plurality} affecting {active_pkg_count} package{pkg_plurality}{punctuation}"
                 );
                 if options.warning_only {
-                    console_writeln_error!(console, "<warning>{msg}</warning>");
+                    console_writeln_error!(io, "<warning>{msg}</warning>");
                 } else {
-                    console_writeln_error!(console, "<error>{msg}</error>");
+                    console_writeln_error!(io, "<error>{msg}</error>");
                 }
-                self.output_advisories(console, &advisories, format);
+                self.output_advisories(&io, &advisories, format);
             }
 
             if format == AuditFormat::Summary {
-                console_writeln_error!(
-                    console,
-                    "Run \"mozart audit\" for a full list of advisories."
-                );
+                console_writeln_error!(io, "Run \"mozart audit\" for a full list of advisories.");
             }
         } else {
             console_writeln_error!(
-                console,
+                io,
                 "<info>No security vulnerability advisories found.</info>",
             );
         }
 
         if !unreachable_repos.is_empty() {
             console_writeln_error!(
-                console,
+                io,
                 "<warning>The following repositories were unreachable:</warning>",
             );
             for repo in &unreachable_repos {
-                console_writeln_error!(console, "  - {repo}");
+                console_writeln_error!(io, "  - {repo}");
             }
         }
 
         if !abandoned_packages.is_empty() && format != AuditFormat::Summary {
-            self.output_abandoned_packages(console, &abandoned_packages, format);
+            self.output_abandoned_packages(&io, &abandoned_packages, format);
         }
 
         Ok(bitmask)
@@ -364,13 +361,13 @@ impl Auditor {
 
     fn output_advisories(
         &self,
-        console: &Console,
+        io: &std::sync::Arc<std::sync::Mutex<Box<dyn IoInterface>>>,
         advisories: &BTreeMap<String, Vec<MatchedAdvisory>>,
         format: AuditFormat,
     ) {
         match format {
-            AuditFormat::Table => self.output_advisories_table(console, advisories),
-            AuditFormat::Plain => self.output_advisories_plain(console, advisories),
+            AuditFormat::Table => self.output_advisories_table(io, advisories),
+            AuditFormat::Plain => self.output_advisories_plain(io, advisories),
             AuditFormat::Summary => {}
             AuditFormat::Json => unreachable!(),
         }
@@ -378,13 +375,13 @@ impl Auditor {
 
     fn output_advisories_ignored(
         &self,
-        console: &Console,
+        io: &std::sync::Arc<std::sync::Mutex<Box<dyn IoInterface>>>,
         advisories: &BTreeMap<String, Vec<IgnoredAdvisory>>,
         format: AuditFormat,
     ) {
         match format {
-            AuditFormat::Table => self.output_ignored_advisories_table(console, advisories),
-            AuditFormat::Plain => self.output_ignored_advisories_plain(console, advisories),
+            AuditFormat::Table => self.output_ignored_advisories_table(io, advisories),
+            AuditFormat::Plain => self.output_ignored_advisories_plain(io, advisories),
             AuditFormat::Summary => {}
             AuditFormat::Json => unreachable!(),
         }
@@ -392,30 +389,25 @@ impl Auditor {
 
     fn output_advisories_table(
         &self,
-        console: &Console,
+        io: &std::sync::Arc<std::sync::Mutex<Box<dyn IoInterface>>>,
         advisories: &BTreeMap<String, Vec<MatchedAdvisory>>,
     ) {
         for pkg_advisories in advisories.values() {
             for matched in pkg_advisories {
-                self.render_advisory_table(
-                    console,
-                    &matched.advisory,
-                    &matched.installed_version,
-                    None,
-                );
+                self.render_advisory_table(io, &matched.advisory, &matched.installed_version, None);
             }
         }
     }
 
     fn output_ignored_advisories_table(
         &self,
-        console: &Console,
+        io: &std::sync::Arc<std::sync::Mutex<Box<dyn IoInterface>>>,
         advisories: &BTreeMap<String, Vec<IgnoredAdvisory>>,
     ) {
         for pkg_advisories in advisories.values() {
             for ignored in pkg_advisories {
                 self.render_advisory_table(
-                    console,
+                    io,
                     &ignored.advisory,
                     &ignored.installed_version,
                     ignored.ignore_reason.as_deref(),
@@ -426,7 +418,7 @@ impl Auditor {
 
     fn render_advisory_table(
         &self,
-        console: &Console,
+        io: &std::sync::Arc<std::sync::Mutex<Box<dyn IoInterface>>>,
         adv: &SecurityAdvisory,
         installed_version: &str,
         ignore_reason: Option<&str>,
@@ -459,10 +451,10 @@ impl Auditor {
             vw = value_width
         );
 
-        console_writeln_error!(console, "{}", separator);
+        console_writeln_error!(io, "{}", separator);
         for (label, value) in &rows {
             console_writeln_error!(
-                console,
+                io,
                 "| {:<lw$} | {:<vw$} |",
                 label,
                 value,
@@ -470,27 +462,22 @@ impl Auditor {
                 vw = value_width,
             );
         }
-        console_writeln_error!(console, "{}", &separator);
-        console_writeln_error!(console, "");
+        console_writeln_error!(io, "{}", &separator);
+        console_writeln_error!(io, "");
     }
 
     fn output_advisories_plain(
         &self,
-        console: &Console,
+        io: &std::sync::Arc<std::sync::Mutex<Box<dyn IoInterface>>>,
         advisories: &BTreeMap<String, Vec<MatchedAdvisory>>,
     ) {
         let mut first = true;
         for pkg_advisories in advisories.values() {
             for matched in pkg_advisories {
                 if !first {
-                    console_writeln_error!(console, "--------");
+                    console_writeln_error!(io, "--------");
                 }
-                self.render_advisory_plain(
-                    console,
-                    &matched.advisory,
-                    &matched.installed_version,
-                    None,
-                );
+                self.render_advisory_plain(io, &matched.advisory, &matched.installed_version, None);
                 first = false;
             }
         }
@@ -498,17 +485,17 @@ impl Auditor {
 
     fn output_ignored_advisories_plain(
         &self,
-        console: &Console,
+        io: &std::sync::Arc<std::sync::Mutex<Box<dyn IoInterface>>>,
         advisories: &BTreeMap<String, Vec<IgnoredAdvisory>>,
     ) {
         let mut first = true;
         for pkg_advisories in advisories.values() {
             for ignored in pkg_advisories {
                 if !first {
-                    console_writeln_error!(console, "--------");
+                    console_writeln_error!(io, "--------");
                 }
                 self.render_advisory_plain(
-                    console,
+                    io,
                     &ignored.advisory,
                     &ignored.installed_version,
                     ignored.ignore_reason.as_deref(),
@@ -520,39 +507,35 @@ impl Auditor {
 
     fn render_advisory_plain(
         &self,
-        console: &Console,
+        io: &std::sync::Arc<std::sync::Mutex<Box<dyn IoInterface>>>,
         adv: &SecurityAdvisory,
         installed_version: &str,
         ignore_reason: Option<&str>,
     ) {
-        console_writeln_error!(console, "Package: {}", adv.package_name);
-        console_writeln_error!(console, "Version: {installed_version}");
-        console_writeln_error!(
-            console,
-            "Severity: {}",
-            adv.severity.as_deref().unwrap_or(""),
-        );
-        console_writeln_error!(console, "Advisory ID: {}", adv.advisory_id);
-        console_writeln_error!(console, "CVE: {}", adv.cve.as_deref().unwrap_or("NO CVE"));
-        console_writeln_error!(console, "Title: {}", adv.title);
-        console_writeln_error!(console, "URL: {}", adv.link.as_deref().unwrap_or(""));
-        console_writeln_error!(console, "Affected versions: {}", adv.affected_versions);
-        console_writeln_error!(console, "Reported at: {}", adv.reported_at);
+        console_writeln_error!(io, "Package: {}", adv.package_name);
+        console_writeln_error!(io, "Version: {installed_version}");
+        console_writeln_error!(io, "Severity: {}", adv.severity.as_deref().unwrap_or(""),);
+        console_writeln_error!(io, "Advisory ID: {}", adv.advisory_id);
+        console_writeln_error!(io, "CVE: {}", adv.cve.as_deref().unwrap_or("NO CVE"));
+        console_writeln_error!(io, "Title: {}", adv.title);
+        console_writeln_error!(io, "URL: {}", adv.link.as_deref().unwrap_or(""));
+        console_writeln_error!(io, "Affected versions: {}", adv.affected_versions);
+        console_writeln_error!(io, "Reported at: {}", adv.reported_at);
         if let Some(reason) = ignore_reason {
-            console_writeln_error!(console, "Ignore reason: {reason}");
+            console_writeln_error!(io, "Ignore reason: {reason}");
         }
     }
 
     fn output_abandoned_packages(
         &self,
-        console: &Console,
+        io: &std::sync::Arc<std::sync::Mutex<Box<dyn IoInterface>>>,
         packages: &[AbandonedPackage],
         format: AuditFormat,
     ) {
         let count = packages.len();
         let plurality = if count == 1 { "" } else { "s" };
         console_writeln_error!(
-            console,
+            io,
             "<error>Found {count} abandoned package{plurality}:</error>",
         );
 
@@ -560,14 +543,14 @@ impl Auditor {
             for pkg in packages {
                 match &pkg.replacement {
                     Some(repl) => console_writeln_error!(
-                        console,
+                        io,
                         "{} ({}) is abandoned. Use {} instead.",
                         pkg.name,
                         pkg.version,
                         repl,
                     ),
                     None => console_writeln_error!(
-                        console,
+                        io,
                         "{} ({}) is abandoned. No replacement was suggested.",
                         pkg.name,
                         pkg.version,
@@ -598,7 +581,7 @@ impl Auditor {
             .max("Suggested Replacement".len());
 
         console_writeln_error!(
-            console,
+            io,
             "| {:<nw$} | {:<vw$} | {:<rw$} |",
             "Abandoned Package",
             "Version",
@@ -608,7 +591,7 @@ impl Auditor {
             rw = repl_width,
         );
         console_writeln_error!(
-            console,
+            io,
             "+-{:-<nw$}-+-{:-<vw$}-+-{:-<rw$}-+",
             "",
             "",
@@ -623,7 +606,7 @@ impl Auditor {
                 .as_deref()
                 .unwrap_or("No replacement suggested");
             console_writeln_error!(
-                console,
+                io,
                 "| {:<nw$} | {:<vw$} | {:<rw$} |",
                 pkg.name,
                 pkg.version,
@@ -633,7 +616,7 @@ impl Auditor {
                 rw = repl_width,
             );
         }
-        console_writeln_error!(console, "");
+        console_writeln_error!(io, "");
     }
 
     fn render_json(
@@ -642,7 +625,7 @@ impl Auditor {
         ignored_advisories: &BTreeMap<String, Vec<IgnoredAdvisory>>,
         unreachable_repos: &[String],
         abandoned_packages: &[AbandonedPackage],
-        console: &Console,
+        io: &std::sync::Arc<std::sync::Mutex<Box<dyn IoInterface>>>,
     ) {
         let mut advisories_map: serde_json::Map<String, serde_json::Value> = serde_json::Map::new();
         for (pkg_name, matched_list) in advisories {
@@ -720,7 +703,7 @@ impl Auditor {
         }
 
         let json_str = serde_json::to_string_pretty(&output).unwrap_or_else(|_| "{}".to_string());
-        console_writeln!(console, "{}", &json_str);
+        console_writeln!(io, "{}", &json_str);
     }
 }
 

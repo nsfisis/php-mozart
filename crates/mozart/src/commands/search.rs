@@ -1,5 +1,5 @@
 use clap::Args;
-use mozart_core::console::{Console, hyperlink};
+use mozart_core::console::{IoInterface, hyperlink};
 use mozart_core::console_format;
 use mozart_core::console_writeln;
 use mozart_core::repository::packagist::SearchResult;
@@ -68,12 +68,16 @@ fn is_abandoned(result: &SearchResult) -> bool {
     }
 }
 
-pub async fn execute(args: &SearchArgs, cli: &super::Cli, console: &Console) -> anyhow::Result<()> {
+pub async fn execute(
+    args: &SearchArgs,
+    cli: &super::Cli,
+    io: std::sync::Arc<std::sync::Mutex<Box<dyn IoInterface>>>,
+) -> anyhow::Result<()> {
     // 1. Format check first — matches Composer's `SearchCommand::execute`
     //    L61-66 ordering.
     let format = args.format.as_deref().unwrap_or("text");
     if !matches!(format, "text" | "json") {
-        console.error(&console_format!(
+        io.lock().unwrap().error(&console_format!(
             "<error>Unsupported format \"{format}\". See help for supported formats.</error>"
         ));
         return Err(mozart_core::exit_code::bail_silent(
@@ -121,8 +125,8 @@ pub async fn execute(args: &SearchArgs, cli: &super::Cli, console: &Console) -> 
     // 7. Render. Empty results emit nothing in text mode (matches Composer)
     //    and `[]` in JSON mode.
     match format {
-        "json" => render_json(&results, console)?,
-        _ => render_text(&results, console),
+        "json" => render_json(&results, io.clone())?,
+        _ => render_text(&results, io.clone()),
     }
 
     Ok(())
@@ -133,13 +137,16 @@ pub async fn execute(args: &SearchArgs, cli: &super::Cli, console: &Console) -> 
 /// JSON_UNESCAPED_UNICODE`). `serde_json` does not escape forward slashes
 /// or non-ASCII Unicode by default, so the encoder configuration alone
 /// covers the latter two flags.
-fn render_json(results: &[SearchResult], console: &Console) -> anyhow::Result<()> {
+fn render_json(
+    results: &[SearchResult],
+    io: std::sync::Arc<std::sync::Mutex<Box<dyn IoInterface>>>,
+) -> anyhow::Result<()> {
     let output: Vec<SearchResultOutput> = results.iter().map(SearchResultOutput::from).collect();
     let buf = Vec::new();
     let formatter = serde_json::ser::PrettyFormatter::with_indent(b"    ");
     let mut ser = serde_json::Serializer::with_formatter(buf, formatter);
     output.serialize(&mut ser)?;
-    console_writeln!(console, "{}", &String::from_utf8(ser.into_inner())?);
+    console_writeln!(io, "{}", &String::from_utf8(ser.into_inner())?);
     Ok(())
 }
 
@@ -148,7 +155,10 @@ fn render_json(results: &[SearchResult], console: &Console) -> anyhow::Result<()
 ///   else plain `name`, padded to the longest-name column.
 /// - `<warning>! Abandoned !</warning> ` prefix when abandoned.
 /// - Description, truncated with `...` to fit the terminal width.
-fn render_text(results: &[SearchResult], console: &Console) {
+fn render_text(
+    results: &[SearchResult],
+    io: std::sync::Arc<std::sync::Mutex<Box<dyn IoInterface>>>,
+) {
     if results.is_empty() {
         return;
     }
@@ -182,14 +192,14 @@ fn render_text(results: &[SearchResult], console: &Console) {
         let padded_name = if !result.url.is_empty() {
             format!(
                 "{}{}",
-                hyperlink(&result.url, &result.name, console.decorated),
+                hyperlink(&result.url, &result.name, io.lock().unwrap().is_decorated()),
                 " ".repeat(padding_width)
             )
         } else {
             format!("{}{}", result.name, " ".repeat(padding_width))
         };
 
-        console_writeln!(console, "{padded_name}{warning}{desc_display}");
+        console_writeln!(io, "{padded_name}{warning}{desc_display}");
     }
 }
 

@@ -1,6 +1,6 @@
 use crate::composer::Composer;
 use clap::Args;
-use mozart_core::console::{Console, hyperlink};
+use mozart_core::console::{IoInterface, hyperlink};
 use mozart_core::console_format;
 use mozart_core::console_writeln;
 use mozart_core::exit_code;
@@ -17,10 +17,14 @@ pub struct FundArgs {
     pub format: Option<String>,
 }
 
-pub async fn execute(args: &FundArgs, cli: &super::Cli, console: &Console) -> anyhow::Result<()> {
+pub async fn execute(
+    args: &FundArgs,
+    cli: &super::Cli,
+    io: std::sync::Arc<std::sync::Mutex<Box<dyn IoInterface>>>,
+) -> anyhow::Result<()> {
     let format = args.format.as_deref().unwrap_or("text");
     if !matches!(format, "text" | "json") {
-        console.error(&console_format!(
+        io.lock().unwrap().error(&console_format!(
             "<error>Unsupported format \"{format}\". See help for supported formats.</error>"
         ));
         return Err(exit_code::bail_silent(exit_code::GENERAL_ERROR));
@@ -92,8 +96,8 @@ pub async fn execute(args: &FundArgs, cli: &super::Cli, console: &Console) -> an
     // BTreeMap iteration is alphabetical — covers `ksort($fundings)`.
 
     match format {
-        "json" => render_json(&fundings, console)?,
-        _ => render_text(&fundings, console),
+        "json" => render_json(&fundings, io.clone())?,
+        _ => render_text(&fundings, io.clone()),
     }
 
     Ok(())
@@ -139,10 +143,13 @@ fn rewrite_github_url(url: &str, funding_type: Option<&str>) -> String {
     url.to_string()
 }
 
-fn render_text(fundings: &BTreeMap<String, BTreeMap<String, Vec<String>>>, console: &Console) {
+fn render_text(
+    fundings: &BTreeMap<String, BTreeMap<String, Vec<String>>>,
+    io: std::sync::Arc<std::sync::Mutex<Box<dyn IoInterface>>>,
+) {
     if fundings.is_empty() {
         console_writeln!(
-            console,
+            io,
             "No funding links were found in your package dependencies. \
              This doesn't mean they don't need your support!",
         );
@@ -150,36 +157,36 @@ fn render_text(fundings: &BTreeMap<String, BTreeMap<String, Vec<String>>>, conso
     }
 
     console_writeln!(
-        console,
+        io,
         "The following packages were found in your dependencies which publish funding information:",
     );
 
     let mut prev: Option<String> = None;
     for (vendor, url_map) in fundings {
-        console_writeln!(console, "");
-        console_writeln!(console, "<comment>{vendor}</comment>");
+        console_writeln!(io, "");
+        console_writeln!(io, "<comment>{vendor}</comment>");
         for (url, packages) in url_map {
             let line = format!("  <info>{}</info>", packages.join(", "));
             if prev.as_deref() != Some(line.as_str()) {
-                console_writeln!(console, "{line}");
+                console_writeln!(io, "{line}");
                 prev = Some(line);
             }
-            let link = hyperlink(url, url, console.decorated);
-            console_writeln!(console, "    {link}");
+            let link = hyperlink(url, url, io.lock().unwrap().is_decorated());
+            console_writeln!(io, "    {link}");
         }
     }
 
-    console_writeln!(console, "");
+    console_writeln!(io, "");
     console_writeln!(
-        console,
+        io,
         "Please consider following these links and sponsoring the work of package authors!",
     );
-    console_writeln!(console, "Thank you!");
+    console_writeln!(io, "Thank you!");
 }
 
 fn render_json(
     fundings: &BTreeMap<String, BTreeMap<String, Vec<String>>>,
-    console: &Console,
+    io: std::sync::Arc<std::sync::Mutex<Box<dyn IoInterface>>>,
 ) -> anyhow::Result<()> {
     let buf = Vec::new();
     let formatter = serde_json::ser::PrettyFormatter::with_indent(b"    ");
@@ -192,13 +199,14 @@ fn render_json(
     } else {
         fundings.serialize(&mut ser)?;
     }
-    console_writeln!(console, "{}", &String::from_utf8(ser.into_inner())?);
+    console_writeln!(io, "{}", &String::from_utf8(ser.into_inner())?);
     Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use mozart_core::console::Console;
 
     fn make_funding_json(entries: &[(&str, &str)]) -> Vec<serde_json::Value> {
         entries

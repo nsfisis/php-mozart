@@ -1,6 +1,6 @@
 use clap::Args;
 use indexmap::IndexMap;
-use mozart_core::console::Console;
+use mozart_core::console::IoInterface;
 use mozart_core::console_format;
 use mozart_core::package::{self, Stability};
 use mozart_core::repository::downloader;
@@ -146,12 +146,15 @@ fn dir_from_package_name(package_name: &str) -> &str {
 }
 
 /// Remove VCS metadata directories from the target directory.
-fn remove_vcs_metadata(target_dir: &Path, console: &Console) -> anyhow::Result<()> {
+fn remove_vcs_metadata(
+    target_dir: &Path,
+    io: std::sync::Arc<std::sync::Mutex<Box<dyn IoInterface>>>,
+) -> anyhow::Result<()> {
     for vcs_dir in VCS_DIRS {
         let path = target_dir.join(vcs_dir);
         if path.exists() {
             std::fs::remove_dir_all(&path)?;
-            console.info(&console_format!(
+            io.lock().unwrap().info(&console_format!(
                 "<comment>Removed VCS metadata directory: {vcs_dir}</comment>"
             ));
         }
@@ -280,29 +283,29 @@ fn version_satisfies_constraint(packagist_version: &str, constraint: &str) -> bo
 pub async fn execute(
     args: &CreateProjectArgs,
     cli: &super::Cli,
-    console: &Console,
+    io: std::sync::Arc<std::sync::Mutex<Box<dyn IoInterface>>>,
 ) -> anyhow::Result<()> {
     // --- Deprecated / aliased flags ---
     if args.dev {
-        console.write_error(&console_format!(
+        io.lock().unwrap().write_error(&console_format!(
             "<warning>You are using the deprecated option \"dev\". Dev packages are installed by default now.</warning>"
         ));
     }
     if args.no_custom_installers {
-        console.write_error(&console_format!(
+        io.lock().unwrap().write_error(&console_format!(
             "<warning>You are using the deprecated option \"no-custom-installers\". Use \"no-plugins\" instead.</warning>"
         ));
     }
 
     // --- --ask interactive prompt for the project directory ---
-    let directory_arg: Option<String> = if console.interactive && args.ask {
+    let directory_arg: Option<String> = if io.lock().unwrap().is_interactive() && args.ask {
         let package = args
             .package
             .as_deref()
             .ok_or_else(|| anyhow::anyhow!("Not enough arguments (missing: \"package\")."))?;
         let lower = package.to_lowercase();
         let basename = dir_from_package_name(&lower).to_string();
-        let answer = console.ask(
+        let answer = io.lock().unwrap().ask(
             &console_format!("New project directory [<comment>{basename}</comment>]: "),
             &basename,
         );
@@ -334,7 +337,7 @@ pub async fn execute(
     let secure_http = !args.no_secure_http;
 
     install_project(
-        console,
+        &io,
         cli,
         args,
         args.package.as_deref(),
@@ -359,7 +362,7 @@ pub async fn execute(
 
 #[allow(clippy::too_many_arguments)]
 async fn install_project(
-    console: &Console,
+    io: &std::sync::Arc<std::sync::Mutex<Box<dyn IoInterface>>>,
     cli: &super::Cli,
     args: &CreateProjectArgs,
     package_name: Option<&str>,
@@ -382,7 +385,7 @@ async fn install_project(
     // Mozart does not yet support custom repositories on the create-project
     // command — warn and ignore (deferred; tracked under priority 2).
     if repositories.is_some() || add_repository {
-        console.write_error(&console_format!(
+        io.lock().unwrap().write_error(&console_format!(
             "<warning>Custom repository options (--repository, --repository-url, --add-repository) \
              are not yet supported and will be ignored.</warning>"
         ));
@@ -392,7 +395,7 @@ async fn install_project(
     let root_result = if let Some(name) = package_name {
         Some(
             install_root_package(
-                console,
+                io,
                 cli,
                 args,
                 name,
@@ -433,18 +436,17 @@ async fn install_project(
     let mut vcs_removed = false;
     if !args.keep_vcs {
         let should_remove = if installed_from_vcs {
-            args.remove_vcs
-                || !console.interactive
-                || console.confirm(&console_format!(
-                    "<info>Do you want to remove the existing VCS (.git, .svn..) history?</info> [<comment>y,n</comment>]? "
-                ))
+            let remove_vcs_confirmed = io.lock().unwrap().confirm(&console_format!(
+                "<info>Do you want to remove the existing VCS (.git, .svn..) history?</info> [<comment>y,n</comment>]? "
+            ));
+            args.remove_vcs || !io.lock().unwrap().is_interactive() || remove_vcs_confirmed
         } else {
             // Default for dist installs: scrub VCS metadata that may have been
             // shipped inside the archive (matches Mozart's pre-split behaviour).
             true
         };
         if should_remove {
-            remove_vcs_metadata(&target_dir, console)?;
+            remove_vcs_metadata(&target_dir, io.clone())?;
             vcs_removed = true;
         }
     }
@@ -452,7 +454,7 @@ async fn install_project(
     // --- Read composer.json from the new project ---
     let composer_path = target_dir.join("composer.json");
     if !composer_path.exists() {
-        console.write_error(&console_format!(
+        io.lock().unwrap().write_error(&console_format!(
             "<warning>No composer.json found in {}. Skipping dependency installation.</warning>",
             target_dir.display()
         ));
@@ -468,7 +470,7 @@ async fn install_project(
     }
 
     if no_install {
-        console.info(&console_format!(
+        io.lock().unwrap().info(&console_format!(
             "<comment>Skipping dependency installation (--no-install).</comment>"
         ));
         return Ok(());
@@ -542,7 +544,7 @@ async fn install_project(
         block_insecure: false,
     };
 
-    console.info("Resolving dependencies...");
+    io.lock().unwrap().info("Resolving dependencies...");
 
     let resolved = resolver::resolve(&request).await.map_err(|e| {
         mozart_core::exit_code::bail(
@@ -573,7 +575,7 @@ async fn install_project(
         .filter(|c| matches!(c.kind, super::update::ChangeKind::Install { .. }))
         .collect();
 
-    console.info(&console_format!(
+    io.lock().unwrap().info(&console_format!(
         "<info>Package operations: {} install{}, 0 updates, 0 removals</info>",
         installs.len(),
         if installs.len() == 1 { "" } else { "s" }
@@ -581,18 +583,20 @@ async fn install_project(
 
     for change in &changes {
         if let super::update::ChangeKind::Install { new_version } = &change.kind {
-            console.info(&format!("  - Installing {} ({})", change.name, new_version));
+            io.lock()
+                .unwrap()
+                .info(&format!("  - Installing {} ({})", change.name, new_version));
         }
     }
 
-    console.info("Writing lock file");
+    io.lock().unwrap().info("Writing lock file");
     let lock_path = target_dir.join("composer.lock");
     new_lock.write_to_file(&lock_path)?;
 
     let vendor_dir = target_dir.join("vendor");
 
     if prefer_source {
-        console.write_error(&console_format!(
+        io.lock().unwrap().write_error(&console_format!(
             "<warning>Source installs are not yet supported. Falling back to dist.</warning>"
         ));
     }
@@ -633,7 +637,7 @@ async fn install_project(
             download_only: false,
             prefer_source: args.prefer_source,
         },
-        console,
+        io.clone(),
         &mut executor,
     )
     .await?;
@@ -643,7 +647,7 @@ async fn install_project(
 
 #[allow(clippy::too_many_arguments)]
 async fn install_root_package(
-    console: &Console,
+    io: &std::sync::Arc<std::sync::Mutex<Box<dyn IoInterface>>>,
     cli: &super::Cli,
     _args: &CreateProjectArgs,
     package_name: &str,
@@ -704,7 +708,7 @@ async fn install_root_package(
     }
 
     let short = shortest_path(&working_dir, &target_dir);
-    console.write_error(&console_format!(
+    io.lock().unwrap().write_error(&console_format!(
         "<info>Creating a \"{package_name}\" project at \"{short}\"</info>"
     ));
 
@@ -760,11 +764,13 @@ async fn install_root_package(
     let concrete_version = best.version.clone();
 
     // --- Print "Installing" line + plugin notice ---
-    console.write_error(&console_format!(
+    io.lock().unwrap().write_error(&console_format!(
         "<info>Installing {name} ({concrete_version})</info>"
     ));
     if disable_plugins {
-        console.write_error(&console_format!("<info>Plugins have been disabled.</info>"));
+        io.lock()
+            .unwrap()
+            .write_error(&console_format!("<info>Plugins have been disabled.</info>"));
     }
 
     // --- Create the target directory and download + extract the dist archive ---
@@ -800,7 +806,7 @@ async fn install_root_package(
     // Mozart only supports dist downloads today, so this is always false.
     let installed_from_vcs = false;
 
-    console.write_error(&console_format!(
+    io.lock().unwrap().write_error(&console_format!(
         "<info>Created project in {}</info>",
         target_dir.display()
     ));

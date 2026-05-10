@@ -1,6 +1,6 @@
 use clap::Args;
 use indexmap::IndexSet;
-use mozart_core::console;
+use mozart_core::console::IoInterface;
 use mozart_core::console_format;
 use mozart_core::package::{Package, RootPackage, RootPackageData};
 use mozart_core::repository::installed;
@@ -496,7 +496,7 @@ fn warn_platform_requirements(
     packages: &[&lockfile::LockedPackage],
     ignore_platform_reqs: bool,
     ignore_platform_req: &[String],
-    console: &console::Console,
+    io: std::sync::Arc<std::sync::Mutex<Box<dyn IoInterface>>>,
 ) {
     if ignore_platform_reqs {
         return;
@@ -512,7 +512,7 @@ fn warn_platform_requirements(
             if mozart_core::platform::is_platform_package(req_name) {
                 let lower = req_name.to_lowercase();
                 if !ignored_set.contains(&lower) {
-                    console.info(&console_format!(
+                    io.lock().unwrap().info(&console_format!(
                         "<warning>Platform requirement {req_name} {req_constraint} (required by {}) \
                          has not been verified. Platform detection is not yet fully implemented.</warning>",
                         pkg.name
@@ -528,7 +528,7 @@ pub async fn install_from_lock(
     working_dir: &Path,
     vendor_dir: &Path,
     config: &InstallConfig,
-    console: &mozart_core::console::Console,
+    io: std::sync::Arc<std::sync::Mutex<Box<dyn IoInterface>>>,
     executor: &mut dyn InstallerExecutor,
 ) -> anyhow::Result<()> {
     let dev_mode = config.dev_mode;
@@ -542,18 +542,24 @@ pub async fn install_from_lock(
 
     // Print install mode header
     if dev_mode {
-        console.info("Installing dependencies from lock file (including require-dev)");
+        io.lock()
+            .unwrap()
+            .info("Installing dependencies from lock file (including require-dev)");
     } else {
-        console.info("Installing dependencies from lock file");
+        io.lock()
+            .unwrap()
+            .info("Installing dependencies from lock file");
     }
-    console.info("Verifying lock file contents can be installed on current platform.");
+    io.lock()
+        .unwrap()
+        .info("Verifying lock file contents can be installed on current platform.");
 
     // Step 2: Warn about platform requirements
     warn_platform_requirements(
         &packages_to_install,
         config.ignore_platform_reqs,
         &config.ignore_platform_req,
-        console,
+        io.clone(),
     );
 
     // Step 3: Read currently installed packages
@@ -573,9 +579,11 @@ pub async fn install_from_lock(
         .collect();
 
     if installs.is_empty() && updates.is_empty() && removals.is_empty() {
-        console.info("Nothing to install, update or remove");
+        io.lock()
+            .unwrap()
+            .info("Nothing to install, update or remove");
     } else {
-        console.info(&console_format!(
+        io.lock().unwrap().info(&console_format!(
             "<info>Package operations: {} install{}, {} update{}, {} removal{}</info>",
             installs.len(),
             if installs.len() == 1 { "" } else { "s" },
@@ -590,20 +598,22 @@ pub async fn install_from_lock(
     // mirror Composer's `Transaction::moveUninstallsToFront`.
     if config.dry_run {
         for name in &removals {
-            console.info(&console_format!("  - Would remove <info>{}</info>", name));
+            io.lock()
+                .unwrap()
+                .info(&console_format!("  - Would remove <info>{}</info>", name));
         }
         for (pkg, action) in &ops {
             match action {
                 Action::Skip => {}
                 Action::Install => {
-                    console.info(&console_format!(
+                    io.lock().unwrap().info(&console_format!(
                         "  - Would install <info>{}</info> (<comment>{}</comment>)",
                         pkg.name,
                         pkg.version
                     ));
                 }
                 Action::Update => {
-                    console.info(&console_format!(
+                    io.lock().unwrap().info(&console_format!(
                         "  - Would upgrade <info>{}</info> (<comment>{}</comment>)",
                         pkg.name,
                         pkg.version
@@ -619,7 +629,9 @@ pub async fn install_from_lock(
         };
 
         for name in &removals {
-            console.info(&console_format!("  - Removing <info>{}</info>", name));
+            io.lock()
+                .unwrap()
+                .info(&console_format!("  - Removing <info>{}</info>", name));
             // Mirrors Composer's `UninstallOperation::show`, which renders
             // the package's `getFullPrettyVersion()` — for dev packages
             // backed by git/hg that includes the (truncated) source ref.
@@ -674,7 +686,7 @@ pub async fn install_from_lock(
                 // new root alias on a previously-installed package.
                 Action::Skip => None,
                 Action::Install => {
-                    console.info(&console_format!(
+                    io.lock().unwrap().info(&console_format!(
                         "  - Installing <info>{}</info> (<comment>{}</comment>)",
                         pkg.name,
                         pkg.version
@@ -682,7 +694,7 @@ pub async fn install_from_lock(
                     Some(PackageOperation::Install { package: pkg })
                 }
                 Action::Update => {
-                    console.info(&console_format!(
+                    io.lock().unwrap().info(&console_format!(
                         "  - Upgrading <info>{}</info> (<comment>{}</comment>)",
                         pkg.name,
                         pkg.version
@@ -799,14 +811,14 @@ pub async fn install_from_lock(
 
         // Step 9: Generate autoloader (unless no_autoloader or download_only)
         if !config.no_autoloader && !config.download_only {
-            console.info("Generating autoload files");
+            io.lock().unwrap().info("Generating autoload files");
 
             if config.classmap_authoritative {
-                console.info(&console_format!(
+                io.lock().unwrap().info(&console_format!(
                     "<info>Classmap-authoritative mode: autoloader will only look up classes in the classmap.</info>"
                 ));
             } else if config.optimize_autoloader {
-                console.info(&console_format!(
+                io.lock().unwrap().info(&console_format!(
                     "<info>Optimize autoloader: classmap scanning is not yet fully supported. PSR-4/PSR-0 autoloading will still be used.</info>"
                 ));
             }
@@ -839,7 +851,7 @@ pub async fn install_from_lock(
 pub async fn execute(
     args: &InstallArgs,
     cli: &super::Cli,
-    console: &mozart_core::console::Console,
+    io: std::sync::Arc<std::sync::Mutex<Box<dyn IoInterface>>>,
 ) -> anyhow::Result<()> {
     let cache_config = mozart_core::repository::cache::build_cache_config(cli.no_cache);
     let repositories = std::sync::Arc::new(
@@ -850,15 +862,7 @@ pub async fn execute(
     let mut executor =
         FilesystemExecutor::new(mozart_core::repository::cache::Cache::files(&cache_config));
     let working_dir = cli.working_dir()?;
-    run(
-        &working_dir,
-        None,
-        args,
-        console,
-        repositories,
-        &mut executor,
-    )
-    .await
+    run(&working_dir, None, args, io, repositories, &mut executor).await
 }
 
 /// Library entry point — pure logic, no `Cli` access.
@@ -875,7 +879,7 @@ pub async fn run(
     working_dir: &Path,
     path_repo_base_override: Option<&Path>,
     args: &InstallArgs,
-    console: &mozart_core::console::Console,
+    io: std::sync::Arc<std::sync::Mutex<Box<dyn IoInterface>>>,
     repositories: std::sync::Arc<mozart_core::repository::repository::RepositorySet>,
     executor: &mut dyn InstallerExecutor,
 ) -> anyhow::Result<()> {
@@ -883,13 +887,13 @@ pub async fn run(
     // 1. deprecation warnings, 2. reject packages, 3. reject --no-install,
     // 4. Mozart-only prefer-install mutual-exclusion.
     if args.dev {
-        console.info(&console_format!(
+        io.lock().unwrap().info(&console_format!(
             "<warning>You are using the deprecated option \"--dev\". It has no effect and will break in Composer 3.</warning>"
         ));
     }
 
     if args.no_suggest {
-        console.info(&console_format!(
+        io.lock().unwrap().info(&console_format!(
             "<warning>You are using the deprecated option \"--no-suggest\". It has no effect and will break in Composer 3.</warning>"
         ));
     }
@@ -922,7 +926,7 @@ pub async fn run(
     // If no lock file present, fall back to update (matching Composer behavior).
     let lock_path = working_dir.join("composer.lock");
     if !lock_path.exists() {
-        console.info(&console_format!(
+        io.lock().unwrap().info(&console_format!(
             "<warning>No composer.lock file present. Updating dependencies to latest instead of installing from lock file. See https://getcomposer.org/install for more information.</warning>"
         ));
         let update_args = super::update::UpdateArgs {
@@ -964,7 +968,7 @@ pub async fn run(
             working_dir,
             path_repo_base_override,
             &update_args,
-            console,
+            io,
             repositories,
             executor,
         )
@@ -985,7 +989,7 @@ pub async fn run(
     if composer_json_path.exists() {
         let content = std::fs::read_to_string(&composer_json_path)?;
         if !lock.is_fresh(&content) {
-            console.info(&console_format!(
+            io.lock().unwrap().info(&console_format!(
                 "<warning>Warning: The lock file is not up to date with the latest changes in composer.json. You may be getting outdated dependencies. It is recommended that you run `mozart update`.</warning>"
             ));
         }
@@ -996,7 +1000,7 @@ pub async fn run(
         let missing = lock.get_missing_requirement_info(&root_pkg, dev_mode);
         if !missing.is_empty() {
             for line in &missing {
-                console.info(line);
+                io.lock().unwrap().info(line);
             }
             // Mirrors `Composer\Installer::doInstall()` lines 749-756: when
             // `config.allow-missing-requirements` is true, print the warnings
@@ -1022,13 +1026,13 @@ pub async fn run(
             &args.ignore_platform_req,
         );
         if !lock_problems.is_empty() {
-            console.info(
+            io.lock().unwrap().info(
                 "Your lock file does not contain a compatible set of packages. Please run composer update.",
             );
-            console.info("");
+            io.lock().unwrap().info("");
             for (i, msg) in lock_problems.iter().enumerate() {
-                console.info(&format!("  Problem {}", i + 1));
-                console.info(&format!("    {msg}"));
+                io.lock().unwrap().info(&format!("  Problem {}", i + 1));
+                io.lock().unwrap().info(&format!("    {msg}"));
             }
             return Err(mozart_core::exit_code::bail_silent(
                 mozart_core::exit_code::DEPENDENCY_RESOLUTION_FAILED,
@@ -1068,7 +1072,7 @@ pub async fn run(
             download_only: args.download_only,
             prefer_source,
         },
-        console,
+        io,
         executor,
     )
     .await

@@ -1,5 +1,5 @@
 use clap::Args;
-use mozart_core::composer::composer_home;
+use mozart_core::{composer::composer_home, console::IoInterface};
 
 #[derive(Args)]
 pub struct GlobalArgs {
@@ -14,7 +14,7 @@ pub struct GlobalArgs {
 pub async fn execute(
     args: &GlobalArgs,
     cli: &super::Cli,
-    console: &mozart_core::console::Console,
+    io: std::sync::Arc<std::sync::Mutex<Box<dyn IoInterface>>>,
 ) -> anyhow::Result<()> {
     use clap::Parser as _;
     use std::fs;
@@ -32,7 +32,9 @@ pub async fn execute(
 
     fs::create_dir_all(&home)?;
 
-    console.info(&format!("Changed current directory to {}", home.display()));
+    io.lock()
+        .unwrap()
+        .info(&format!("Changed current directory to {}", home.display()));
 
     // SAFETY: single-threaded at this point; no concurrent env access
     unsafe {
