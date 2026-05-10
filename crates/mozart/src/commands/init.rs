@@ -1,6 +1,6 @@
-use anyhow::{Context, bail};
+use anyhow::{Context as _, bail};
 use clap::Args;
-use colored::Colorize;
+use colored::Colorize as _;
 use mozart_core::console::IoInterface;
 use mozart_core::console_format;
 use mozart_core::package::{
@@ -9,7 +9,7 @@ use mozart_core::package::{
 use mozart_core::repository::{packagist, version};
 use mozart_core::validation;
 use std::collections::BTreeMap;
-use std::io::{BufRead, Write};
+use std::io::{BufRead as _, Write as _};
 use std::path::Path;
 use std::process::Command;
 use std::sync::OnceLock;

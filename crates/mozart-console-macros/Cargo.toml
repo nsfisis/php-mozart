@@ -13,3 +13,6 @@ syn.workspace = true
 
 [dev-dependencies]
 mozart-core.workspace = true
+
+[lints]
+workspace = true

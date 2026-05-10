@@ -111,7 +111,7 @@ impl InstalledPackages {
 
     /// Parse an installed.json document. See [`Self::read`] for the accepted shapes.
     pub fn from_json_str(content: &str) -> anyhow::Result<InstalledPackages> {
-        use anyhow::{Context, anyhow};
+        use anyhow::{Context as _, anyhow};
 
         let value: serde_json::Value =
             serde_json::from_str(content).context("invalid installed.json")?;

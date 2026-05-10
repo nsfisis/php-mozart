@@ -3,7 +3,7 @@ use clap::Args;
 use indexmap::IndexMap;
 use mozart_core::composer::LocalRepository;
 use mozart_core::console::IoInterface;
-use mozart_core::package::{Link, Package};
+use mozart_core::package::{Link, Package as _};
 use mozart_core::{console_writeln, console_writeln_error};
 use std::collections::BTreeMap;
 use std::path::Path;

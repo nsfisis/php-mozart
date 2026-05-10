@@ -8,8 +8,8 @@
 //! `CompletePackageInterface` (`getSupport()['source']`,
 //! `getSourceUrl()`, `getHomepage()`).
 
-use super::super::package::Package;
-use super::super::package::{CompletePackage, RootPackageData};
+use super::super::package::Package as _;
+use super::super::package::{CompletePackage as _, RootPackageData};
 use super::cache::Cache;
 use super::installed::{InstalledPackageEntry, InstalledPackages};
 use super::lockfile::LockedPackage;

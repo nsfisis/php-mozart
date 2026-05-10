@@ -1,5 +1,5 @@
 use clap::Args;
-use clap::CommandFactory;
+use clap::CommandFactory as _;
 use clap_complete::aot::Shell;
 use mozart_core::console::IoInterface;
 

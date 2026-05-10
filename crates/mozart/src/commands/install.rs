@@ -2,7 +2,7 @@ use clap::Args;
 use indexmap::IndexSet;
 use mozart_core::console::IoInterface;
 use mozart_core::console_format;
-use mozart_core::package::{Package, RootPackage, RootPackageData};
+use mozart_core::package::{Package as _, RootPackage as _, RootPackageData};
 use mozart_core::repository::installed;
 use mozart_core::repository::installer_executor::{
     Action, ExecuteContext, FilesystemExecutor, InstallerExecutor, PackageOperation,

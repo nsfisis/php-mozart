@@ -7,7 +7,7 @@ use mozart_core::exit_code;
 use mozart_core::repository::cache::{Cache, build_cache_config};
 use mozart_core::repository::installed::InstalledPackages;
 use mozart_core::repository::repository::{PackageQuery, RepositorySet};
-use serde::Serialize;
+use serde::Serialize as _;
 use std::collections::{BTreeMap, BTreeSet};
 
 #[derive(Args)]

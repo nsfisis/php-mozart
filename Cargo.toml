@@ -46,3 +46,6 @@ tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.22", features = ["env-filter", "fmt"] }
 url = "2.5.8"
 zip = { version = "2.4.2", default-features = false, features = ["deflate"] }
+
+[workspace.lints.clippy]
+unused_trait_names = "deny"

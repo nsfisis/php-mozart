@@ -30,3 +30,6 @@ url.workspace = true
 mozart-test-harness.workspace = true
 assert_cmd.workspace = true
 predicates.workspace = true
+
+[lints]
+workspace = true

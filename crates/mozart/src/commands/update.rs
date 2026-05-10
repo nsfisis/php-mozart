@@ -782,7 +782,7 @@ pub fn interactive_select_packages(
     packages: Vec<String>,
     io: std::sync::Arc<std::sync::Mutex<Box<dyn IoInterface>>>,
 ) -> Vec<String> {
-    use std::io::{self, BufRead, IsTerminal, Write};
+    use std::io::{self, BufRead as _, IsTerminal as _, Write as _};
 
     let stdin = io::stdin();
     if !stdin.is_terminal() {

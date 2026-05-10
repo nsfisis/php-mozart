@@ -1,8 +1,8 @@
 use super::cache::Cache;
 use indexmap::IndexSet;
-use sha1::{Digest, Sha1};
+use sha1::{Digest as _, Sha1};
 use std::fs;
-use std::io::{Cursor, Read, Write};
+use std::io::{Cursor, Read as _, Write as _};
 use std::path::Path;
 
 /// A simple download progress tracker that writes to stderr.
@@ -230,7 +230,7 @@ pub fn extract_zip(data: &[u8], target_dir: &Path) -> anyhow::Result<()> {
             // Set permissions on Unix
             #[cfg(unix)]
             {
-                use std::os::unix::fs::PermissionsExt;
+                use std::os::unix::fs::PermissionsExt as _;
                 if let Some(mode) = entry.unix_mode() {
                     fs::set_permissions(&target_path, fs::Permissions::from_mode(mode))?;
                 }
@@ -298,7 +298,7 @@ pub fn extract_tar_gz(data: &[u8], target_dir: &Path) -> anyhow::Result<()> {
             // Set permissions on Unix
             #[cfg(unix)]
             {
-                use std::os::unix::fs::PermissionsExt;
+                use std::os::unix::fs::PermissionsExt as _;
                 if let Ok(mode) = entry.header().mode() {
                     fs::set_permissions(&target_path, fs::Permissions::from_mode(mode))?;
                 }

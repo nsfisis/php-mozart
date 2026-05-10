@@ -16,7 +16,7 @@
 //! does that during array construction, not at serialization time, so callers
 //! that care must construct [`Value::Int`] keys directly.
 
-use std::fmt::Write;
+use std::fmt::Write as _;
 
 /// One PHP value, suitable for `serialize()`.
 ///

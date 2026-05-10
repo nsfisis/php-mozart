@@ -303,7 +303,7 @@ impl VcsDriver for GitHubDriver {
 /// Decode base64-encoded content from API responses.
 /// Also used by Forgejo driver as `base64_decode_content`.
 pub fn base64_decode_content(input: &str) -> Result<String> {
-    use base64::Engine;
+    use base64::Engine as _;
     let cleaned: Vec<u8> = input
         .bytes()
         .filter(|&b| b != b'\n' && b != b'\r')

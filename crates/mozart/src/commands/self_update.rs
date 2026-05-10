@@ -2,7 +2,7 @@ use clap::Args;
 use mozart_core::MOZART_VERSION;
 use mozart_core::console::IoInterface;
 use mozart_core::console_writeln;
-use std::io::Write;
+use std::io::Write as _;
 use std::path::{Path, PathBuf};
 
 #[derive(Args)]
@@ -318,7 +318,7 @@ async fn update(
     // Set executable permission on Unix
     #[cfg(unix)]
     {
-        use std::os::unix::fs::PermissionsExt;
+        use std::os::unix::fs::PermissionsExt as _;
         let mut perms = std::fs::metadata(&tmp_path)?.permissions();
         perms.set_mode(0o755);
         std::fs::set_permissions(&tmp_path, perms)
@@ -373,7 +373,7 @@ fn rollback(
     // Set executable permission on Unix before replacing
     #[cfg(unix)]
     {
-        use std::os::unix::fs::PermissionsExt;
+        use std::os::unix::fs::PermissionsExt as _;
         let mut perms = std::fs::metadata(&backup)?.permissions();
         perms.set_mode(0o755);
         std::fs::set_permissions(&backup, perms)

@@ -2,7 +2,7 @@ use super::packagist::{PackagistDist, PackagistSource, PackagistVersion};
 use super::repository::RepositorySet;
 use super::resolver::ResolvedPackage;
 use crate::installer::HasSuggests;
-use crate::package::Package;
+use crate::package::Package as _;
 use crate::package::{Link, RawPackageData, to_json_pretty};
 use indexmap::IndexMap;
 use indexmap::IndexSet;

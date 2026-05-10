@@ -23,7 +23,7 @@ use std::path::{Path, PathBuf};
 
 use crate::package::RawRepository;
 use mozart_php_serialize::{Value as PhpValue, serialize as php_serialize};
-use sha1::{Digest, Sha1};
+use sha1::{Digest as _, Sha1};
 
 /// Translate path repos in `repositories` into synthetic `type: package`
 /// entries. Non-path entries are returned unchanged in original order.
@@ -134,7 +134,7 @@ fn compute_path_reference(json_bytes: &[u8], is_relative: bool) -> String {
     let bytes = hasher.finalize();
     let mut hex = String::with_capacity(bytes.len() * 2);
     for b in bytes {
-        use std::fmt::Write;
+        use std::fmt::Write as _;
         let _ = write!(&mut hex, "{:02x}", b);
     }
     hex

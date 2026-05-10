@@ -1,8 +1,7 @@
 use crate::MOZART_VERSION;
+use anyhow::{Context as _, Result, anyhow, bail};
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
-
-use anyhow::{Context, Result, anyhow, bail};
 
 /// Returns the common User-Agent string for all HTTP requests.
 ///

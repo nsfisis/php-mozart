@@ -1,6 +1,6 @@
 use crate::composer::Composer;
 use clap::Args;
-use mozart_core::package::Package;
+use mozart_core::package::Package as _;
 use mozart_core::{console::IoInterface, console_writeln};
 use std::path::{Path, PathBuf};
 

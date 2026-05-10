@@ -10,7 +10,7 @@ use mozart_core::repository::resolver::{self, PlatformConfig, ResolveRequest};
 use mozart_core::repository::version;
 use mozart_core::repository::version_selector::VersionSelector;
 use mozart_core::validation;
-use std::io::{BufRead, IsTerminal, Write};
+use std::io::{BufRead as _, IsTerminal as _, Write as _};
 use std::path::{Path, PathBuf};
 
 #[derive(Args)]

@@ -1,4 +1,4 @@
-use clap::Parser;
+use clap::Parser as _;
 use mozart::commands;
 use mozart_core::MOZART_VERSION;
 use mozart_core::exit_code;
@@ -70,7 +70,7 @@ async fn main() {
     }
 
     let Some(ref _cmd) = cli.command else {
-        use clap::CommandFactory;
+        use clap::CommandFactory as _;
         commands::Cli::command().print_help().ok();
         println!();
         return;

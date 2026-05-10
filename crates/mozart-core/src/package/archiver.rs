@@ -1,8 +1,8 @@
 use anyhow::Context as _;
 use regex::Regex;
-use sha1::{Digest, Sha1};
+use sha1::{Digest as _, Sha1};
 use std::fs;
-use std::io::Write as IoWrite;
+use std::io::Write as _;
 use std::path::{Path, PathBuf};
 
 pub mod manager;
@@ -340,7 +340,7 @@ fn create_zip(source_dir: &Path, files: &[PathBuf], target: &Path) -> anyhow::Re
 
             #[cfg(unix)]
             let opts = {
-                use std::os::unix::fs::MetadataExt;
+                use std::os::unix::fs::MetadataExt as _;
                 let mode = metadata.mode();
                 SimpleFileOptions::default()
                     .compression_method(zip::CompressionMethod::Deflated)

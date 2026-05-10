@@ -4,7 +4,7 @@
 //! Section bodies are stored as raw strings (typically JSON); the runner is
 //! responsible for interpreting them.
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context as _, Result, bail};
 use std::fs;
 use std::path::Path;
 

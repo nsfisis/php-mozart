@@ -4,13 +4,13 @@ use indexmap::IndexMap;
 use mozart_core::console::IoInterface;
 use mozart_core::console::hyperlink;
 use mozart_core::console_writeln;
-use mozart_core::package::Package;
+use mozart_core::package::Package as _;
 use mozart_core::package_info;
 use mozart_core::package_info::PackageUrls;
 use mozart_core::package_sorter::sort_packages_alphabetically;
 use mozart_core::repository_utils;
 use mozart_core::repository_utils::Required;
-use serde::Serialize;
+use serde::Serialize as _;
 use std::collections::BTreeMap;
 
 #[derive(Args)]

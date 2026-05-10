@@ -1,6 +1,6 @@
 use crate::composer::Composer;
 use clap::Args;
-use colored::Colorize;
+use colored::Colorize as _;
 use mozart_core::MOZART_VERSION;
 use mozart_core::config::Config;
 use mozart_core::config_validator::{ValidatorOptions, validate_manifest};
@@ -8,7 +8,7 @@ use mozart_core::console::IoInterface;
 use mozart_core::console_writeln;
 use mozart_core::factory::create_config;
 use mozart_core::http::HttpDownloader;
-use mozart_core::package::CompletePackage;
+use mozart_core::package::CompletePackage as _;
 use std::borrow::Cow;
 use std::path::Path;
 

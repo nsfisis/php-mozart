@@ -146,7 +146,7 @@ fn install_from_source(
             let git_util =
                 crate::vcs::util::git::GitUtil::new(process, vendor_dir.join(".cache").join("git"));
             let downloader = crate::vcs::downloader::git::GitDownloader::new(git_util);
-            use crate::vcs::downloader::VcsDownloader;
+            use crate::vcs::downloader::VcsDownloader as _;
             downloader.download(url, reference, &target)?;
             downloader.install(url, reference, &target)?;
         }
@@ -154,14 +154,14 @@ fn install_from_source(
             let process = crate::vcs::process::ProcessExecutor::new();
             let svn_util = crate::vcs::util::svn::SvnUtil::new(process);
             let downloader = crate::vcs::downloader::svn::SvnDownloader::new(svn_util);
-            use crate::vcs::downloader::VcsDownloader;
+            use crate::vcs::downloader::VcsDownloader as _;
             downloader.install(url, reference, &target)?;
         }
         "hg" => {
             let process = crate::vcs::process::ProcessExecutor::new();
             let hg_util = crate::vcs::util::hg::HgUtil::new(process);
             let downloader = crate::vcs::downloader::hg::HgDownloader::new(hg_util);
-            use crate::vcs::downloader::VcsDownloader;
+            use crate::vcs::downloader::VcsDownloader as _;
             downloader.install(url, reference, &target)?;
         }
         _ => {

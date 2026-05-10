@@ -1,4 +1,4 @@
-use anyhow::{Context, Result, bail};
+use anyhow::{Context as _, Result, bail};
 use indexmap::IndexMap;
 use std::fs;
 use std::path::Path;

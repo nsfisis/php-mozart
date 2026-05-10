@@ -1,6 +1,6 @@
-use colored::{ColoredString, Colorize};
+use colored::{ColoredString, Colorize as _};
 use dialoguer::{Confirm, Input};
-use std::io::IsTerminal;
+use std::io::IsTerminal as _;
 
 // ---------------------------------------------------------------------------
 // Tag-style color helpers — called only by `console_format!`
