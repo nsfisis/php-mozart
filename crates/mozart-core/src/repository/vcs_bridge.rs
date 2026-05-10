@@ -3,11 +3,11 @@
 //! Scans VCS repositories defined in composer.json and converts
 //! discovered package versions into pool inputs for the SAT resolver.
 
-use super::packagist::PackagistVersion;
-use super::resolver::{parse_normalized, version_stability};
 use crate::dependency_resolver::{PoolPackageInput, make_pool_links};
 use crate::package::{RawRepository, Stability};
-use crate::vcs::driver::DriverConfig;
+use crate::repository::packagist::PackagistVersion;
+use crate::repository::resolver::{parse_normalized, version_stability};
+use crate::repository::vcs::DriverConfig;
 use crate::vcs::repository::{VcsPackageVersion, VcsRepository};
 use indexmap::IndexMap;
 use std::collections::BTreeMap;

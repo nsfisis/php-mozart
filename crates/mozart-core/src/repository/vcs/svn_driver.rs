@@ -1,6 +1,6 @@
-use super::super::process::ProcessExecutor;
-use super::super::util::svn::SvnUtil;
-use super::{DistReference, DriverConfig, SourceReference, VcsDriver};
+use crate::repository::vcs::{DistReference, DriverConfig, SourceReference, VcsDriverInterface};
+use crate::vcs::process::ProcessExecutor;
+use crate::vcs::util::svn::SvnUtil;
 use anyhow::Result;
 use indexmap::IndexMap;
 use regex::Regex;
@@ -71,7 +71,7 @@ impl SvnDriver {
     }
 }
 
-impl VcsDriver for SvnDriver {
+impl VcsDriverInterface for SvnDriver {
     async fn initialize(&mut self) -> Result<()> {
         let info = self.svn_info(&self.url)?;
         if let Some(url) = info["url"].as_str() {

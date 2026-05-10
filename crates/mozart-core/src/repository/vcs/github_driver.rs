@@ -1,27 +1,24 @@
-use indexmap::IndexMap;
-use std::collections::BTreeMap;
-
+use crate::repository::vcs::{
+    DistReference, DriverConfig, GitDriver, SourceReference, VcsDriverInterface,
+};
 use anyhow::{Result, bail};
+use indexmap::IndexMap;
 use regex::Regex;
 use reqwest::Client;
-use reqwest::header::{ACCEPT, USER_AGENT};
+use reqwest::header::{ACCEPT, AUTHORIZATION, USER_AGENT};
+use std::collections::BTreeMap;
 
-use super::git::GitDriver;
-use super::{DistReference, DriverConfig, SourceReference, VcsDriver};
-
-/// GitLab VCS driver using the REST API v4.
+/// GitHub VCS driver using the REST API v3.
 ///
-/// Supports self-hosted GitLab instances.
-pub struct GitLabDriver {
+/// Falls back to `GitDriver` when API access fails.
+pub struct GitHubDriver {
     owner: String,
     repo: String,
-    host: String,
-    scheme: String,
     url: String,
-    project_id: Option<String>,
     root_identifier: Option<String>,
     tags: Option<BTreeMap<String, String>>,
     branches: Option<BTreeMap<String, String>>,
+    repo_data: Option<serde_json::Value>,
     info_cache: IndexMap<String, Option<serde_json::Value>>,
     git_driver: Option<Box<GitDriver>>,
     http_client: Client,
@@ -29,19 +26,17 @@ pub struct GitLabDriver {
     api_failed: bool,
 }
 
-impl GitLabDriver {
+impl GitHubDriver {
     pub fn new(url: &str, config: DriverConfig) -> Self {
-        let (host, scheme, owner, repo) = Self::parse_url(url).unwrap_or_default();
+        let (owner, repo) = Self::parse_url(url).unwrap_or_default();
         Self {
             owner,
             repo,
-            host,
-            scheme,
             url: url.to_string(),
-            project_id: None,
             root_identifier: None,
             tags: None,
             branches: None,
+            repo_data: None,
             info_cache: IndexMap::new(),
             git_driver: None,
             http_client: crate::http::default_client(),
@@ -50,34 +45,23 @@ impl GitLabDriver {
         }
     }
 
-    pub fn supports(url: &str, gitlab_domains: &[String]) -> bool {
+    /// Check if a URL points to GitHub.
+    pub fn supports(url: &str) -> bool {
         let url_lower = url.to_lowercase();
-        for domain in gitlab_domains {
-            if url_lower.contains(domain) {
-                return true;
-            }
-        }
-        false
+        url_lower.contains("github.com")
+            && (url_lower.contains("github.com/") || url_lower.contains("github.com:"))
     }
 
-    fn parse_url(url: &str) -> Option<(String, String, String, String)> {
-        let re = Regex::new(r"(?i)(https?)://([^/]+)/([^/]+)/([^/.\s]+?)(?:\.git)?(?:[/#?].*)?$")
-            .ok()?;
+    fn parse_url(url: &str) -> Option<(String, String)> {
+        let re = Regex::new(r"github\.com[:/]([^/]+)/([^/.\s]+?)(?:\.git)?(?:[/#?].*)?$").ok()?;
         let caps = re.captures(url)?;
-        Some((
-            caps[2].to_string(),
-            caps[1].to_string(),
-            caps[3].to_string(),
-            caps[4].to_string(),
-        ))
+        Some((caps[1].to_string(), caps[2].to_string()))
     }
 
     fn api_url(&self, path: &str) -> String {
-        let project_path = format!("{}%2F{}", self.owner, self.repo);
-        let id = self.project_id.as_deref().unwrap_or(&project_path);
         format!(
-            "{}://{}/api/v4/projects/{}{}",
-            self.scheme, self.host, id, path
+            "https://api.github.com/repos/{}/{}{}",
+            self.owner, self.repo, path
         )
     }
 
@@ -88,17 +72,17 @@ impl GitLabDriver {
             .http_client
             .get(&url)
             .header(USER_AGENT, "mozart/0.1")
-            .header(ACCEPT, "application/json");
+            .header(ACCEPT, "application/vnd.github.v3+json");
 
-        if let Some(token) = &self.config.gitlab_token {
-            req = req.header("PRIVATE-TOKEN", token.as_str());
+        if let Some(token) = &self.config.github_token {
+            req = req.header(AUTHORIZATION, format!("token {token}"));
         }
 
         let response = req.send().await?;
-        tracing::debug!(status = %response.status(), %url, "GitLab API response");
+        tracing::debug!(status = %response.status(), %url, "GitHub API response");
         if !response.status().is_success() {
             bail!(
-                "GitLab API request to {} failed with status {}",
+                "GitHub API request to {} failed with status {}",
                 url,
                 response.status()
             );
@@ -111,18 +95,33 @@ impl GitLabDriver {
         let mut items = Vec::new();
         let mut page = 1;
         loop {
-            let sep = if path.contains('?') { "&" } else { "?" };
-            let paged_path = format!("{path}{sep}per_page=100&page={page}");
-            let data = self.api_get(&paged_path).await?;
-            let batch: Vec<serde_json::Value> = match data {
-                serde_json::Value::Array(arr) => arr,
-                _ => break,
-            };
+            let separator = if path.contains('?') { "&" } else { "?" };
+            let url = format!(
+                "https://api.github.com/repos/{}/{}{}{}per_page=100&page={}",
+                self.owner, self.repo, path, separator, page,
+            );
+            let mut req = self
+                .http_client
+                .get(&url)
+                .header(USER_AGENT, "mozart/0.1")
+                .header(ACCEPT, "application/vnd.github.v3+json");
+            if let Some(token) = &self.config.github_token {
+                req = req.header(AUTHORIZATION, format!("token {token}"));
+            }
+
+            let response = req.send().await?;
+            tracing::debug!(status = %response.status(), %url, "GitHub API paginated response");
+            if !response.status().is_success() {
+                bail!("GitHub API paginated request failed: {}", response.status());
+            }
+
+            let batch: Vec<serde_json::Value> = response.json().await?;
             if batch.is_empty() {
                 break;
             }
             items.extend(batch);
             page += 1;
+            // Safety: limit to 10 pages (1000 items)
             if page > 10 {
                 break;
             }
@@ -132,10 +131,7 @@ impl GitLabDriver {
 
     async fn use_git_fallback(&mut self) -> Result<&mut GitDriver> {
         if self.git_driver.is_none() {
-            let git_url = format!(
-                "{}://{}/{}/{}.git",
-                self.scheme, self.host, self.owner, self.repo
-            );
+            let git_url = format!("https://github.com/{}/{}.git", self.owner, self.repo);
             let mut driver = GitDriver::new(&git_url, self.config.clone());
             driver.initialize().await?;
             self.git_driver = Some(Box::new(driver));
@@ -144,18 +140,17 @@ impl GitLabDriver {
     }
 }
 
-impl VcsDriver for GitLabDriver {
+impl VcsDriverInterface for GitHubDriver {
     async fn initialize(&mut self) -> Result<()> {
+        // Try to fetch repo data from API
         match self.api_get("").await {
             Ok(data) => {
-                if let Some(id) = data["id"].as_u64() {
-                    self.project_id = Some(id.to_string());
-                }
                 let default_branch = data["default_branch"]
                     .as_str()
                     .unwrap_or("main")
                     .to_string();
                 self.root_identifier = Some(default_branch);
+                self.repo_data = Some(data);
             }
             Err(_) => {
                 self.api_failed = true;
@@ -177,11 +172,11 @@ impl VcsDriver for GitLabDriver {
                 let branches = driver.branches().await?.clone();
                 self.branches = Some(branches);
             } else {
-                let items = self.api_get_paginated("/repository/branches").await?;
+                let items = self.api_get_paginated("/branches").await?;
                 let mut branches = BTreeMap::new();
                 for item in items {
                     if let (Some(name), Some(sha)) =
-                        (item["name"].as_str(), item["commit"]["id"].as_str())
+                        (item["name"].as_str(), item["commit"]["sha"].as_str())
                     {
                         branches.insert(name.to_string(), sha.to_string());
                     }
@@ -199,11 +194,11 @@ impl VcsDriver for GitLabDriver {
                 let tags = driver.tags().await?.clone();
                 self.tags = Some(tags);
             } else {
-                let items = self.api_get_paginated("/repository/tags").await?;
+                let items = self.api_get_paginated("/tags").await?;
                 let mut tags = BTreeMap::new();
                 for item in items {
                     if let (Some(name), Some(sha)) =
-                        (item["name"].as_str(), item["commit"]["id"].as_str())
+                        (item["name"].as_str(), item["commit"]["sha"].as_str())
                     {
                         tags.insert(name.to_string(), sha.to_string());
                     }
@@ -221,8 +216,13 @@ impl VcsDriver for GitLabDriver {
         if let Some(cached) = self.info_cache.get(identifier) {
             return Ok(cached.clone());
         }
+
         let content = self.file_content("composer.json", identifier).await?;
-        let value = content.and_then(|c| serde_json::from_str(&c).ok());
+        let value = match content {
+            Some(c) => serde_json::from_str(&c).ok(),
+            None => None,
+        };
+
         self.info_cache
             .insert(identifier.to_string(), value.clone());
         Ok(value)
@@ -230,20 +230,23 @@ impl VcsDriver for GitLabDriver {
 
     async fn file_content(&self, file: &str, identifier: &str) -> Result<Option<String>> {
         if self.api_failed {
+            // Can't use API, would need git fallback
+            // For simplicity, return None (git_driver is mutable)
             return Ok(None);
         }
-        let encoded_file = file.replace('/', "%2F");
-        let path = format!("/repository/files/{}/raw?ref={}", encoded_file, identifier);
-        let url = self.api_url(&path);
-        let mut req = self.http_client.get(&url).header(USER_AGENT, "mozart/0.1");
-        if let Some(token) = &self.config.gitlab_token {
-            req = req.header("PRIVATE-TOKEN", token.as_str());
-        }
-        let response = req.send().await?;
-        if response.status().is_success() {
-            Ok(Some(response.text().await?))
-        } else {
-            Ok(None)
+
+        let path = format!("/contents/{}?ref={}", file, identifier);
+        match self.api_get(&path).await {
+            Ok(data) => {
+                if let Some(content) = data["content"].as_str() {
+                    // GitHub returns base64-encoded content
+                    let decoded = base64_decode_content(content)?;
+                    Ok(Some(decoded))
+                } else {
+                    Ok(None)
+                }
+            }
+            Err(_) => Ok(None),
         }
     }
 
@@ -251,11 +254,15 @@ impl VcsDriver for GitLabDriver {
         if self.api_failed {
             return Ok(None);
         }
-        match self
-            .api_get(&format!("/repository/commits/{identifier}"))
-            .await
-        {
-            Ok(data) => Ok(data["committed_date"].as_str().map(|s| s.to_string())),
+
+        let path = format!("/commits/{}", identifier);
+        match self.api_get(&path).await {
+            Ok(data) => {
+                let date = data["commit"]["committer"]["date"]
+                    .as_str()
+                    .map(|s| s.to_string());
+                Ok(date)
+            }
             Err(_) => Ok(None),
         }
     }
@@ -264,13 +271,8 @@ impl VcsDriver for GitLabDriver {
         Ok(Some(DistReference {
             dist_type: "zip".to_string(),
             url: format!(
-                "{}://{}/api/v4/projects/{}/repository/archive.zip?sha={}",
-                self.scheme,
-                self.host,
-                self.project_id
-                    .as_deref()
-                    .unwrap_or(&format!("{}%2F{}", self.owner, self.repo)),
-                identifier,
+                "https://api.github.com/repos/{}/{}/zipball/{}",
+                self.owner, self.repo, identifier,
             ),
             reference: identifier.to_string(),
             shasum: None,
@@ -280,10 +282,7 @@ impl VcsDriver for GitLabDriver {
     fn source(&self, identifier: &str) -> SourceReference {
         SourceReference {
             source_type: "git".to_string(),
-            url: format!(
-                "{}://{}/{}/{}.git",
-                self.scheme, self.host, self.owner, self.repo
-            ),
+            url: format!("https://github.com/{}/{}.git", self.owner, self.repo),
             reference: identifier.to_string(),
         }
     }
@@ -298,4 +297,18 @@ impl VcsDriver for GitLabDriver {
         }
         Ok(())
     }
+}
+
+/// Decode base64-encoded content from API responses.
+/// Also used by Forgejo driver as `base64_decode_content`.
+pub fn base64_decode_content(input: &str) -> Result<String> {
+    use base64::Engine as _;
+    let cleaned: Vec<u8> = input
+        .bytes()
+        .filter(|&b| b != b'\n' && b != b'\r')
+        .collect();
+    let decoded = base64::engine::general_purpose::STANDARD
+        .decode(&cleaned)
+        .map_err(|e| anyhow::anyhow!("Base64 decode error: {e}"))?;
+    String::from_utf8(decoded).map_err(|e| anyhow::anyhow!("Invalid UTF-8 in base64 content: {e}"))
 }

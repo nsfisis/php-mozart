@@ -1,10 +1,26 @@
-pub mod bitbucket;
-pub mod forgejo;
-pub mod git;
-pub mod github;
-pub mod gitlab;
-pub mod hg;
-pub mod svn;
+mod forgejo_driver;
+mod fossil_driver;
+mod git_bitbucket_driver;
+mod git_driver;
+mod github_driver;
+mod gitlab_driver;
+mod hg_driver;
+mod perforce_driver;
+mod svn_driver;
+mod vcs_driver;
+mod vcs_driver_interface;
+
+pub use forgejo_driver::*;
+pub use fossil_driver::*;
+pub use git_bitbucket_driver::*;
+pub use git_driver::*;
+pub use github_driver::*;
+pub use gitlab_driver::*;
+pub use hg_driver::*;
+pub use perforce_driver::*;
+pub use svn_driver::*;
+pub use vcs_driver::*;
+pub use vcs_driver_interface::*;
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -97,56 +113,17 @@ pub enum DriverType {
     Hg,
 }
 
-/// The VCS driver interface.
-///
-/// Corresponds to Composer's `VcsDriverInterface`.
-trait VcsDriver {
-    /// Initialize the driver (e.g., clone mirror, fetch API metadata).
-    async fn initialize(&mut self) -> Result<()>;
-
-    /// The root identifier (default branch/trunk).
-    fn root_identifier(&self) -> &str;
-
-    /// All branches as `name -> commit_hash`.
-    async fn branches(&mut self) -> Result<&BTreeMap<String, String>>;
-
-    /// All tags as `name -> commit_hash`.
-    async fn tags(&mut self) -> Result<&BTreeMap<String, String>>;
-
-    /// Get composer.json content parsed as JSON for a given identifier.
-    async fn composer_information(&mut self, identifier: &str)
-    -> Result<Option<serde_json::Value>>;
-
-    /// Get raw file content at a given path and identifier.
-    async fn file_content(&self, file: &str, identifier: &str) -> Result<Option<String>>;
-
-    /// Get the change date for a given identifier (ISO 8601).
-    async fn change_date(&self, identifier: &str) -> Result<Option<String>>;
-
-    /// Get the dist reference for a given identifier.
-    async fn dist(&self, identifier: &str) -> Result<Option<DistReference>>;
-
-    /// Get the source reference for a given identifier.
-    fn source(&self, identifier: &str) -> SourceReference;
-
-    /// The canonical URL of this repository.
-    fn url(&self) -> &str;
-
-    /// Clean up resources (temp dirs, etc.).
-    async fn cleanup(&mut self) -> Result<()>;
-}
-
 /// Enum-dispatched VCS driver.
 ///
 /// Wraps all concrete driver types to allow static dispatch with async trait methods.
 pub enum AnyVcsDriver {
-    GitHub(github::GitHubDriver),
-    GitLab(gitlab::GitLabDriver),
-    Bitbucket(bitbucket::BitbucketDriver),
-    Forgejo(forgejo::ForgejoDriver),
-    Git(git::GitDriver),
-    Svn(svn::SvnDriver),
-    Hg(hg::HgDriver),
+    GitHub(GitHubDriver),
+    GitLab(GitLabDriver),
+    Bitbucket(GitBitbucketDriver),
+    Forgejo(ForgejoDriver),
+    Git(GitDriver),
+    Svn(SvnDriver),
+    Hg(HgDriver),
 }
 
 macro_rules! dispatch {
@@ -251,37 +228,37 @@ pub fn detect_driver(
     let url_lower = url.to_lowercase();
 
     // GitHub
-    if github::GitHubDriver::supports(url) {
+    if GitHubDriver::supports(url) {
         return Some(DriverType::GitHub);
     }
 
     // GitLab
-    if gitlab::GitLabDriver::supports(url, &config.gitlab_domains) {
+    if GitLabDriver::supports(url, &config.gitlab_domains) {
         return Some(DriverType::GitLab);
     }
 
     // Bitbucket
-    if bitbucket::BitbucketDriver::supports(url) {
+    if GitBitbucketDriver::supports(url) {
         return Some(DriverType::Bitbucket);
     }
 
     // Forgejo
-    if forgejo::ForgejoDriver::supports(url, &config.forgejo_domains) {
+    if ForgejoDriver::supports(url, &config.forgejo_domains) {
         return Some(DriverType::Forgejo);
     }
 
     // Git
-    if git::GitDriver::supports(url) {
+    if GitDriver::supports(url) {
         return Some(DriverType::Git);
     }
 
     // Hg
-    if hg::HgDriver::supports(url) {
+    if HgDriver::supports(url) {
         return Some(DriverType::Hg);
     }
 
     // SVN
-    if url_lower.contains("svn") || svn::SvnDriver::supports(url) {
+    if url_lower.contains("svn") || SvnDriver::supports(url) {
         return Some(DriverType::Svn);
     }
 
@@ -296,14 +273,12 @@ pub fn detect_driver(
 /// Create a driver instance for the given URL and type.
 pub fn create_driver(url: &str, driver_type: DriverType, config: DriverConfig) -> AnyVcsDriver {
     match driver_type {
-        DriverType::GitHub => AnyVcsDriver::GitHub(github::GitHubDriver::new(url, config)),
-        DriverType::GitLab => AnyVcsDriver::GitLab(gitlab::GitLabDriver::new(url, config)),
-        DriverType::Bitbucket => {
-            AnyVcsDriver::Bitbucket(bitbucket::BitbucketDriver::new(url, config))
-        }
-        DriverType::Forgejo => AnyVcsDriver::Forgejo(forgejo::ForgejoDriver::new(url, config)),
-        DriverType::Git => AnyVcsDriver::Git(git::GitDriver::new(url, config)),
-        DriverType::Svn => AnyVcsDriver::Svn(svn::SvnDriver::new(url, config)),
-        DriverType::Hg => AnyVcsDriver::Hg(hg::HgDriver::new(url, config)),
+        DriverType::GitHub => AnyVcsDriver::GitHub(GitHubDriver::new(url, config)),
+        DriverType::GitLab => AnyVcsDriver::GitLab(GitLabDriver::new(url, config)),
+        DriverType::Bitbucket => AnyVcsDriver::Bitbucket(GitBitbucketDriver::new(url, config)),
+        DriverType::Forgejo => AnyVcsDriver::Forgejo(ForgejoDriver::new(url, config)),
+        DriverType::Git => AnyVcsDriver::Git(GitDriver::new(url, config)),
+        DriverType::Svn => AnyVcsDriver::Svn(SvnDriver::new(url, config)),
+        DriverType::Hg => AnyVcsDriver::Hg(HgDriver::new(url, config)),
     }
 }

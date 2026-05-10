@@ -1,4 +1,4 @@
-use super::driver::{
+use crate::repository::vcs::{
     DistReference, DriverConfig, DriverType, SourceReference, create_driver, detect_driver,
 };
 use anyhow::{Result, bail};

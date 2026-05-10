@@ -1,6 +1,7 @@
-use super::super::process::ProcessExecutor;
-use super::super::util::hg::HgUtil;
-use super::{DistReference, DriverConfig, SourceReference, VcsDriver};
+use crate::repository::vcs::{DistReference, DriverConfig, SourceReference, VcsDriverInterface};
+use crate::vcs::process::ProcessExecutor;
+use crate::vcs::util::git::GitUtil;
+use crate::vcs::util::hg::HgUtil;
 use anyhow::Result;
 use indexmap::IndexMap;
 use std::collections::BTreeMap;
@@ -46,11 +47,11 @@ impl HgDriver {
     }
 }
 
-impl VcsDriver for HgDriver {
+impl VcsDriverInterface for HgDriver {
     async fn initialize(&mut self) -> Result<()> {
         let cache_dir = &self.config.cache_vcs_dir;
         std::fs::create_dir_all(cache_dir)?;
-        let repo_dir = cache_dir.join(super::super::util::git::GitUtil::sanitize_url(&self.url));
+        let repo_dir = cache_dir.join(GitUtil::sanitize_url(&self.url));
 
         if repo_dir.join(".hg").is_dir() {
             // Update existing clone

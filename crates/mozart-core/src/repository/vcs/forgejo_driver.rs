@@ -1,25 +1,26 @@
-use indexmap::IndexMap;
-use std::collections::BTreeMap;
-
+use crate::repository::vcs::{
+    DistReference, DriverConfig, GitDriver, SourceReference, VcsDriverInterface,
+    base64_decode_content,
+};
 use anyhow::{Result, bail};
+use indexmap::IndexMap;
 use regex::Regex;
 use reqwest::Client;
 use reqwest::header::{ACCEPT, AUTHORIZATION, USER_AGENT};
+use std::collections::BTreeMap;
 
-use super::git::GitDriver;
-use super::{DistReference, DriverConfig, SourceReference, VcsDriver};
-
-/// GitHub VCS driver using the REST API v3.
+/// Forgejo/Gitea VCS driver using the REST API v1.
 ///
-/// Falls back to `GitDriver` when API access fails.
-pub struct GitHubDriver {
+/// Supports self-hosted instances (Codeberg, etc.).
+pub struct ForgejoDriver {
     owner: String,
     repo: String,
+    host: String,
+    scheme: String,
     url: String,
     root_identifier: Option<String>,
     tags: Option<BTreeMap<String, String>>,
     branches: Option<BTreeMap<String, String>>,
-    repo_data: Option<serde_json::Value>,
     info_cache: IndexMap<String, Option<serde_json::Value>>,
     git_driver: Option<Box<GitDriver>>,
     http_client: Client,
@@ -27,17 +28,18 @@ pub struct GitHubDriver {
     api_failed: bool,
 }
 
-impl GitHubDriver {
+impl ForgejoDriver {
     pub fn new(url: &str, config: DriverConfig) -> Self {
-        let (owner, repo) = Self::parse_url(url).unwrap_or_default();
+        let (host, scheme, owner, repo) = Self::parse_url(url).unwrap_or_default();
         Self {
             owner,
             repo,
+            host,
+            scheme,
             url: url.to_string(),
             root_identifier: None,
             tags: None,
             branches: None,
-            repo_data: None,
             info_cache: IndexMap::new(),
             git_driver: None,
             http_client: crate::http::default_client(),
@@ -46,23 +48,32 @@ impl GitHubDriver {
         }
     }
 
-    /// Check if a URL points to GitHub.
-    pub fn supports(url: &str) -> bool {
+    pub fn supports(url: &str, forgejo_domains: &[String]) -> bool {
         let url_lower = url.to_lowercase();
-        url_lower.contains("github.com")
-            && (url_lower.contains("github.com/") || url_lower.contains("github.com:"))
+        for domain in forgejo_domains {
+            if url_lower.contains(domain) {
+                return true;
+            }
+        }
+        false
     }
 
-    fn parse_url(url: &str) -> Option<(String, String)> {
-        let re = Regex::new(r"github\.com[:/]([^/]+)/([^/.\s]+?)(?:\.git)?(?:[/#?].*)?$").ok()?;
+    fn parse_url(url: &str) -> Option<(String, String, String, String)> {
+        let re = Regex::new(r"(?i)(https?)://([^/]+)/([^/]+)/([^/.\s]+?)(?:\.git)?(?:[/#?].*)?$")
+            .ok()?;
         let caps = re.captures(url)?;
-        Some((caps[1].to_string(), caps[2].to_string()))
+        Some((
+            caps[2].to_string(),
+            caps[1].to_string(),
+            caps[3].to_string(),
+            caps[4].to_string(),
+        ))
     }
 
     fn api_url(&self, path: &str) -> String {
         format!(
-            "https://api.github.com/repos/{}/{}{}",
-            self.owner, self.repo, path
+            "{}://{}/api/v1/repos/{}/{}{}",
+            self.scheme, self.host, self.owner, self.repo, path,
         )
     }
 
@@ -73,17 +84,15 @@ impl GitHubDriver {
             .http_client
             .get(&url)
             .header(USER_AGENT, "mozart/0.1")
-            .header(ACCEPT, "application/vnd.github.v3+json");
-
-        if let Some(token) = &self.config.github_token {
+            .header(ACCEPT, "application/json");
+        if let Some(token) = &self.config.forgejo_token {
             req = req.header(AUTHORIZATION, format!("token {token}"));
         }
-
         let response = req.send().await?;
-        tracing::debug!(status = %response.status(), %url, "GitHub API response");
+        tracing::debug!(status = %response.status(), %url, "Forgejo API response");
         if !response.status().is_success() {
             bail!(
-                "GitHub API request to {} failed with status {}",
+                "Forgejo API request to {} failed: {}",
                 url,
                 response.status()
             );
@@ -96,34 +105,19 @@ impl GitHubDriver {
         let mut items = Vec::new();
         let mut page = 1;
         loop {
-            let separator = if path.contains('?') { "&" } else { "?" };
-            let url = format!(
-                "https://api.github.com/repos/{}/{}{}{}per_page=100&page={}",
-                self.owner, self.repo, path, separator, page,
-            );
-            let mut req = self
-                .http_client
-                .get(&url)
-                .header(USER_AGENT, "mozart/0.1")
-                .header(ACCEPT, "application/vnd.github.v3+json");
-            if let Some(token) = &self.config.github_token {
-                req = req.header(AUTHORIZATION, format!("token {token}"));
-            }
-
-            let response = req.send().await?;
-            tracing::debug!(status = %response.status(), %url, "GitHub API paginated response");
-            if !response.status().is_success() {
-                bail!("GitHub API paginated request failed: {}", response.status());
-            }
-
-            let batch: Vec<serde_json::Value> = response.json().await?;
+            let sep = if path.contains('?') { "&" } else { "?" };
+            let paged_path = format!("{path}{sep}limit=50&page={page}");
+            let data = self.api_get(&paged_path).await?;
+            let batch: Vec<serde_json::Value> = match data {
+                serde_json::Value::Array(arr) => arr,
+                _ => break,
+            };
             if batch.is_empty() {
                 break;
             }
             items.extend(batch);
             page += 1;
-            // Safety: limit to 10 pages (1000 items)
-            if page > 10 {
+            if page > 20 {
                 break;
             }
         }
@@ -132,7 +126,10 @@ impl GitHubDriver {
 
     async fn use_git_fallback(&mut self) -> Result<&mut GitDriver> {
         if self.git_driver.is_none() {
-            let git_url = format!("https://github.com/{}/{}.git", self.owner, self.repo);
+            let git_url = format!(
+                "{}://{}/{}/{}.git",
+                self.scheme, self.host, self.owner, self.repo
+            );
             let mut driver = GitDriver::new(&git_url, self.config.clone());
             driver.initialize().await?;
             self.git_driver = Some(Box::new(driver));
@@ -141,9 +138,8 @@ impl GitHubDriver {
     }
 }
 
-impl VcsDriver for GitHubDriver {
+impl VcsDriverInterface for ForgejoDriver {
     async fn initialize(&mut self) -> Result<()> {
-        // Try to fetch repo data from API
         match self.api_get("").await {
             Ok(data) => {
                 let default_branch = data["default_branch"]
@@ -151,7 +147,6 @@ impl VcsDriver for GitHubDriver {
                     .unwrap_or("main")
                     .to_string();
                 self.root_identifier = Some(default_branch);
-                self.repo_data = Some(data);
             }
             Err(_) => {
                 self.api_failed = true;
@@ -177,7 +172,7 @@ impl VcsDriver for GitHubDriver {
                 let mut branches = BTreeMap::new();
                 for item in items {
                     if let (Some(name), Some(sha)) =
-                        (item["name"].as_str(), item["commit"]["sha"].as_str())
+                        (item["name"].as_str(), item["commit"]["id"].as_str())
                     {
                         branches.insert(name.to_string(), sha.to_string());
                     }
@@ -198,9 +193,10 @@ impl VcsDriver for GitHubDriver {
                 let items = self.api_get_paginated("/tags").await?;
                 let mut tags = BTreeMap::new();
                 for item in items {
-                    if let (Some(name), Some(sha)) =
-                        (item["name"].as_str(), item["commit"]["sha"].as_str())
-                    {
+                    if let (Some(name), Some(sha)) = (
+                        item["name"].as_str(),
+                        item["id"].as_str().or(item["commit"]["sha"].as_str()),
+                    ) {
                         tags.insert(name.to_string(), sha.to_string());
                     }
                 }
@@ -217,13 +213,8 @@ impl VcsDriver for GitHubDriver {
         if let Some(cached) = self.info_cache.get(identifier) {
             return Ok(cached.clone());
         }
-
         let content = self.file_content("composer.json", identifier).await?;
-        let value = match content {
-            Some(c) => serde_json::from_str(&c).ok(),
-            None => None,
-        };
-
+        let value = content.and_then(|c| serde_json::from_str(&c).ok());
         self.info_cache
             .insert(identifier.to_string(), value.clone());
         Ok(value)
@@ -231,16 +222,13 @@ impl VcsDriver for GitHubDriver {
 
     async fn file_content(&self, file: &str, identifier: &str) -> Result<Option<String>> {
         if self.api_failed {
-            // Can't use API, would need git fallback
-            // For simplicity, return None (git_driver is mutable)
             return Ok(None);
         }
-
         let path = format!("/contents/{}?ref={}", file, identifier);
         match self.api_get(&path).await {
             Ok(data) => {
                 if let Some(content) = data["content"].as_str() {
-                    // GitHub returns base64-encoded content
+                    // Forgejo returns base64-encoded content
                     let decoded = base64_decode_content(content)?;
                     Ok(Some(decoded))
                 } else {
@@ -255,15 +243,8 @@ impl VcsDriver for GitHubDriver {
         if self.api_failed {
             return Ok(None);
         }
-
-        let path = format!("/commits/{}", identifier);
-        match self.api_get(&path).await {
-            Ok(data) => {
-                let date = data["commit"]["committer"]["date"]
-                    .as_str()
-                    .map(|s| s.to_string());
-                Ok(date)
-            }
+        match self.api_get(&format!("/git/commits/{identifier}")).await {
+            Ok(data) => Ok(data["created"].as_str().map(|s| s.to_string())),
             Err(_) => Ok(None),
         }
     }
@@ -272,8 +253,8 @@ impl VcsDriver for GitHubDriver {
         Ok(Some(DistReference {
             dist_type: "zip".to_string(),
             url: format!(
-                "https://api.github.com/repos/{}/{}/zipball/{}",
-                self.owner, self.repo, identifier,
+                "{}://{}/{}/{}/archive/{}.zip",
+                self.scheme, self.host, self.owner, self.repo, identifier,
             ),
             reference: identifier.to_string(),
             shasum: None,
@@ -283,7 +264,10 @@ impl VcsDriver for GitHubDriver {
     fn source(&self, identifier: &str) -> SourceReference {
         SourceReference {
             source_type: "git".to_string(),
-            url: format!("https://github.com/{}/{}.git", self.owner, self.repo),
+            url: format!(
+                "{}://{}/{}/{}.git",
+                self.scheme, self.host, self.owner, self.repo
+            ),
             reference: identifier.to_string(),
         }
     }
@@ -298,18 +282,4 @@ impl VcsDriver for GitHubDriver {
         }
         Ok(())
     }
-}
-
-/// Decode base64-encoded content from API responses.
-/// Also used by Forgejo driver as `base64_decode_content`.
-pub fn base64_decode_content(input: &str) -> Result<String> {
-    use base64::Engine as _;
-    let cleaned: Vec<u8> = input
-        .bytes()
-        .filter(|&b| b != b'\n' && b != b'\r')
-        .collect();
-    let decoded = base64::engine::general_purpose::STANDARD
-        .decode(&cleaned)
-        .map_err(|e| anyhow::anyhow!("Base64 decode error: {e}"))?;
-    String::from_utf8(decoded).map_err(|e| anyhow::anyhow!("Invalid UTF-8 in base64 content: {e}"))
 }

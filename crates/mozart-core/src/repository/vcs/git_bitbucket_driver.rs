@@ -1,16 +1,15 @@
-use indexmap::IndexMap;
-use std::collections::BTreeMap;
-
+use crate::repository::vcs::{
+    DistReference, DriverConfig, GitDriver, SourceReference, VcsDriverInterface,
+};
 use anyhow::{Result, bail};
+use indexmap::IndexMap;
 use regex::Regex;
 use reqwest::Client;
 use reqwest::header::{ACCEPT, AUTHORIZATION, USER_AGENT};
-
-use super::git::GitDriver;
-use super::{DistReference, DriverConfig, SourceReference, VcsDriver};
+use std::collections::BTreeMap;
 
 /// Bitbucket VCS driver using the REST API 2.0.
-pub struct BitbucketDriver {
+pub struct GitBitbucketDriver {
     owner: String,
     repo: String,
     url: String,
@@ -25,7 +24,7 @@ pub struct BitbucketDriver {
     vcs_type: String, // "git" or "hg"
 }
 
-impl BitbucketDriver {
+impl GitBitbucketDriver {
     pub fn new(url: &str, config: DriverConfig) -> Self {
         let (owner, repo) = Self::parse_url(url).unwrap_or_default();
         Self {
@@ -133,7 +132,7 @@ impl BitbucketDriver {
     }
 }
 
-impl VcsDriver for BitbucketDriver {
+impl VcsDriverInterface for GitBitbucketDriver {
     async fn initialize(&mut self) -> Result<()> {
         match self.api_get("").await {
             Ok(data) => {

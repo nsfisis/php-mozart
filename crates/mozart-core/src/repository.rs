@@ -14,6 +14,7 @@ pub mod path_repository;
 pub mod repository;
 pub mod repository_filter;
 pub mod resolver;
+pub mod vcs;
 pub mod vcs_bridge;
 pub mod version;
 pub mod version_selector;

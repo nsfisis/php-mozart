@@ -1,23 +1,23 @@
-use indexmap::IndexMap;
-use std::collections::BTreeMap;
-
+use crate::repository::vcs::{
+    DistReference, DriverConfig, GitDriver, SourceReference, VcsDriverInterface,
+};
 use anyhow::{Result, bail};
+use indexmap::IndexMap;
 use regex::Regex;
 use reqwest::Client;
-use reqwest::header::{ACCEPT, AUTHORIZATION, USER_AGENT};
+use reqwest::header::{ACCEPT, USER_AGENT};
+use std::collections::BTreeMap;
 
-use super::git::GitDriver;
-use super::{DistReference, DriverConfig, SourceReference, VcsDriver};
-
-/// Forgejo/Gitea VCS driver using the REST API v1.
+/// GitLab VCS driver using the REST API v4.
 ///
-/// Supports self-hosted instances (Codeberg, etc.).
-pub struct ForgejoDriver {
+/// Supports self-hosted GitLab instances.
+pub struct GitLabDriver {
     owner: String,
     repo: String,
     host: String,
     scheme: String,
     url: String,
+    project_id: Option<String>,
     root_identifier: Option<String>,
     tags: Option<BTreeMap<String, String>>,
     branches: Option<BTreeMap<String, String>>,
@@ -28,7 +28,7 @@ pub struct ForgejoDriver {
     api_failed: bool,
 }
 
-impl ForgejoDriver {
+impl GitLabDriver {
     pub fn new(url: &str, config: DriverConfig) -> Self {
         let (host, scheme, owner, repo) = Self::parse_url(url).unwrap_or_default();
         Self {
@@ -37,6 +37,7 @@ impl ForgejoDriver {
             host,
             scheme,
             url: url.to_string(),
+            project_id: None,
             root_identifier: None,
             tags: None,
             branches: None,
@@ -48,9 +49,9 @@ impl ForgejoDriver {
         }
     }
 
-    pub fn supports(url: &str, forgejo_domains: &[String]) -> bool {
+    pub fn supports(url: &str, gitlab_domains: &[String]) -> bool {
         let url_lower = url.to_lowercase();
-        for domain in forgejo_domains {
+        for domain in gitlab_domains {
             if url_lower.contains(domain) {
                 return true;
             }
@@ -71,9 +72,11 @@ impl ForgejoDriver {
     }
 
     fn api_url(&self, path: &str) -> String {
+        let project_path = format!("{}%2F{}", self.owner, self.repo);
+        let id = self.project_id.as_deref().unwrap_or(&project_path);
         format!(
-            "{}://{}/api/v1/repos/{}/{}{}",
-            self.scheme, self.host, self.owner, self.repo, path,
+            "{}://{}/api/v4/projects/{}{}",
+            self.scheme, self.host, id, path
         )
     }
 
@@ -85,14 +88,16 @@ impl ForgejoDriver {
             .get(&url)
             .header(USER_AGENT, "mozart/0.1")
             .header(ACCEPT, "application/json");
-        if let Some(token) = &self.config.forgejo_token {
-            req = req.header(AUTHORIZATION, format!("token {token}"));
+
+        if let Some(token) = &self.config.gitlab_token {
+            req = req.header("PRIVATE-TOKEN", token.as_str());
         }
+
         let response = req.send().await?;
-        tracing::debug!(status = %response.status(), %url, "Forgejo API response");
+        tracing::debug!(status = %response.status(), %url, "GitLab API response");
         if !response.status().is_success() {
             bail!(
-                "Forgejo API request to {} failed: {}",
+                "GitLab API request to {} failed with status {}",
                 url,
                 response.status()
             );
@@ -106,7 +111,7 @@ impl ForgejoDriver {
         let mut page = 1;
         loop {
             let sep = if path.contains('?') { "&" } else { "?" };
-            let paged_path = format!("{path}{sep}limit=50&page={page}");
+            let paged_path = format!("{path}{sep}per_page=100&page={page}");
             let data = self.api_get(&paged_path).await?;
             let batch: Vec<serde_json::Value> = match data {
                 serde_json::Value::Array(arr) => arr,
@@ -117,7 +122,7 @@ impl ForgejoDriver {
             }
             items.extend(batch);
             page += 1;
-            if page > 20 {
+            if page > 10 {
                 break;
             }
         }
@@ -138,10 +143,13 @@ impl ForgejoDriver {
     }
 }
 
-impl VcsDriver for ForgejoDriver {
+impl VcsDriverInterface for GitLabDriver {
     async fn initialize(&mut self) -> Result<()> {
         match self.api_get("").await {
             Ok(data) => {
+                if let Some(id) = data["id"].as_u64() {
+                    self.project_id = Some(id.to_string());
+                }
                 let default_branch = data["default_branch"]
                     .as_str()
                     .unwrap_or("main")
@@ -168,7 +176,7 @@ impl VcsDriver for ForgejoDriver {
                 let branches = driver.branches().await?.clone();
                 self.branches = Some(branches);
             } else {
-                let items = self.api_get_paginated("/branches").await?;
+                let items = self.api_get_paginated("/repository/branches").await?;
                 let mut branches = BTreeMap::new();
                 for item in items {
                     if let (Some(name), Some(sha)) =
@@ -190,13 +198,12 @@ impl VcsDriver for ForgejoDriver {
                 let tags = driver.tags().await?.clone();
                 self.tags = Some(tags);
             } else {
-                let items = self.api_get_paginated("/tags").await?;
+                let items = self.api_get_paginated("/repository/tags").await?;
                 let mut tags = BTreeMap::new();
                 for item in items {
-                    if let (Some(name), Some(sha)) = (
-                        item["name"].as_str(),
-                        item["id"].as_str().or(item["commit"]["sha"].as_str()),
-                    ) {
+                    if let (Some(name), Some(sha)) =
+                        (item["name"].as_str(), item["commit"]["id"].as_str())
+                    {
                         tags.insert(name.to_string(), sha.to_string());
                     }
                 }
@@ -224,18 +231,18 @@ impl VcsDriver for ForgejoDriver {
         if self.api_failed {
             return Ok(None);
         }
-        let path = format!("/contents/{}?ref={}", file, identifier);
-        match self.api_get(&path).await {
-            Ok(data) => {
-                if let Some(content) = data["content"].as_str() {
-                    // Forgejo returns base64-encoded content
-                    let decoded = super::github::base64_decode_content(content)?;
-                    Ok(Some(decoded))
-                } else {
-                    Ok(None)
-                }
-            }
-            Err(_) => Ok(None),
+        let encoded_file = file.replace('/', "%2F");
+        let path = format!("/repository/files/{}/raw?ref={}", encoded_file, identifier);
+        let url = self.api_url(&path);
+        let mut req = self.http_client.get(&url).header(USER_AGENT, "mozart/0.1");
+        if let Some(token) = &self.config.gitlab_token {
+            req = req.header("PRIVATE-TOKEN", token.as_str());
+        }
+        let response = req.send().await?;
+        if response.status().is_success() {
+            Ok(Some(response.text().await?))
+        } else {
+            Ok(None)
         }
     }
 
@@ -243,8 +250,11 @@ impl VcsDriver for ForgejoDriver {
         if self.api_failed {
             return Ok(None);
         }
-        match self.api_get(&format!("/git/commits/{identifier}")).await {
-            Ok(data) => Ok(data["created"].as_str().map(|s| s.to_string())),
+        match self
+            .api_get(&format!("/repository/commits/{identifier}"))
+            .await
+        {
+            Ok(data) => Ok(data["committed_date"].as_str().map(|s| s.to_string())),
             Err(_) => Ok(None),
         }
     }
@@ -253,8 +263,13 @@ impl VcsDriver for ForgejoDriver {
         Ok(Some(DistReference {
             dist_type: "zip".to_string(),
             url: format!(
-                "{}://{}/{}/{}/archive/{}.zip",
-                self.scheme, self.host, self.owner, self.repo, identifier,
+                "{}://{}/api/v4/projects/{}/repository/archive.zip?sha={}",
+                self.scheme,
+                self.host,
+                self.project_id
+                    .as_deref()
+                    .unwrap_or(&format!("{}%2F{}", self.owner, self.repo)),
+                identifier,
             ),
             reference: identifier.to_string(),
             shasum: None,

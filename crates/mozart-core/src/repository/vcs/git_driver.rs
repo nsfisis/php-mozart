@@ -1,6 +1,6 @@
-use super::super::process::ProcessExecutor;
-use super::super::util::git::GitUtil;
-use super::{DistReference, DriverConfig, SourceReference, VcsDriver};
+use crate::repository::vcs::{DistReference, DriverConfig, SourceReference, VcsDriverInterface};
+use crate::vcs::process::ProcessExecutor;
+use crate::vcs::util::git::GitUtil;
 use anyhow::Result;
 use indexmap::IndexMap;
 use std::collections::BTreeMap;
@@ -128,7 +128,7 @@ impl GitDriver {
     }
 }
 
-impl VcsDriver for GitDriver {
+impl VcsDriverInterface for GitDriver {
     async fn initialize(&mut self) -> Result<()> {
         if self.is_local {
             // Local repo: use directly (or its .git subdir)
