@@ -11,13 +11,14 @@
 //! `Composer\Command\BaseCommand::tryComposer()` for the upstream contract
 //! that [`Composer::require`] and [`Composer::try_load`] are modelled on.
 
-use std::path::{Path, PathBuf};
-
 use crate::factory::create_composer;
 use mozart_core::composer::{AutoloadGenerator, InstallationManager, Locker, RepositoryManager};
 use mozart_core::config::Config;
+use mozart_core::console::IoInterface;
 use mozart_core::downloader::DownloadManager;
 use mozart_core::package::RootPackageData;
+use mozart_core::package::archiver::ArchiveManager;
+use std::path::{Path, PathBuf};
 
 /// Project-level Composer state. Mirrors `Composer\PartialComposer` /
 /// `Composer\Composer` in PHP, exposing the subset of getters command
@@ -30,9 +31,10 @@ pub struct Composer {
     package: RootPackageData,
     repository_manager: RepositoryManager,
     installation_manager: InstallationManager,
-    download_manager: DownloadManager,
+    download_manager: std::sync::Arc<tokio::sync::Mutex<DownloadManager>>,
     autoload_generator: AutoloadGenerator,
     locker: Locker,
+    archive_manager: std::sync::Arc<tokio::sync::Mutex<ArchiveManager>>,
 }
 
 impl Composer {
@@ -48,9 +50,10 @@ impl Composer {
         package: RootPackageData,
         repository_manager: RepositoryManager,
         installation_manager: InstallationManager,
-        download_manager: DownloadManager,
+        download_manager: std::sync::Arc<tokio::sync::Mutex<DownloadManager>>,
         autoload_generator: AutoloadGenerator,
         locker: Locker,
+        archive_manager: std::sync::Arc<tokio::sync::Mutex<ArchiveManager>>,
     ) -> Self {
         Self {
             project_dir,
@@ -61,13 +64,17 @@ impl Composer {
             download_manager,
             autoload_generator,
             locker,
+            archive_manager,
         }
     }
 
     /// Load Composer state for `project_dir`, requiring a composer.json.
     /// Mirrors `BaseCommand::requireComposer()`, which delegates to
     /// `Factory::createComposer` after asserting the file exists.
-    pub fn require(project_dir: impl Into<PathBuf>) -> anyhow::Result<Self> {
+    pub fn require(
+        io: std::sync::Arc<std::sync::Mutex<Box<dyn IoInterface>>>,
+        project_dir: impl Into<PathBuf>,
+    ) -> anyhow::Result<Self> {
         let project_dir = project_dir.into();
         let composer_json = project_dir.join("composer.json");
         if !composer_json.exists() {
@@ -76,31 +83,37 @@ impl Composer {
                 project_dir.display()
             );
         }
-        create_composer(project_dir, &composer_json)
+        create_composer(io, project_dir, &composer_json)
     }
 
     /// Load Composer state for `project_dir`, returning `None` if no
     /// composer.json exists. Other I/O or parse errors still propagate.
     /// Mirrors `BaseCommand::tryComposer()`.
-    pub fn try_load(project_dir: impl Into<PathBuf>) -> anyhow::Result<Option<Self>> {
+    pub fn try_load(
+        io: std::sync::Arc<std::sync::Mutex<Box<dyn IoInterface>>>,
+        project_dir: impl Into<PathBuf>,
+    ) -> anyhow::Result<Option<Self>> {
         let project_dir = project_dir.into();
         let composer_json = project_dir.join("composer.json");
         if !composer_json.exists() {
             return Ok(None);
         }
-        create_composer(project_dir, &composer_json).map(Some)
+        create_composer(io, project_dir, &composer_json).map(Some)
     }
 
     /// Load Composer state keyed on a specific `composer.json` file, deriving
     /// the project directory from `file.parent()`. Mirrors
     /// `ValidateCommand::createComposerInstance($file)` — Composer keys
     /// instances on a file rather than a directory for non-default paths.
-    pub fn try_load_from_file(file: &Path) -> anyhow::Result<Option<Self>> {
+    pub fn try_load_from_file(
+        io: std::sync::Arc<std::sync::Mutex<Box<dyn IoInterface>>>,
+        file: &Path,
+    ) -> anyhow::Result<Option<Self>> {
         let project_dir = file
             .parent()
             .map(Path::to_path_buf)
             .unwrap_or_else(|| PathBuf::from("."));
-        Self::try_load(project_dir)
+        Self::try_load(io, project_dir)
     }
 
     pub fn project_dir(&self) -> &Path {
@@ -130,7 +143,7 @@ impl Composer {
         &self.installation_manager
     }
 
-    pub fn download_manager(&self) -> &DownloadManager {
+    pub fn download_manager(&self) -> &std::sync::Arc<tokio::sync::Mutex<DownloadManager>> {
         &self.download_manager
     }
 
@@ -148,5 +161,9 @@ impl Composer {
     /// Mirror of `Composer::getLocker()`.
     pub fn locker(&self) -> &Locker {
         &self.locker
+    }
+
+    pub fn archive_manager(&self) -> &std::sync::Arc<tokio::sync::Mutex<ArchiveManager>> {
+        &self.archive_manager
     }
 }

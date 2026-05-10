@@ -146,22 +146,18 @@ fn install_from_source(
     match source_type {
         "git" => {
             let process = crate::vcs::process::ProcessExecutor::new();
-            let git_util =
-                crate::vcs::util::git::GitUtil::new(process, vendor_dir.join(".cache").join("git"));
-            let downloader = GitDownloader::new(git_util);
+            let downloader = GitDownloader::new(process, vendor_dir.join(".cache").join("git"));
             downloader.download(url, reference, &target)?;
             downloader.install(url, reference, &target)?;
         }
         "svn" => {
             let process = crate::vcs::process::ProcessExecutor::new();
-            let svn_util = crate::vcs::util::svn::SvnUtil::new(process);
-            let downloader = SvnDownloader::new(svn_util);
+            let downloader = SvnDownloader::new(process);
             downloader.install(url, reference, &target)?;
         }
         "hg" => {
             let process = crate::vcs::process::ProcessExecutor::new();
-            let hg_util = crate::vcs::util::hg::HgUtil::new(process);
-            let downloader = HgDownloader::new(hg_util);
+            let downloader = HgDownloader::new(process);
             downloader.install(url, reference, &target)?;
         }
         _ => {

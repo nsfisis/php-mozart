@@ -362,7 +362,7 @@ pub async fn execute(
 
     let mut exit_code: i32 = 0;
 
-    let composer = Composer::try_load(&working_dir)?;
+    let composer = Composer::try_load(io.clone(), &working_dir)?;
     let config: Cow<'_, Config> = if let Some(c) = &composer {
         Cow::Borrowed(c.config())
     } else {

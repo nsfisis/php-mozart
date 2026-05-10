@@ -79,7 +79,7 @@ pub async fn execute(
         );
     }
 
-    let composer = Composer::require(&working_dir)?;
+    let composer = Composer::require(io.clone(), &working_dir)?;
 
     // TODO(plugins): dispatch CommandEvent for `licenses`.
 

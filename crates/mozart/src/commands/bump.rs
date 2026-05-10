@@ -35,7 +35,7 @@ pub async fn execute(
     io: std::sync::Arc<std::sync::Mutex<Box<dyn IoInterface>>>,
 ) -> anyhow::Result<()> {
     let working_dir = cli.working_dir()?;
-    let composer = Composer::require(&working_dir)?;
+    let composer = Composer::require(io.clone(), &working_dir)?;
 
     let exit = do_bump(
         io,

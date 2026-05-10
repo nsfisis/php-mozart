@@ -1,10 +1,10 @@
+use crate::downloader::{DownloaderInterface, VcsDownloader};
+use crate::vcs::process::ProcessExecutor;
+use crate::vcs::util::svn::SvnUtil;
 use anyhow::Result;
 use regex::Regex;
 use std::path::Path;
 use std::sync::LazyLock;
-
-use crate::downloader::VcsDownloader;
-use crate::vcs::util::svn::SvnUtil;
 
 /// Match any non-`X` status line (mirror of Composer's
 /// `{^ *[^X ] +}m`). Ignores externals (`X` prefix).
@@ -16,8 +16,10 @@ pub struct SvnDownloader {
 }
 
 impl SvnDownloader {
-    pub fn new(svn_util: SvnUtil) -> Self {
-        Self { svn_util }
+    pub fn new(process: ProcessExecutor) -> Self {
+        Self {
+            svn_util: SvnUtil::new(process),
+        }
     }
 }
 
@@ -81,5 +83,11 @@ impl VcsDownloader for SvnDownloader {
 
     fn is_dvcs_downloader(&self) -> bool {
         false
+    }
+}
+
+impl DownloaderInterface for SvnDownloader {
+    fn as_vcs_downloader(&self) -> Option<&dyn VcsDownloader> {
+        Some(self)
     }
 }

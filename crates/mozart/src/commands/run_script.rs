@@ -42,7 +42,7 @@ pub async fn execute(
     let working_dir = cli.working_dir()?;
 
     if args.list {
-        Composer::require(&working_dir)?;
+        Composer::require(io.clone(), &working_dir)?;
         let (scripts, descriptions) = load_scripts(&working_dir)?;
         return list_scripts(&scripts, &descriptions, io.clone());
     }
@@ -58,7 +58,7 @@ pub async fn execute(
         anyhow::bail!("Script \"{}\" cannot be run with this command", script);
     }
 
-    let composer = Composer::require(&working_dir)?;
+    let composer = Composer::require(io.clone(), &working_dir)?;
     let dev_mode = args.dev || !args.no_dev;
 
     let (scripts, _descriptions) = load_scripts(&working_dir)?;

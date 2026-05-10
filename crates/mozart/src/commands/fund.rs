@@ -31,7 +31,7 @@ pub async fn execute(
     }
 
     let working_dir = cli.working_dir()?;
-    let composer = Composer::require(&working_dir)?;
+    let composer = Composer::require(io.clone(), &working_dir)?;
     let installed = InstalledPackages::read(composer.installation_manager().vendor_dir())?;
 
     // Configured remote repositories from `composer.json` are not yet wired

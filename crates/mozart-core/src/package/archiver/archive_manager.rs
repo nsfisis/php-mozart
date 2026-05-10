@@ -1,3 +1,5 @@
+use crate::downloader::DownloadManager;
+
 use super::{
     ArchiveFormat, collect_archivable_files, create_archive, generate_archive_filename,
     parse_composer_excludes, parse_gitattributes, parse_gitignore_pattern, self_exclusion_patterns,
@@ -108,20 +110,22 @@ fn read_archive_config(composer_json_path: &Path) -> anyhow::Result<(Option<Stri
     Ok((name, excludes))
 }
 
-/// Manages the creation of package archives.
-///
-/// Mirrors Composer's `Composer\Package\Archiver\ArchiveManager`.
-pub struct ArchiveManager;
+trait ArchiverInterface: Send + Sync {}
 
-impl Default for ArchiveManager {
-    fn default() -> Self {
-        Self::new()
-    }
+/// ref: \Composer\Package\Archiver\ArchiveManager
+pub struct ArchiveManager {
+    download_manager: std::sync::Arc<tokio::sync::Mutex<DownloadManager>>,
+    _archivers: Vec<Box<dyn ArchiverInterface>>,
+    _overwrite_files: bool,
 }
 
 impl ArchiveManager {
-    pub fn new() -> Self {
-        ArchiveManager
+    pub fn new(download_manager: std::sync::Arc<tokio::sync::Mutex<DownloadManager>>) -> Self {
+        Self {
+            download_manager,
+            _archivers: Vec::new(),
+            _overwrite_files: true,
+        }
     }
 
     /// Build the parts that make up a package archive's filename.
@@ -170,7 +174,6 @@ impl ArchiveManager {
         target_dir: &Path,
         file_name: Option<&str>,
         ignore_filters: bool,
-        files_cache: &crate::repository::cache::Cache,
     ) -> anyhow::Result<PathBuf> {
         let archive_format = ArchiveFormat::parse(format).ok_or_else(|| {
             anyhow::anyhow!(
@@ -179,7 +182,7 @@ impl ArchiveManager {
             )
         })?;
 
-        let source = acquire_source(package, files_cache).await?;
+        let source = acquire_source(package, &self.download_manager).await?;
 
         let filename_base = if let Some(file_name) = file_name {
             file_name.to_string()
@@ -228,7 +231,7 @@ impl ArchiveManager {
 /// composer.json.
 async fn acquire_source(
     package: &ArchivePackage,
-    files_cache: &crate::repository::cache::Cache,
+    download_manager: &std::sync::Arc<tokio::sync::Mutex<DownloadManager>>,
 ) -> anyhow::Result<AcquiredSource> {
     match package {
         ArchivePackage::Root { source_dir, .. } => {
@@ -262,13 +265,11 @@ async fn acquire_source(
             let temp_dir = temp_base.join(&unique);
             std::fs::create_dir_all(&temp_dir)?;
 
-            let bytes = crate::repository::downloader::download_dist(
-                dist_url,
-                dist_shasum.as_deref(),
-                None,
-                files_cache,
-            )
-            .await?;
+            let bytes = download_manager
+                .lock()
+                .await
+                .download_legacy(dist_url, dist_shasum.as_deref(), None)
+                .await?;
 
             match dist_type.as_str() {
                 "zip" => crate::repository::downloader::extract_zip(&bytes, &temp_dir)?,

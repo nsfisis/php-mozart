@@ -66,7 +66,7 @@ pub async fn execute(
     io: std::sync::Arc<std::sync::Mutex<Box<dyn IoInterface>>>,
 ) -> anyhow::Result<()> {
     let working_dir = cli.working_dir()?;
-    let composer = Composer::require(&working_dir)?;
+    let composer = Composer::require(io.clone(), &working_dir)?;
     let local_repo = composer.repository_manager().local_repository();
 
     // Selection: mirrors `ReinstallCommand::execute` lines 79-110.

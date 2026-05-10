@@ -1,11 +1,10 @@
+use crate::downloader::{DownloaderInterface, VcsDownloader};
+use crate::vcs::process::ProcessExecutor;
+use crate::vcs::util::git::GitUtil;
 use anyhow::Result;
 use regex::Regex;
 use std::path::Path;
 use std::sync::LazyLock;
-
-use crate::downloader::VcsDownloader;
-use crate::vcs::process::ProcessExecutor;
-use crate::vcs::util::git::GitUtil;
 
 /// Match `<hex> HEAD` lines in `git show-ref --head -d` output.
 static HEAD_REF_RE: LazyLock<Regex> =
@@ -19,8 +18,10 @@ pub struct GitDownloader {
 }
 
 impl GitDownloader {
-    pub fn new(git_util: GitUtil) -> Self {
-        Self { git_util }
+    pub fn new(process: ProcessExecutor, cache_dir: std::path::PathBuf) -> Self {
+        Self {
+            git_util: GitUtil::new(process, cache_dir),
+        }
     }
 }
 
@@ -232,6 +233,12 @@ impl VcsDownloader for GitDownloader {
 
     fn is_dvcs_downloader(&self) -> bool {
         true
+    }
+}
+
+impl DownloaderInterface for GitDownloader {
+    fn as_vcs_downloader(&self) -> Option<&dyn VcsDownloader> {
+        Some(self)
     }
 }
 

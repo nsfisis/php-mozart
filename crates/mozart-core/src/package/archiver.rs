@@ -5,8 +5,8 @@ use std::fs;
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
 
-pub mod manager;
-pub use manager::{ArchiveManager, ArchivePackage};
+mod archive_manager;
+pub use archive_manager::*;
 
 /// A compiled exclude pattern derived from a gitignore-style rule.
 pub struct ExcludePattern {

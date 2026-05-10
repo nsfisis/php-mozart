@@ -32,7 +32,7 @@ pub async fn execute(
     let working_dir = cli.working_dir()?;
     let cache = Cache::repo(&build_cache_config(cli.no_cache));
 
-    let composer = Composer::try_load(&working_dir)?;
+    let composer = Composer::try_load(io.clone(), &working_dir)?;
     let repos = build_repos(composer.as_ref(), cache);
 
     let packages: Vec<String> = if args.packages.is_empty() {

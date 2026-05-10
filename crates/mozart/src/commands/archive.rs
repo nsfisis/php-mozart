@@ -1,9 +1,11 @@
 use crate::composer::Composer;
+use crate::factory::{create_archive_manager, create_download_manager};
 use clap::Args;
+use mozart_core::config::Config;
 use mozart_core::console::IoInterface;
 use mozart_core::console_writeln;
 use mozart_core::factory::create_config;
-use mozart_core::package::archiver::{ArchiveManager, ArchivePackage};
+use mozart_core::package::archiver::ArchivePackage;
 use std::borrow::Cow;
 use std::path::{Path, PathBuf};
 
@@ -39,7 +41,7 @@ pub async fn execute(
 ) -> anyhow::Result<()> {
     let working_dir = cli.working_dir()?;
 
-    let composer = Composer::try_load(&working_dir)?;
+    let composer = Composer::try_load(io.clone(), &working_dir)?;
     let config = if let Some(composer) = &composer {
         Cow::Borrowed(composer.config())
     } else {
@@ -50,7 +52,8 @@ pub async fn execute(
     let dir = args.dir.as_deref().unwrap_or(&config.archive_dir);
 
     archive(
-        &io,
+        io,
+        &config,
         args.package.as_deref(),
         args.version.as_deref(),
         format,
@@ -59,13 +62,15 @@ pub async fn execute(
         args.ignore_filters,
         &working_dir,
         cli.no_cache,
+        composer.as_ref(),
     )
     .await
 }
 
 #[allow(clippy::too_many_arguments)]
 async fn archive(
-    io: &std::sync::Arc<std::sync::Mutex<Box<dyn IoInterface>>>,
+    io: std::sync::Arc<std::sync::Mutex<Box<dyn IoInterface>>>,
+    config: &Config,
     package_name: Option<&str>,
     version: Option<&str>,
     format: &str,
@@ -74,15 +79,24 @@ async fn archive(
     ignore_filters: bool,
     working_dir: &Path,
     no_cache: bool,
+    composer: Option<&Composer>,
 ) -> anyhow::Result<()> {
     let cache_config = mozart_core::repository::cache::build_cache_config(no_cache);
     let repo_cache = mozart_core::repository::cache::Cache::repo(&cache_config);
-    let files_cache = mozart_core::repository::cache::Cache::files(&cache_config);
 
-    let archive_manager = ArchiveManager::new();
+    let archive_manager = if let Some(composer) = composer {
+        Cow::Borrowed(composer.archive_manager())
+    } else {
+        let download_manager = std::sync::Arc::new(tokio::sync::Mutex::new(
+            create_download_manager(io.clone(), config),
+        ));
+        Cow::Owned(std::sync::Arc::new(tokio::sync::Mutex::new(
+            create_archive_manager(download_manager),
+        )))
+    };
 
     let package = if let Some(package_name) = package_name {
-        select_package(io, package_name, version, &repo_cache).await?
+        select_package(&io, package_name, version, &repo_cache).await?
     } else {
         load_root_package(working_dir)?
     };
@@ -97,14 +111,9 @@ async fn archive(
         .unwrap()
         .info(&format!("Creating the archive into \"{}\".", dest));
     let package_path = archive_manager
-        .archive(
-            &package,
-            format,
-            &dest_dir,
-            file_name,
-            ignore_filters,
-            &files_cache,
-        )
+        .lock()
+        .await
+        .archive(&package, format, &dest_dir, file_name, ignore_filters)
         .await?;
 
     let absolute = package_path.display().to_string();

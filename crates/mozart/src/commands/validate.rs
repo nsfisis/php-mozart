@@ -104,7 +104,9 @@ pub async fn execute(
     // Load the Composer project state (optional — used for typed config,
     // locker, and the repository/installation managers). Mirrors
     // `ValidateCommand::createComposerInstance($file)`.
-    let composer = Composer::try_load_from_file(&file).ok().flatten();
+    let composer = Composer::try_load_from_file(io.clone(), &file)
+        .ok()
+        .flatten();
 
     // Determine whether to check the lock file using the typed config when
     // available, falling back to a raw JSON read for paths where the Composer

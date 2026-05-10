@@ -18,7 +18,7 @@ pub async fn execute(
     cli: &super::Cli,
     io: std::sync::Arc<std::sync::Mutex<Box<dyn IoInterface>>>,
 ) -> anyhow::Result<()> {
-    let composer = Composer::try_load(cli.working_dir()?)?;
+    let composer = Composer::try_load(io.clone(), cli.working_dir()?)?;
     let config = if let Some(composer) = &composer {
         Cow::Borrowed(composer.config())
     } else {

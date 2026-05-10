@@ -57,7 +57,7 @@ pub async fn execute(
     cli: &super::Cli,
     io: std::sync::Arc<std::sync::Mutex<Box<dyn IoInterface>>>,
 ) -> anyhow::Result<()> {
-    let composer = Composer::require(cli.working_dir()?)?;
+    let composer = Composer::require(io.clone(), cli.working_dir()?)?;
 
     let installation_manager = composer.installation_manager();
     let local_repo = composer.repository_manager().local_repository();

@@ -2,6 +2,7 @@ use clap::Args;
 use indexmap::IndexMap;
 use mozart_core::console::IoInterface;
 use mozart_core::console_format;
+use mozart_core::factory::create_config;
 use mozart_core::package::{self, Stability};
 use mozart_core::repository::downloader;
 use mozart_core::repository::lockfile;
@@ -10,6 +11,8 @@ use mozart_core::repository::resolver::{self, PlatformConfig, ResolveRequest};
 use mozart_core::repository::version;
 use mozart_core::validation;
 use std::path::{Path, PathBuf};
+
+use crate::factory::create_download_manager;
 
 #[derive(Args)]
 pub struct CreateProjectArgs {
@@ -337,7 +340,7 @@ pub async fn execute(
     let secure_http = !args.no_secure_http;
 
     install_project(
-        &io,
+        io,
         cli,
         args,
         args.package.as_deref(),
@@ -362,7 +365,7 @@ pub async fn execute(
 
 #[allow(clippy::too_many_arguments)]
 async fn install_project(
-    io: &std::sync::Arc<std::sync::Mutex<Box<dyn IoInterface>>>,
+    io: std::sync::Arc<std::sync::Mutex<Box<dyn IoInterface>>>,
     cli: &super::Cli,
     args: &CreateProjectArgs,
     package_name: Option<&str>,
@@ -395,7 +398,7 @@ async fn install_project(
     let root_result = if let Some(name) = package_name {
         Some(
             install_root_package(
-                io,
+                io.clone(),
                 cli,
                 args,
                 name,
@@ -647,7 +650,7 @@ async fn install_project(
 
 #[allow(clippy::too_many_arguments)]
 async fn install_root_package(
-    io: &std::sync::Arc<std::sync::Mutex<Box<dyn IoInterface>>>,
+    io: std::sync::Arc<std::sync::Mutex<Box<dyn IoInterface>>>,
     cli: &super::Cli,
     _args: &CreateProjectArgs,
     package_name: &str,
@@ -733,7 +736,6 @@ async fn install_root_package(
     // --- Find the best candidate matching constraint + stability ---
     let cache_config = mozart_core::repository::cache::build_cache_config(cli.no_cache);
     let repo_cache = mozart_core::repository::cache::Cache::repo(&cache_config);
-    let files_cache = mozart_core::repository::cache::Cache::files(&cache_config);
 
     let versions = packagist::fetch_package_versions(&name, &repo_cache).await?;
 
@@ -786,13 +788,11 @@ async fn install_root_package(
     let mut progress =
         downloader::DownloadProgress::new(!no_progress, format!("{name} ({concrete_version})"));
 
-    let bytes = downloader::download_dist(
-        &dist.url,
-        dist.shasum.as_deref(),
-        Some(&mut progress),
-        &files_cache,
-    )
-    .await?;
+    let config = create_config()?;
+    let download_manager = create_download_manager(io.clone(), &config);
+    let bytes = download_manager
+        .download_legacy(&dist.url, dist.shasum.as_deref(), Some(&mut progress))
+        .await?;
 
     progress.finish();
 

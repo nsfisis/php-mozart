@@ -25,7 +25,7 @@ pub async fn execute(
 ) -> anyhow::Result<()> {
     let working_dir = cli.working_dir()?;
 
-    let composer = Composer::require(&working_dir)?;
+    let composer = Composer::require(io.clone(), &working_dir)?;
     let bin_dir = resolve_bin_dir(&working_dir, &composer);
 
     if args.list || args.binary.is_none() {
@@ -150,7 +150,15 @@ fn get_binaries(composer: &Composer, bin_dir: &Path) -> Vec<(String, bool)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use mozart_core::console::Console;
     use std::fs;
+    use std::sync::{Arc, Mutex};
+
+    fn io() -> Arc<Mutex<Box<dyn IoInterface>>> {
+        Arc::new(Mutex::new(
+            Box::new(Console::new(0, true, false, true, true)) as Box<dyn IoInterface>,
+        ))
+    }
 
     #[test]
     fn test_resolve_bin_dir_default() {
@@ -158,7 +166,7 @@ mod tests {
         let composer_json = dir.path().join("composer.json");
         fs::write(&composer_json, r#"{"name": "test/pkg", "require": {}}"#).unwrap();
 
-        let composer = Composer::require(dir.path()).unwrap();
+        let composer = Composer::require(io(), dir.path()).unwrap();
         let result = resolve_bin_dir(dir.path(), &composer);
         assert_eq!(result, dir.path().join("vendor/bin"));
     }
@@ -173,7 +181,7 @@ mod tests {
         )
         .unwrap();
 
-        let composer = Composer::require(dir.path()).unwrap();
+        let composer = Composer::require(io(), dir.path()).unwrap();
         let result = resolve_bin_dir(dir.path(), &composer);
         assert_eq!(result, dir.path().join("libs/bin"));
     }
@@ -188,7 +196,7 @@ mod tests {
         )
         .unwrap();
 
-        let composer = Composer::require(dir.path()).unwrap();
+        let composer = Composer::require(io(), dir.path()).unwrap();
         let result = resolve_bin_dir(dir.path(), &composer);
         assert_eq!(result, dir.path().join("scripts"));
     }
@@ -203,7 +211,7 @@ mod tests {
         )
         .unwrap();
 
-        let composer = Composer::require(dir.path()).unwrap();
+        let composer = Composer::require(io(), dir.path()).unwrap();
         let result = resolve_bin_dir(dir.path(), &composer);
         assert_eq!(result, dir.path().join("packages/commands"));
     }
@@ -223,7 +231,7 @@ mod tests {
         )
         .unwrap();
 
-        let composer = Composer::require(dir.path()).unwrap();
+        let composer = Composer::require(io(), dir.path()).unwrap();
         let binaries = get_binaries(&composer, &bin_dir);
         let names: Vec<&str> = binaries.iter().map(|(n, _)| n.as_str()).collect();
         assert!(names.contains(&"phpunit"));
@@ -249,7 +257,7 @@ mod tests {
         )
         .unwrap();
 
-        let composer = Composer::require(dir.path()).unwrap();
+        let composer = Composer::require(io(), dir.path()).unwrap();
         let binaries = get_binaries(&composer, &bin_dir);
         let names: Vec<&str> = binaries.iter().map(|(n, _)| n.as_str()).collect();
         assert!(names.contains(&"phpunit"));
@@ -268,7 +276,7 @@ mod tests {
         )
         .unwrap();
 
-        let composer = Composer::require(dir.path()).unwrap();
+        let composer = Composer::require(io(), dir.path()).unwrap();
         let binaries = get_binaries(&composer, &bin_dir);
         let names: Vec<&str> = binaries.iter().map(|(n, _)| n.as_str()).collect();
         assert!(names.contains(&"my-tool"));
@@ -291,7 +299,7 @@ mod tests {
         )
         .unwrap();
 
-        let composer = Composer::require(dir.path()).unwrap();
+        let composer = Composer::require(io(), dir.path()).unwrap();
         let binaries = get_binaries(&composer, &bin_dir);
         assert!(binaries.is_empty());
     }
@@ -306,7 +314,7 @@ mod tests {
         .unwrap();
 
         let bin_dir = dir.path().join("vendor/bin");
-        let composer = Composer::require(dir.path()).unwrap();
+        let composer = Composer::require(io(), dir.path()).unwrap();
         let binaries = get_binaries(&composer, &bin_dir);
         assert!(
             binaries.is_empty(),
@@ -323,7 +331,7 @@ mod tests {
         )
         .unwrap();
 
-        let composer = Composer::require(dir.path()).unwrap();
+        let composer = Composer::require(io(), dir.path()).unwrap();
         let bin_dir = resolve_bin_dir(dir.path(), &composer);
 
         // No binaries exist — looking up a name should find nothing

@@ -2,7 +2,6 @@ use mozart_core::downloader::{GitDownloader, VcsDownloader};
 use mozart_core::repository::vcs::{DriverConfig, DriverType, create_driver, detect_driver};
 use mozart_core::vcs::process::ProcessExecutor;
 use mozart_core::vcs::repository::VcsRepository;
-use mozart_core::vcs::util::git::GitUtil;
 use std::path::Path;
 use std::process::Command;
 use tempfile::TempDir;
@@ -148,9 +147,7 @@ fn test_git_downloader() {
     let install_dir = TempDir::new().unwrap();
     create_test_repo(repo_dir.path());
 
-    let process = ProcessExecutor::new();
-    let git_util = GitUtil::new(process, cache_dir.path().join("git"));
-    let downloader = GitDownloader::new(git_util);
+    let downloader = GitDownloader::new(ProcessExecutor::new(), cache_dir.path().join("git"));
 
     let url = repo_dir.path().to_str().unwrap();
     let target = install_dir.path().join("test-package");
@@ -203,9 +200,7 @@ fn test_git_downloader_unpushed_changes() {
     let install_dir = TempDir::new().unwrap();
     create_test_repo(repo_dir.path());
 
-    let process = ProcessExecutor::new();
-    let git_util = GitUtil::new(process, cache_dir.path().join("git"));
-    let downloader = GitDownloader::new(git_util);
+    let downloader = GitDownloader::new(ProcessExecutor::new(), cache_dir.path().join("git"));
 
     let url = repo_dir.path().to_str().unwrap();
     let target = install_dir.path().join("test-package");

@@ -44,7 +44,7 @@ pub async fn execute(
     let working_dir = cli.working_dir()?;
 
     // Load Composer state (reads composer.json + config)
-    let composer = Composer::require(&working_dir)?;
+    let composer = Composer::require(io.clone(), &working_dir)?;
 
     // Parse audit config from composer.json's config.audit section
     let audit_config = AuditConfig::from_config(composer.config(), true, AuditFormat::Table)?;

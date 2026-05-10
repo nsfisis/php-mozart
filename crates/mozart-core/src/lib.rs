@@ -21,6 +21,7 @@ pub mod repository;
 pub mod repository_utils;
 pub mod script_events;
 pub mod suggest;
+pub mod util;
 pub mod validation;
 pub mod vcs;
 pub mod version_bumper;

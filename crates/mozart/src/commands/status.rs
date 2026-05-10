@@ -17,11 +17,11 @@ pub async fn execute(
     io: std::sync::Arc<std::sync::Mutex<Box<dyn IoInterface>>>,
 ) -> anyhow::Result<()> {
     // init repos
-    let composer = Composer::require(cli.working_dir()?)?;
+    let composer = Composer::require(io.clone(), cli.working_dir()?)?;
 
     let installed_repo = composer.repository_manager().local_repository();
 
-    let dm = composer.download_manager();
+    let dm = composer.download_manager().lock().await;
     let im = composer.installation_manager();
 
     let mut errors = Vec::new();

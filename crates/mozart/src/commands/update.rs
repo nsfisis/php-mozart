@@ -1747,7 +1747,7 @@ pub async fn run(
         let mode = bump_mode.as_deref().unwrap_or("all");
         let dev_only = mode == "dev";
         let no_dev_only = mode == "no-dev";
-        let bump_composer = Composer::require(working_dir)?;
+        let bump_composer = Composer::require(io.clone(), working_dir)?;
         let bump_exit = super::bump::do_bump(
             io.clone(),
             &bump_composer,

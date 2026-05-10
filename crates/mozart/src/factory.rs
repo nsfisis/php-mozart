@@ -14,39 +14,21 @@ use mozart_core::composer::{
     AutoloadGenerator, InstallationManager, InstallationSource, LocalPackage, LocalRepository,
     Locker, PackageReference, RepositoryManager,
 };
-use mozart_core::config::resolve_references;
-use mozart_core::downloader::DownloadManager;
+use mozart_core::config::{Config, resolve_references};
+use mozart_core::console::IoInterface;
+use mozart_core::downloader::{DownloadManager, GitDownloader, HgDownloader, SvnDownloader};
 use mozart_core::factory::create_config;
+use mozart_core::package::archiver::ArchiveManager;
 use mozart_core::package::{RootPackageData, read_from_file};
+use mozart_core::repository::cache::Cache;
+use mozart_core::util::Filesystem;
+use mozart_core::vcs::process::ProcessExecutor;
 
-/// Rust port of `Factory::createComposer()`.
+/// Creates a Composer instance.
 ///
-/// Builds the project-level [`Composer`]:
-/// 1. Read `composer.json` from `composer_json` and load it into both
-///    the merged [`Config`] (overlaying [`create_config`]) and the
-///    untyped [`crate::package::RawPackageData`].
-/// 2. Resolve all `{$home}` / `{$vendor-dir}` placeholders via
-///    [`resolve_references`].
-/// 3. Resolve `vendor-dir` against `project_dir` if it is relative, so
-///    the installation manager hands back absolute paths
-///    (`Factory::createComposer` does the same via
-///    `Filesystem::isAbsolutePath`).
-/// 4. Wire up the [`InstallationManager`] and a [`RepositoryManager`]
-///    whose local repository is populated from
-///    `vendor/composer/installed.json` — the same role
-///    `Factory::addLocalRepository` plays in PHP.
-/// 5. Construct a fresh [`AutoloadGenerator`] with PHP defaults
-///    (`new AutoloadGenerator($eventDispatcher, $io)` in PHP, minus the
-///    not-yet-ported event dispatcher and IO dependencies).
-/// 6. Construct a [`Locker`] pointed at `composer.lock` next to the
-///    composer.json — same as `Factory::createComposer`'s
-///    `new Locker($io, new JsonFile($lockFile, …), $im, $contents)`,
-///    minus the IO/installation-manager/contents dependencies that
-///    only matter once we port `setLockData`.
-///
-/// The plugin manager, download manager, and event dispatcher that
-/// `Factory::createComposer` also wires up are not yet ported.
+/// ref: \Composer\Factory\createComposer()
 pub fn create_composer(
+    io: std::sync::Arc<std::sync::Mutex<Box<dyn IoInterface>>>,
     project_dir: std::path::PathBuf,
     composer_json: &std::path::Path,
 ) -> anyhow::Result<Composer> {
@@ -78,7 +60,9 @@ pub fn create_composer(
     let repository_manager =
         RepositoryManager::new(LocalRepository::with_dev_mode(local_packages, dev_mode));
     let installation_manager = InstallationManager::new(vendor_dir.clone());
-    let download_manager = DownloadManager::new(vendor_dir.join(".cache").join("git"));
+    let dm = std::sync::Arc::new(tokio::sync::Mutex::new(create_download_manager(
+        io, &config,
+    )));
     let autoload_generator = AutoloadGenerator::new();
 
     // Mirrors `Factory::createComposer`'s lock-file path: the lockfile
@@ -96,6 +80,7 @@ pub fn create_composer(
                 .unwrap_or_else(|| "composer.lock".to_string()),
         );
     let locker = Locker::new(lock_file_path);
+    let am = std::sync::Arc::new(tokio::sync::Mutex::new(create_archive_manager(dm.clone())));
 
     Ok(Composer::new(
         project_dir,
@@ -103,10 +88,64 @@ pub fn create_composer(
         package,
         repository_manager,
         installation_manager,
-        download_manager,
+        dm,
         autoload_generator,
         locker,
+        am,
     ))
+}
+
+pub fn create_download_manager(
+    io: std::sync::Arc<std::sync::Mutex<Box<dyn IoInterface>>>,
+    config: &Config,
+) -> DownloadManager {
+    let cache = if config.cache_files_ttl > 0 {
+        Some(Cache::new(
+            std::path::PathBuf::from(config.cache_files_dir.clone()),
+            config.cache_read_only,
+        ))
+    } else {
+        None
+    };
+    let cache = cache.unwrap();
+
+    let mut dm = DownloadManager::new(io, false, Filesystem::new(), cache);
+    if let serde_json::Value::String(preferred) = &config.preferred_install {
+        match preferred.as_str() {
+            "dist" => dm.set_prefer_dist(true),
+            "source" => dm.set_prefer_source(true),
+            _ => (),
+        }
+    }
+
+    if let serde_json::Value::Object(preferred) = &config.preferred_install {
+        _ = preferred;
+        unimplemented!()
+    }
+
+    dm.set_downloader(
+        "git".to_owned(),
+        Box::new(GitDownloader::new(
+            ProcessExecutor::new(),
+            std::path::PathBuf::from(config.cache_files_dir.clone()),
+        )),
+    );
+    dm.set_downloader(
+        "svn".to_owned(),
+        Box::new(SvnDownloader::new(ProcessExecutor::new())),
+    );
+    dm.set_downloader(
+        "hg".to_owned(),
+        Box::new(HgDownloader::new(ProcessExecutor::new())),
+    );
+
+    dm
+}
+
+pub fn create_archive_manager(
+    download_manager: std::sync::Arc<tokio::sync::Mutex<DownloadManager>>,
+) -> ArchiveManager {
+    ArchiveManager::new(download_manager)
 }
 
 /// Read `vendor/composer/installed.json` into the minimal shape the
@@ -215,13 +254,21 @@ fn read_package_reference(value: Option<&serde_json::Value>) -> Option<PackageRe
 #[cfg(test)]
 mod tests {
     use super::*;
+    use mozart_core::console::Console;
     use std::fs;
     use std::path::Path;
+    use std::sync::{Arc, Mutex};
     use tempfile::tempdir;
 
     fn write(path: &Path, content: &str) {
         fs::create_dir_all(path.parent().unwrap()).unwrap();
         fs::write(path, content).unwrap();
+    }
+
+    fn io() -> Arc<Mutex<Box<dyn IoInterface>>> {
+        Arc::new(Mutex::new(
+            Box::new(Console::new(0, true, false, true, true)) as Box<dyn IoInterface>,
+        ))
     }
 
     #[test]
@@ -233,7 +280,7 @@ mod tests {
             r#"{"packages": [{"name": "Vendor/Pkg", "version": "1.0.0"}]}"#,
         );
 
-        let composer = Composer::require(dir.path()).unwrap();
+        let composer = Composer::require(io(), dir.path()).unwrap();
         let pkg = composer
             .repository_manager()
             .local_repository()
@@ -261,7 +308,7 @@ mod tests {
             r#"{"packages": [{"name": "vendor/pkg", "target-dir": "src/lib"}]}"#,
         );
 
-        let composer = Composer::require(dir.path()).unwrap();
+        let composer = Composer::require(io(), dir.path()).unwrap();
         let pkg = composer
             .repository_manager()
             .local_repository()
@@ -282,7 +329,7 @@ mod tests {
         let dir = tempdir().unwrap();
         write(&dir.path().join("composer.json"), r#"{"name": "acme/app"}"#);
 
-        let composer = Composer::require(dir.path()).unwrap();
+        let composer = Composer::require(io(), dir.path()).unwrap();
         let count = composer
             .repository_manager()
             .local_repository()
@@ -303,7 +350,7 @@ mod tests {
             r#"[{"name": "a/a"}, {"name": "b/b"}]"#,
         );
 
-        let composer = Composer::require(dir.path()).unwrap();
+        let composer = Composer::require(io(), dir.path()).unwrap();
         let names: Vec<&str> = composer
             .repository_manager()
             .local_repository()
@@ -322,7 +369,7 @@ mod tests {
         );
 
         use mozart_core::package::Package;
-        let composer = Composer::require(dir.path()).unwrap();
+        let composer = Composer::require(io(), dir.path()).unwrap();
         assert_eq!(composer.package().name(), "acme/app");
         assert_eq!(
             composer
@@ -346,7 +393,7 @@ mod tests {
             r#"{"packages": [{"name": "vendor/pkg"}]}"#,
         );
 
-        let composer = Composer::require(dir.path()).unwrap();
+        let composer = Composer::require(io(), dir.path()).unwrap();
         let pkg = composer
             .repository_manager()
             .local_repository()

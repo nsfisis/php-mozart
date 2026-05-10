@@ -80,7 +80,7 @@ impl DownloadProgress {
 /// Downloaded bytes are cached by URL in `files_cache`; cache hits skip the network request
 /// entirely.
 #[tracing::instrument(skip(expected_shasum, progress, files_cache))]
-pub async fn download_dist(
+pub(crate) async fn download_dist(
     url: &str,
     expected_shasum: Option<&str>,
     progress: Option<&mut DownloadProgress>,

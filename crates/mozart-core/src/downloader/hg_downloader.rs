@@ -1,7 +1,8 @@
+use crate::downloader::{DownloaderInterface, VcsDownloader};
+use crate::vcs::process::ProcessExecutor;
+use crate::vcs::util::hg::HgUtil;
 use anyhow::Result;
 use std::path::Path;
-
-use crate::{downloader::VcsDownloader, vcs::util::hg::HgUtil};
 
 /// Mercurial downloader using clone/pull/update.
 pub struct HgDownloader {
@@ -9,8 +10,10 @@ pub struct HgDownloader {
 }
 
 impl HgDownloader {
-    pub fn new(hg_util: HgUtil) -> Self {
-        Self { hg_util }
+    pub fn new(process: ProcessExecutor) -> Self {
+        Self {
+            hg_util: HgUtil::new(process),
+        }
     }
 }
 
@@ -80,5 +83,11 @@ impl VcsDownloader for HgDownloader {
 
     fn is_dvcs_downloader(&self) -> bool {
         false
+    }
+}
+
+impl DownloaderInterface for HgDownloader {
+    fn as_vcs_downloader(&self) -> Option<&dyn VcsDownloader> {
+        Some(self)
     }
 }
