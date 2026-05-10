@@ -1,17 +1,13 @@
 //! `DownloadManager` — pick the right [`VcsDownloader`] for a given
 //! [`LocalPackage`]. Mirrors `Composer\Downloader\DownloadManager`.
 
-use std::path::PathBuf;
-
 use crate::composer::{InstallationSource, LocalPackage};
-use crate::vcs::downloader::VcsDownloader;
-use crate::vcs::downloader::git::GitDownloader;
-use crate::vcs::downloader::hg::HgDownloader;
-use crate::vcs::downloader::svn::SvnDownloader;
+use crate::downloader::{GitDownloader, HgDownloader, SvnDownloader, VcsDownloader};
 use crate::vcs::process::ProcessExecutor;
 use crate::vcs::util::git::GitUtil;
 use crate::vcs::util::hg::HgUtil;
 use crate::vcs::util::svn::SvnUtil;
+use std::path::PathBuf;
 
 /// Selects a `VcsDownloader` for a package based on its installation source
 /// and source type. Mirrors `DownloadManager::getDownloaderForPackage`:

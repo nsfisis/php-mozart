@@ -2,7 +2,6 @@ pub mod advisory;
 pub mod browse_repos;
 pub mod cache;
 pub mod composer_repo;
-pub mod download_manager;
 pub mod downloader;
 pub mod inline_package;
 pub mod installed;

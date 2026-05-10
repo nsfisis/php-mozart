@@ -8,6 +8,7 @@ pub mod config_source;
 pub mod config_validator;
 pub mod console;
 pub mod dependency_resolver;
+pub mod downloader;
 pub mod exit_code;
 pub mod factory;
 pub mod http;

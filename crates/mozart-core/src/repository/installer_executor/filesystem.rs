@@ -5,9 +5,10 @@
 //! [`crate::vcs`], and removes vendor directories. Test code substitutes a
 //! recording-only executor instead (added in a later step).
 
-use super::super::cache::Cache;
-use super::super::downloader;
-use super::{ExecuteContext, InstallerExecutor, PackageOperation};
+use crate::downloader::{GitDownloader, HgDownloader, SvnDownloader};
+use crate::repository::cache::Cache;
+use crate::repository::downloader;
+use crate::repository::installer_executor::{ExecuteContext, InstallerExecutor, PackageOperation};
 use std::path::Path;
 
 pub struct FilesystemExecutor {
@@ -135,6 +136,8 @@ fn install_from_source(
     vendor_dir: &Path,
     package_name: &str,
 ) -> anyhow::Result<()> {
+    use crate::downloader::VcsDownloader as _;
+
     let target = vendor_dir.join(package_name);
     if target.exists() {
         std::fs::remove_dir_all(&target)?;
@@ -145,23 +148,20 @@ fn install_from_source(
             let process = crate::vcs::process::ProcessExecutor::new();
             let git_util =
                 crate::vcs::util::git::GitUtil::new(process, vendor_dir.join(".cache").join("git"));
-            let downloader = crate::vcs::downloader::git::GitDownloader::new(git_util);
-            use crate::vcs::downloader::VcsDownloader as _;
+            let downloader = GitDownloader::new(git_util);
             downloader.download(url, reference, &target)?;
             downloader.install(url, reference, &target)?;
         }
         "svn" => {
             let process = crate::vcs::process::ProcessExecutor::new();
             let svn_util = crate::vcs::util::svn::SvnUtil::new(process);
-            let downloader = crate::vcs::downloader::svn::SvnDownloader::new(svn_util);
-            use crate::vcs::downloader::VcsDownloader as _;
+            let downloader = SvnDownloader::new(svn_util);
             downloader.install(url, reference, &target)?;
         }
         "hg" => {
             let process = crate::vcs::process::ProcessExecutor::new();
             let hg_util = crate::vcs::util::hg::HgUtil::new(process);
-            let downloader = crate::vcs::downloader::hg::HgDownloader::new(hg_util);
-            use crate::vcs::downloader::VcsDownloader as _;
+            let downloader = HgDownloader::new(hg_util);
             downloader.install(url, reference, &target)?;
         }
         _ => {

@@ -1,10 +1,11 @@
-use super::super::process::ProcessExecutor;
-use super::super::util::git::GitUtil;
-use super::VcsDownloader;
 use anyhow::Result;
 use regex::Regex;
 use std::path::Path;
 use std::sync::LazyLock;
+
+use crate::downloader::VcsDownloader;
+use crate::vcs::process::ProcessExecutor;
+use crate::vcs::util::git::GitUtil;
 
 /// Match `<hex> HEAD` lines in `git show-ref --head -d` output.
 static HEAD_REF_RE: LazyLock<Regex> =

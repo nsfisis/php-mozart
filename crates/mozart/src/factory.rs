@@ -15,9 +15,9 @@ use mozart_core::composer::{
     Locker, PackageReference, RepositoryManager,
 };
 use mozart_core::config::resolve_references;
+use mozart_core::downloader::DownloadManager;
 use mozart_core::factory::create_config;
 use mozart_core::package::{RootPackageData, read_from_file};
-use mozart_core::repository::download_manager::DownloadManager;
 
 /// Rust port of `Factory::createComposer()`.
 ///

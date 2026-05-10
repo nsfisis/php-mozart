@@ -1,6 +1,5 @@
+use mozart_core::downloader::{GitDownloader, VcsDownloader};
 use mozart_core::repository::vcs::{DriverConfig, DriverType, create_driver, detect_driver};
-use mozart_core::vcs::downloader::VcsDownloader;
-use mozart_core::vcs::downloader::git::GitDownloader;
 use mozart_core::vcs::process::ProcessExecutor;
 use mozart_core::vcs::repository::VcsRepository;
 use mozart_core::vcs::util::git::GitUtil;

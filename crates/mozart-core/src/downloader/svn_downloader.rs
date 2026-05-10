@@ -1,9 +1,10 @@
-use super::super::util::svn::SvnUtil;
-use super::VcsDownloader;
 use anyhow::Result;
 use regex::Regex;
 use std::path::Path;
 use std::sync::LazyLock;
+
+use crate::downloader::VcsDownloader;
+use crate::vcs::util::svn::SvnUtil;
 
 /// Match any non-`X` status line (mirror of Composer's
 /// `{^ *[^X ] +}m`). Ignores externals (`X` prefix).

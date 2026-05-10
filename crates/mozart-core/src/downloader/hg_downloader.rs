@@ -1,7 +1,7 @@
-use super::super::util::hg::HgUtil;
-use super::VcsDownloader;
 use anyhow::Result;
 use std::path::Path;
+
+use crate::{downloader::VcsDownloader, vcs::util::hg::HgUtil};
 
 /// Mercurial downloader using clone/pull/update.
 pub struct HgDownloader {
