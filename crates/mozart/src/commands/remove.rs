@@ -154,7 +154,7 @@ pub async fn execute(
         if args.dev {
             if composer.require_dev.contains_key(&name) {
                 console_writeln!(io, "<info>Removing {name} from require-dev</info>");
-                composer.require_dev.remove(&name);
+                composer.require_dev.shift_remove(&name);
                 packages_removed.push(name);
             } else {
                 io.lock().unwrap().info(&console_format!(
@@ -163,11 +163,11 @@ pub async fn execute(
             }
         } else if composer.require.contains_key(&name) {
             console_writeln!(io, "<info>Removing {name} from require</info>");
-            composer.require.remove(&name);
+            composer.require.shift_remove(&name);
             packages_removed.push(name);
         } else if composer.require_dev.contains_key(&name) {
             console_writeln!(io, "<info>Removing {name} from require-dev</info>");
-            composer.require_dev.remove(&name);
+            composer.require_dev.shift_remove(&name);
             packages_removed.push(name);
         } else {
             io.lock().unwrap().info(&console_format!(
@@ -682,7 +682,6 @@ mod tests {
     use super::*;
     use mozart_core::package::RawPackageData;
     use mozart_core::repository::lockfile;
-    use std::collections::BTreeMap;
 
     fn make_locked_package(name: &str, version: &str) -> lockfile::LockedPackage {
         lockfile::LockedPackage {
@@ -691,11 +690,11 @@ mod tests {
             version_normalized: Some(format!("{}.0", version)),
             source: None,
             dist: None,
-            require: BTreeMap::new(),
-            require_dev: BTreeMap::new(),
-            conflict: BTreeMap::new(),
-            provide: BTreeMap::new(),
-            replace: BTreeMap::new(),
+            require: indexmap::IndexMap::new(),
+            require_dev: indexmap::IndexMap::new(),
+            conflict: indexmap::IndexMap::new(),
+            provide: indexmap::IndexMap::new(),
+            replace: indexmap::IndexMap::new(),
             suggest: None,
             package_type: Some("library".to_string()),
             autoload: None,
@@ -708,7 +707,7 @@ mod tests {
             support: None,
             funding: None,
             time: None,
-            extra_fields: BTreeMap::new(),
+            extra_fields: indexmap::IndexMap::new(),
         }
     }
 
@@ -746,7 +745,7 @@ mod tests {
 
         assert!(composer.require.contains_key("psr/log"));
 
-        composer.require.remove("psr/log");
+        composer.require.shift_remove("psr/log");
 
         assert!(
             !composer.require.contains_key("psr/log"),
@@ -771,7 +770,7 @@ mod tests {
 
         assert!(composer.require_dev.contains_key("phpunit/phpunit"));
 
-        composer.require_dev.remove("phpunit/phpunit");
+        composer.require_dev.shift_remove("phpunit/phpunit");
 
         assert!(
             !composer.require_dev.contains_key("phpunit/phpunit"),
@@ -792,8 +791,8 @@ mod tests {
             .insert("psr/log".to_string(), "^3.0".to_string());
 
         let name = "nonexistent/package";
-        let found_in_require = composer.require.remove(name).is_some();
-        let found_in_require_dev = composer.require_dev.remove(name).is_some();
+        let found_in_require = composer.require.shift_remove(name).is_some();
+        let found_in_require_dev = composer.require_dev.shift_remove(name).is_some();
 
         assert!(!found_in_require);
         assert!(!found_in_require_dev);
@@ -814,9 +813,9 @@ mod tests {
             .insert("phpunit/phpunit".to_string(), "^11.0".to_string());
 
         let name = "psr/log";
-        let removed_from_require = composer.require.remove(name).is_some();
+        let removed_from_require = composer.require.shift_remove(name).is_some();
         let removed_from_dev = if !removed_from_require {
-            composer.require_dev.remove(name).is_some()
+            composer.require_dev.shift_remove(name).is_some()
         } else {
             false
         };
@@ -842,9 +841,9 @@ mod tests {
             .insert("phpunit/phpunit".to_string(), "^11.0".to_string());
 
         let name = "phpunit/phpunit";
-        let removed_from_require = composer.require.remove(name).is_some();
+        let removed_from_require = composer.require.shift_remove(name).is_some();
         let removed_from_dev = if !removed_from_require {
-            composer.require_dev.remove(name).is_some()
+            composer.require_dev.shift_remove(name).is_some()
         } else {
             false
         };
@@ -894,8 +893,8 @@ mod tests {
 
         // A glob-style name: not a valid exact package name, not in require either.
         let name = "vendor/*";
-        let found =
-            composer.require.remove(name).is_some() || composer.require_dev.remove(name).is_some();
+        let found = composer.require.shift_remove(name).is_some()
+            || composer.require_dev.shift_remove(name).is_some();
 
         // Should NOT be found (falls through to "not required" warning), not panicked/bailed.
         assert!(!found, "glob name should not match any package");
@@ -1001,7 +1000,7 @@ mod tests {
             .write_to_file(&lock_path)
             .expect("should write initial lock file");
 
-        composer.require.remove("psr/log");
+        composer.require.shift_remove("psr/log");
         package::write_to_file(&composer, &composer_path).unwrap();
 
         let request2 = ResolveRequest {
@@ -1084,7 +1083,7 @@ mod tests {
         std::fs::write(&composer_path, content).unwrap();
 
         let mut composer: RawPackageData = serde_json::from_str(content).unwrap();
-        composer.require.remove("psr/log");
+        composer.require.shift_remove("psr/log");
         package::write_to_file(&composer, &composer_path).unwrap();
 
         assert!(

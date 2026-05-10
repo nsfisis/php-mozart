@@ -55,13 +55,13 @@ pub struct PackagistVersion {
     pub version: String,
     pub version_normalized: String,
     #[serde(default, deserialize_with = "deserialize_unset_as_default")]
-    pub require: BTreeMap<String, String>,
+    pub require: indexmap::IndexMap<String, String>,
     #[serde(default, deserialize_with = "deserialize_unset_as_default")]
-    pub replace: BTreeMap<String, String>,
+    pub replace: indexmap::IndexMap<String, String>,
     #[serde(default, deserialize_with = "deserialize_unset_as_default")]
-    pub provide: BTreeMap<String, String>,
+    pub provide: indexmap::IndexMap<String, String>,
     #[serde(default, deserialize_with = "deserialize_unset_as_default")]
-    pub conflict: BTreeMap<String, String>,
+    pub conflict: indexmap::IndexMap<String, String>,
     #[serde(default, deserialize_with = "deserialize_unset_as_none")]
     pub dist: Option<PackagistDist>,
     #[serde(default, deserialize_with = "deserialize_unset_as_none")]
@@ -72,10 +72,10 @@ pub struct PackagistVersion {
         default,
         deserialize_with = "deserialize_unset_as_default"
     )]
-    pub require_dev: BTreeMap<String, String>,
+    pub require_dev: indexmap::IndexMap<String, String>,
 
     #[serde(default, deserialize_with = "deserialize_unset_as_none")]
-    pub suggest: Option<BTreeMap<String, String>>,
+    pub suggest: Option<indexmap::IndexMap<String, String>>,
 
     #[serde(
         rename = "type",
@@ -160,17 +160,17 @@ impl PackagistVersion {
     ///
     /// Returns a map from branch name (e.g. `"dev-master"`) to alias target
     /// (e.g. `"2.x-dev"`). Returns an empty map when no aliases are declared.
-    pub fn branch_aliases(&self) -> BTreeMap<String, String> {
+    pub fn branch_aliases(&self) -> indexmap::IndexMap<String, String> {
         let Some(extra) = &self.extra else {
-            return BTreeMap::new();
+            return indexmap::IndexMap::new();
         };
 
         let Some(branch_alias) = extra.get("branch-alias") else {
-            return BTreeMap::new();
+            return indexmap::IndexMap::new();
         };
 
         let Some(map) = branch_alias.as_object() else {
-            return BTreeMap::new();
+            return indexmap::IndexMap::new();
         };
 
         map.iter()

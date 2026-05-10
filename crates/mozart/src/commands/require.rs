@@ -1026,9 +1026,9 @@ pub async fn execute(
     // Remove from the opposite section before inserting into the target.
     for pkg in &inconsistent {
         if args.dev {
-            raw.require.remove(pkg.as_str());
+            raw.require.shift_remove(pkg.as_str());
         } else {
-            raw.require_dev.remove(pkg.as_str());
+            raw.require_dev.shift_remove(pkg.as_str());
         }
     }
 
@@ -1066,10 +1066,8 @@ pub async fn execute(
     let sort_packages = args.sort_packages || config_sort_packages;
 
     if sort_packages {
-        let sorted_require: std::collections::BTreeMap<_, _> = raw.require.clone();
-        raw.require = sorted_require;
-        let sorted_dev: std::collections::BTreeMap<_, _> = raw.require_dev.clone();
-        raw.require_dev = sorted_dev;
+        raw.require.sort_unstable_keys();
+        raw.require_dev.sort_unstable_keys();
     }
 
     // --- Write composer.json (unless --dry-run) ---
@@ -1129,7 +1127,6 @@ pub async fn execute(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::BTreeMap;
 
     fn make_locked_package(name: &str, version: &str) -> lockfile::LockedPackage {
         lockfile::LockedPackage {
@@ -1138,11 +1135,11 @@ mod tests {
             version_normalized: Some(format!("{}.0", version)),
             source: None,
             dist: None,
-            require: BTreeMap::new(),
-            require_dev: BTreeMap::new(),
-            conflict: BTreeMap::new(),
-            provide: BTreeMap::new(),
-            replace: BTreeMap::new(),
+            require: indexmap::IndexMap::new(),
+            require_dev: indexmap::IndexMap::new(),
+            conflict: indexmap::IndexMap::new(),
+            provide: indexmap::IndexMap::new(),
+            replace: indexmap::IndexMap::new(),
             suggest: None,
             package_type: Some("library".to_string()),
             autoload: None,
@@ -1155,7 +1152,7 @@ mod tests {
             support: None,
             funding: None,
             time: None,
-            extra_fields: BTreeMap::new(),
+            extra_fields: indexmap::IndexMap::new(),
         }
     }
 
@@ -1174,35 +1171,6 @@ mod tests {
             platform_dev: serde_json::json!({}),
             plugin_api_version: Some("2.6.0".to_string()),
         }
-    }
-
-    /// Verify that --sort-packages sorts both require and require-dev maps.
-    #[test]
-    fn test_sort_packages_sorts_both_sections() {
-        use mozart_core::package::RawPackageData;
-
-        let mut raw = RawPackageData::new("test/project".to_string());
-        raw.require
-            .insert("z/package".to_string(), "^1.0".to_string());
-        raw.require
-            .insert("a/package".to_string(), "^2.0".to_string());
-        raw.require
-            .insert("m/package".to_string(), "^3.0".to_string());
-        raw.require_dev
-            .insert("z/dev".to_string(), "^1.0".to_string());
-        raw.require_dev
-            .insert("a/dev".to_string(), "^2.0".to_string());
-
-        let sorted_require: BTreeMap<String, String> = raw.require.clone();
-        raw.require = sorted_require;
-        let sorted_dev: BTreeMap<String, String> = raw.require_dev.clone();
-        raw.require_dev = sorted_dev;
-
-        let require_keys: Vec<_> = raw.require.keys().collect();
-        assert_eq!(require_keys, vec!["a/package", "m/package", "z/package"]);
-
-        let dev_keys: Vec<_> = raw.require_dev.keys().collect();
-        assert_eq!(dev_keys, vec!["a/dev", "z/dev"]);
     }
 
     /// Verify that compute_update_changes produces correct Install entries for new packages.

@@ -8,7 +8,7 @@ use mozart_core::console::IoInterface;
 use mozart_core::console_writeln;
 use mozart_core::factory::create_config;
 use mozart_core::http::HttpDownloader;
-use mozart_core::package::CompletePackage as _;
+use mozart_core::package::CompletePackageInterface as _;
 use std::borrow::Cow;
 use std::path::Path;
 

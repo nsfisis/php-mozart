@@ -368,7 +368,7 @@ mod tests {
             r#"{"name": "acme/app", "require": {"vendor/pkg": "^1.0"}}"#,
         );
 
-        use mozart_core::package::Package;
+        use mozart_core::package::PackageInterface;
         let composer = Composer::require(io(), dir.path()).unwrap();
         assert_eq!(composer.package().name(), "acme/app");
         assert_eq!(

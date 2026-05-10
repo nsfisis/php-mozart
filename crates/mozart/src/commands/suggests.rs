@@ -235,11 +235,10 @@ fn build_root_info(root: Option<&mozart_core::package::RawPackageData>) -> RootI
 mod tests {
     use super::*;
     use mozart_core::installer::{HasSuggests, InstalledRepoLite, RootInfo};
-    use std::collections::BTreeMap;
 
     fn make_locked_package(
         name: &str,
-        suggest: Option<BTreeMap<String, String>>,
+        suggest: Option<indexmap::IndexMap<String, String>>,
     ) -> mozart_core::repository::lockfile::LockedPackage {
         mozart_core::repository::lockfile::LockedPackage {
             name: name.to_string(),
@@ -247,11 +246,11 @@ mod tests {
             version_normalized: None,
             source: None,
             dist: None,
-            require: BTreeMap::new(),
-            require_dev: BTreeMap::new(),
-            conflict: BTreeMap::new(),
-            provide: BTreeMap::new(),
-            replace: BTreeMap::new(),
+            require: indexmap::IndexMap::new(),
+            require_dev: indexmap::IndexMap::new(),
+            conflict: indexmap::IndexMap::new(),
+            provide: indexmap::IndexMap::new(),
+            replace: indexmap::IndexMap::new(),
             suggest,
             package_type: None,
             autoload: None,
@@ -264,15 +263,15 @@ mod tests {
             support: None,
             funding: None,
             time: None,
-            extra_fields: BTreeMap::new(),
+            extra_fields: indexmap::IndexMap::new(),
         }
     }
 
     fn make_installed_entry(
         name: &str,
-        suggest: Option<BTreeMap<String, String>>,
+        suggest: Option<indexmap::IndexMap<String, String>>,
     ) -> mozart_core::repository::installed::InstalledPackageEntry {
-        let mut extra_fields: BTreeMap<String, serde_json::Value> = BTreeMap::new();
+        let mut extra_fields = indexmap::IndexMap::new();
         if let Some(s) = suggest {
             let map: serde_json::Map<String, serde_json::Value> = s
                 .into_iter()
@@ -322,7 +321,7 @@ mod tests {
 
     #[test]
     fn locked_package_implements_has_suggests() {
-        let mut suggest = BTreeMap::new();
+        let mut suggest = indexmap::IndexMap::new();
         suggest.insert("ext-intl".to_string(), "for i18n".to_string());
         suggest.insert("ext-redis".to_string(), "for cache".to_string());
         let pkg = make_locked_package("vendor/a", Some(suggest));
@@ -333,7 +332,7 @@ mod tests {
 
     #[test]
     fn installed_entry_reads_suggest_from_extra_fields() {
-        let mut suggest = BTreeMap::new();
+        let mut suggest = indexmap::IndexMap::new();
         suggest.insert("ext-redis".to_string(), "for cache".to_string());
         let entry = make_installed_entry("vendor/cache", Some(suggest));
         let pairs = entry.suggests();
@@ -413,15 +412,15 @@ mod tests {
             license: None,
             authors: vec![],
             minimum_stability: None,
-            require: BTreeMap::new(),
-            require_dev: BTreeMap::new(),
-            conflict: BTreeMap::new(),
-            provide: BTreeMap::new(),
-            replace: BTreeMap::new(),
+            require: indexmap::IndexMap::new(),
+            require_dev: indexmap::IndexMap::new(),
+            conflict: indexmap::IndexMap::new(),
+            provide: indexmap::IndexMap::new(),
+            replace: indexmap::IndexMap::new(),
             repositories: vec![],
             autoload: None,
             bin: vec![],
-            extra_fields: BTreeMap::new(),
+            extra_fields: indexmap::IndexMap::new(),
         };
         root.require.insert("vendor/a".into(), "^1.0".into());
         root.require_dev.insert("vendor/b".into(), "^2.0".into());
@@ -437,7 +436,7 @@ mod tests {
         let console = console();
         let mut reporter = SuggestedPackagesReporter::new(&console);
 
-        let mut suggest = BTreeMap::new();
+        let mut suggest = indexmap::IndexMap::new();
         suggest.insert("ext-intl".to_string(), "for i18n".to_string());
         suggest.insert("vendor/optional".to_string(), "Optional".to_string());
         let pkg = make_locked_package("vendor/a", Some(suggest));
@@ -452,7 +451,7 @@ mod tests {
         let console = console();
         let mut reporter = SuggestedPackagesReporter::new(&console);
 
-        let mut suggest = BTreeMap::new();
+        let mut suggest = indexmap::IndexMap::new();
         suggest.insert("vendor/already-here".to_string(), "".to_string());
         suggest.insert("vendor/not-here".to_string(), "".to_string());
         let pkg = make_locked_package("vendor/a", Some(suggest));

@@ -133,18 +133,18 @@ pub fn path_to_static_expr(file: &Path, vendor_dir: &Path, project_dir: &Path) -
 ///
 /// Returns `(dynamic_classmap, static_classmap, psr_violations)`.
 pub fn scan_psr_for_classmap(
-    psr4: &BTreeMap<String, Vec<String>>,
-    psr0: &BTreeMap<String, Vec<String>>,
+    psr4: &indexmap::IndexMap<String, Vec<String>>,
+    psr0: &indexmap::IndexMap<String, Vec<String>>,
     vendor_dir: &Path,
     project_dir: &Path,
     excluded: &[String],
 ) -> (
-    BTreeMap<String, String>,
-    BTreeMap<String, String>,
+    indexmap::IndexMap<String, String>,
+    indexmap::IndexMap<String, String>,
     Vec<String>,
 ) {
-    let mut dyn_map: BTreeMap<String, String> = BTreeMap::new();
-    let mut static_map: BTreeMap<String, String> = BTreeMap::new();
+    let mut dyn_map = indexmap::IndexMap::new();
+    let mut static_map = indexmap::IndexMap::new();
     let mut violations: Vec<String> = Vec::new();
 
     // Helper: resolve a PHP path expression to an absolute path.

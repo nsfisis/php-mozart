@@ -17,7 +17,6 @@
 //!   or through a `provide` / `replace` link.
 
 use indexmap::IndexSet;
-use std::collections::BTreeMap;
 
 /// One installed package, in the shape `findPackagesWithReplacersAndProviders`
 /// needs. Mirrors the fields of `Composer\Package\PackageInterface` that the
@@ -33,9 +32,9 @@ pub struct InstalledCandidate {
     /// Original-case version, used in user-facing output.
     pub pretty_version: String,
     /// `provide` map: target package name → constraint string.
-    pub provides: BTreeMap<String, String>,
+    pub provides: indexmap::IndexMap<String, String>,
     /// `replace` map: target package name → constraint string.
-    pub replaces: BTreeMap<String, String>,
+    pub replaces: indexmap::IndexMap<String, String>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -106,8 +105,8 @@ mod tests {
             pretty_name: name.to_string(),
             version: version.to_string(),
             pretty_version: version.to_string(),
-            provides: BTreeMap::new(),
-            replaces: BTreeMap::new(),
+            provides: indexmap::IndexMap::new(),
+            replaces: indexmap::IndexMap::new(),
         }
     }
 

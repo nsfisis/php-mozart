@@ -2,7 +2,7 @@ use clap::Args;
 use indexmap::IndexSet;
 use mozart_core::console::IoInterface;
 use mozart_core::console_format;
-use mozart_core::package::{Package as _, RootPackage as _, RootPackageData};
+use mozart_core::package::{PackageInterface as _, RootPackage as _, RootPackageData};
 use mozart_core::repository::installed;
 use mozart_core::repository::installer_executor::{
     Action, ExecuteContext, FilesystemExecutor, InstallerExecutor, PackageOperation,
@@ -11,7 +11,6 @@ use mozart_core::repository::installer_executor::{
     locked_to_installed_entry, previously_installed_alias_versions,
 };
 use mozart_core::repository::lockfile;
-use std::collections::BTreeMap;
 use std::path::Path;
 
 #[derive(Args)]
@@ -212,7 +211,7 @@ fn verify_lock_platform_problems(
 /// `provide` is intentionally excluded — `getNames(false)` excludes it, and
 /// virtual `provide` targets allow multiple co-installed providers.
 fn verify_lock_same_name_problems(lock: &lockfile::LockFile, dev_mode: bool) -> Vec<String> {
-    let mut providers: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    let mut providers: indexmap::IndexMap<_, Vec<_>> = indexmap::IndexMap::new();
 
     let mut all_pkgs: Vec<&lockfile::LockedPackage> = lock.packages.iter().collect();
     if dev_mode {
@@ -397,8 +396,8 @@ fn combine_platform_requirements(
     root: &RootPackageData,
     lock: &lockfile::LockFile,
     dev_mode: bool,
-) -> BTreeMap<String, String> {
-    let mut combined: BTreeMap<String, String> = BTreeMap::new();
+) -> indexmap::IndexMap<String, String> {
+    let mut combined = indexmap::IndexMap::new();
 
     if let Some(obj) = lock.platform.as_object() {
         for (name, val) in obj {
@@ -434,7 +433,7 @@ fn combine_platform_requirements(
 }
 
 fn check_platform_requirements_against(
-    combined: &BTreeMap<String, String>,
+    combined: &indexmap::IndexMap<String, String>,
     platform: &[mozart_core::platform::PlatformPackage],
     ignore_platform_reqs: bool,
     ignore_platform_req: &[String],
@@ -1081,7 +1080,6 @@ pub async fn run(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::BTreeMap;
     use tempfile::tempdir;
 
     fn make_locked_package(name: &str, version: &str) -> lockfile::LockedPackage {
@@ -1091,11 +1089,11 @@ mod tests {
             version_normalized: None,
             source: None,
             dist: None,
-            require: BTreeMap::new(),
-            require_dev: BTreeMap::new(),
-            conflict: BTreeMap::new(),
-            provide: BTreeMap::new(),
-            replace: BTreeMap::new(),
+            require: indexmap::IndexMap::new(),
+            require_dev: indexmap::IndexMap::new(),
+            conflict: indexmap::IndexMap::new(),
+            provide: indexmap::IndexMap::new(),
+            replace: indexmap::IndexMap::new(),
             suggest: None,
             package_type: Some("library".to_string()),
             autoload: None,
@@ -1108,7 +1106,7 @@ mod tests {
             support: None,
             funding: None,
             time: None,
-            extra_fields: BTreeMap::new(),
+            extra_fields: indexmap::IndexMap::new(),
         }
     }
 
@@ -1125,7 +1123,7 @@ mod tests {
             aliases: vec![],
             homepage: None,
             support: None,
-            extra_fields: BTreeMap::new(),
+            extra_fields: indexmap::IndexMap::new(),
         }
     }
 
@@ -1506,9 +1504,10 @@ mod tests {
 
     #[test]
     fn check_platform_requirements_reports_missing_extension() {
-        let combined: BTreeMap<String, String> = [("ext-foo".to_string(), "^10".to_string())]
-            .into_iter()
-            .collect();
+        let combined: indexmap::IndexMap<String, String> =
+            [("ext-foo".to_string(), "^10".to_string())]
+                .into_iter()
+                .collect();
         let platform = vec![pp("php", "8.2.0")];
         let problems = check_platform_requirements_against(&combined, &platform, false, &[]);
 
@@ -1521,7 +1520,7 @@ mod tests {
 
     #[test]
     fn check_platform_requirements_reports_unsatisfied_php() {
-        let combined: BTreeMap<String, String> = [("php".to_string(), "^20".to_string())]
+        let combined: indexmap::IndexMap<String, String> = [("php".to_string(), "^20".to_string())]
             .into_iter()
             .collect();
         let platform = vec![pp("php", "8.2.0")];
@@ -1536,9 +1535,10 @@ mod tests {
 
     #[test]
     fn check_platform_requirements_satisfied_returns_empty() {
-        let combined: BTreeMap<String, String> = [("php".to_string(), "^8.0".to_string())]
-            .into_iter()
-            .collect();
+        let combined: indexmap::IndexMap<String, String> =
+            [("php".to_string(), "^8.0".to_string())]
+                .into_iter()
+                .collect();
         let platform = vec![pp("php", "8.2.0")];
         let problems = check_platform_requirements_against(&combined, &platform, false, &[]);
 
@@ -1547,9 +1547,10 @@ mod tests {
 
     #[test]
     fn check_platform_requirements_ignore_platform_reqs_short_circuits() {
-        let combined: BTreeMap<String, String> = [("ext-foo".to_string(), "^10".to_string())]
-            .into_iter()
-            .collect();
+        let combined: indexmap::IndexMap<String, String> =
+            [("ext-foo".to_string(), "^10".to_string())]
+                .into_iter()
+                .collect();
         let platform: Vec<mozart_core::platform::PlatformPackage> = vec![];
         let problems = check_platform_requirements_against(&combined, &platform, true, &[]);
 
@@ -1558,7 +1559,7 @@ mod tests {
 
     #[test]
     fn check_platform_requirements_specific_ignore_filters_named_packages() {
-        let combined: BTreeMap<String, String> = [
+        let combined: indexmap::IndexMap<String, String> = [
             ("ext-foo".to_string(), "^10".to_string()),
             ("ext-bar".to_string(), "^10".to_string()),
         ]

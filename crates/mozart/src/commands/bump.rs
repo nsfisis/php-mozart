@@ -3,7 +3,7 @@ use clap::Args;
 use indexmap::IndexMap;
 use mozart_core::composer::LocalRepository;
 use mozart_core::console::IoInterface;
-use mozart_core::package::{Link, Package as _};
+use mozart_core::package::PackageInterface as _;
 use mozart_core::{console_writeln, console_writeln_error};
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -151,7 +151,7 @@ pub async fn do_bump(
         }
     }
 
-    let mut tasks: Vec<(&'static str, &BTreeMap<String, Link>)> = Vec::new();
+    let mut tasks = Vec::new();
     if !dev_only {
         tasks.push(("require", composer.package().requires()));
     }
@@ -386,11 +386,11 @@ mod tests {
             version_normalized: Some(format!("{version}.0")),
             source: None,
             dist: None,
-            require: BTreeMap::new(),
-            require_dev: BTreeMap::new(),
-            conflict: BTreeMap::new(),
-            provide: BTreeMap::new(),
-            replace: BTreeMap::new(),
+            require: indexmap::IndexMap::new(),
+            require_dev: indexmap::IndexMap::new(),
+            conflict: indexmap::IndexMap::new(),
+            provide: indexmap::IndexMap::new(),
+            replace: indexmap::IndexMap::new(),
             suggest: None,
             package_type: None,
             autoload: None,
@@ -403,7 +403,7 @@ mod tests {
             support: None,
             funding: None,
             time: None,
-            extra_fields: BTreeMap::new(),
+            extra_fields: indexmap::IndexMap::new(),
         }
     }
 

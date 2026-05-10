@@ -8,8 +8,8 @@
 //! `CompletePackageInterface` (`getSupport()['source']`,
 //! `getSourceUrl()`, `getHomepage()`).
 
-use super::super::package::Package as _;
-use super::super::package::{CompletePackage as _, RootPackageData};
+use super::super::package::PackageInterface as _;
+use super::super::package::{CompletePackageInterface as _, RootPackageData};
 use super::cache::Cache;
 use super::installed::{InstalledPackageEntry, InstalledPackages};
 use super::lockfile::LockedPackage;
@@ -167,7 +167,6 @@ impl BrowseRepos {
 mod tests {
     use super::*;
     use crate::package::RawPackageData;
-    use std::collections::BTreeMap;
 
     fn locked(
         name: &str,
@@ -185,11 +184,11 @@ mod tests {
                 reference: None,
             }),
             dist: None,
-            require: BTreeMap::new(),
-            require_dev: BTreeMap::new(),
-            conflict: BTreeMap::new(),
-            provide: BTreeMap::new(),
-            replace: BTreeMap::new(),
+            require: indexmap::IndexMap::new(),
+            require_dev: indexmap::IndexMap::new(),
+            conflict: indexmap::IndexMap::new(),
+            provide: indexmap::IndexMap::new(),
+            replace: indexmap::IndexMap::new(),
             suggest: None,
             package_type: None,
             autoload: None,
@@ -202,7 +201,7 @@ mod tests {
             support: support_source.map(|s| serde_json::json!({"source": s})),
             funding: None,
             time: None,
-            extra_fields: BTreeMap::new(),
+            extra_fields: indexmap::IndexMap::new(),
         }
     }
 
@@ -240,7 +239,7 @@ mod tests {
             aliases: vec![],
             homepage: Some("https://vendor.example.com".to_string()),
             support: Some(serde_json::json!({"source": "https://github.com/vendor/pkg"})),
-            extra_fields: BTreeMap::new(),
+            extra_fields: indexmap::IndexMap::new(),
         };
         let view = CompletePackageView::from(&entry);
         assert_eq!(

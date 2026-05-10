@@ -1113,6 +1113,7 @@ name = "mozart-class-map-generator"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "indexmap",
  "regex",
  "tempfile",
 ]

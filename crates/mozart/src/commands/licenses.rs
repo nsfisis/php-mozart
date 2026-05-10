@@ -4,14 +4,13 @@ use indexmap::IndexMap;
 use mozart_core::console::IoInterface;
 use mozart_core::console::hyperlink;
 use mozart_core::console_writeln;
-use mozart_core::package::Package as _;
+use mozart_core::package::PackageInterface as _;
 use mozart_core::package_info;
 use mozart_core::package_info::PackageUrls;
 use mozart_core::package_sorter::sort_packages_alphabetically;
 use mozart_core::repository_utils;
 use mozart_core::repository_utils::Required;
 use serde::Serialize as _;
-use std::collections::BTreeMap;
 
 #[derive(Args)]
 pub struct LicensesArgs {
@@ -38,7 +37,7 @@ struct LicenseEntry {
     name: String,
     version: String,
     licenses: Vec<String>,
-    requires: BTreeMap<String, String>,
+    requires: indexmap::IndexMap<String, String>,
     support_source: Option<String>,
     source_url: Option<String>,
     homepage: Option<String>,
@@ -48,7 +47,7 @@ impl Required for LicenseEntry {
     fn package_name(&self) -> &str {
         &self.name
     }
-    fn requires(&self) -> &BTreeMap<String, String> {
+    fn requires(&self) -> &indexmap::IndexMap<String, String> {
         &self.requires
     }
 }
@@ -144,7 +143,7 @@ fn read_root_licenses(composer_json_path: &std::path::Path) -> anyhow::Result<Ve
 
 fn load_installed_entries<V>(
     working_dir: &std::path::Path,
-    root_requires: &BTreeMap<String, V>,
+    root_requires: &indexmap::IndexMap<String, V>,
     no_dev: bool,
 ) -> anyhow::Result<Vec<LicenseEntry>> {
     let vendor_dir = working_dir.join("vendor");
@@ -453,7 +452,6 @@ fn tally_licenses(entries: &[LicenseEntry]) -> Vec<(String, usize)> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::BTreeMap;
 
     fn entry(name: &str, licenses: &[&str]) -> LicenseEntry {
         LicenseEntry {
@@ -461,7 +459,7 @@ mod tests {
             name: name.to_lowercase(),
             version: "1.0.0".to_string(),
             licenses: licenses.iter().map(|s| s.to_string()).collect(),
-            requires: BTreeMap::new(),
+            requires: indexmap::IndexMap::new(),
             support_source: None,
             source_url: None,
             homepage: None,
@@ -547,7 +545,7 @@ mod tests {
     #[test]
     fn installed_to_entry_extracts_require_and_license() {
         use mozart_core::repository::installed::InstalledPackageEntry;
-        let mut extra = BTreeMap::new();
+        let mut extra = indexmap::IndexMap::new();
         extra.insert("license".to_string(), serde_json::json!(["MIT"]));
         extra.insert(
             "require".to_string(),
@@ -587,7 +585,7 @@ mod tests {
             aliases: vec![],
             homepage: Some("https://example.com/".to_string()),
             support: Some(serde_json::json!({"source": "https://github.com/v/p"})),
-            extra_fields: BTreeMap::new(),
+            extra_fields: indexmap::IndexMap::new(),
         };
         let e = installed_to_entry(&pkg);
         assert_eq!(e.support_source.as_deref(), Some("https://github.com/v/p"));
@@ -630,7 +628,7 @@ mod tests {
             aliases: vec![],
             homepage: None,
             support: None,
-            extra_fields: BTreeMap::new(),
+            extra_fields: indexmap::IndexMap::new(),
         });
         installed.upsert(mozart_core::repository::installed::InstalledPackageEntry {
             name: "b/b".to_string(),
@@ -644,11 +642,11 @@ mod tests {
             aliases: vec![],
             homepage: None,
             support: None,
-            extra_fields: BTreeMap::new(),
+            extra_fields: indexmap::IndexMap::new(),
         });
         installed.write(&vendor_dir).unwrap();
 
-        let mut root_req = BTreeMap::new();
+        let mut root_req = indexmap::IndexMap::new();
         root_req.insert("a/a".to_string(), "*".to_string());
 
         let kept = load_installed_entries(working_dir, &root_req, true).unwrap();
@@ -679,11 +677,11 @@ mod tests {
                 version_normalized: None,
                 source: None,
                 dist: None,
-                require: BTreeMap::new(),
-                require_dev: BTreeMap::new(),
-                conflict: BTreeMap::new(),
-                provide: BTreeMap::new(),
-                replace: BTreeMap::new(),
+                require: indexmap::IndexMap::new(),
+                require_dev: indexmap::IndexMap::new(),
+                conflict: indexmap::IndexMap::new(),
+                provide: indexmap::IndexMap::new(),
+                replace: indexmap::IndexMap::new(),
                 suggest: None,
                 package_type: None,
                 autoload: None,
@@ -696,7 +694,7 @@ mod tests {
                 support: None,
                 funding: None,
                 time: None,
-                extra_fields: BTreeMap::new(),
+                extra_fields: indexmap::IndexMap::new(),
             }],
             packages_dev: Some(vec![LockedPackage {
                 name: "phpunit/phpunit".to_string(),
@@ -704,11 +702,11 @@ mod tests {
                 version_normalized: None,
                 source: None,
                 dist: None,
-                require: BTreeMap::new(),
-                require_dev: BTreeMap::new(),
-                conflict: BTreeMap::new(),
-                provide: BTreeMap::new(),
-                replace: BTreeMap::new(),
+                require: indexmap::IndexMap::new(),
+                require_dev: indexmap::IndexMap::new(),
+                conflict: indexmap::IndexMap::new(),
+                provide: indexmap::IndexMap::new(),
+                replace: indexmap::IndexMap::new(),
                 suggest: None,
                 package_type: None,
                 autoload: None,
@@ -721,7 +719,7 @@ mod tests {
                 support: None,
                 funding: None,
                 time: None,
-                extra_fields: BTreeMap::new(),
+                extra_fields: indexmap::IndexMap::new(),
             }]),
             aliases: vec![],
             minimum_stability: "stable".to_string(),

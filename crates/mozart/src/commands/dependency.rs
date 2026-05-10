@@ -9,7 +9,6 @@ use indexmap::IndexSet;
 use mozart_core::console::IoInterface;
 use mozart_core::console_format;
 use mozart_core::console_writeln;
-use std::collections::BTreeMap;
 use std::path::Path;
 
 /// Inputs for [`do_execute`], collected from the `depends` / `prohibits` CLI args.
@@ -160,11 +159,11 @@ pub struct PackageInfo {
     pub name: String,
     pub version: String,
     /// Runtime requirements (`require` section).
-    pub require: BTreeMap<String, String>,
+    pub require: indexmap::IndexMap<String, String>,
     /// Dev requirements (`require-dev`) — only non-empty for the root package.
-    pub require_dev: BTreeMap<String, String>,
+    pub require_dev: indexmap::IndexMap<String, String>,
     /// Conflict declarations (`conflict` section).
-    pub conflict: BTreeMap<String, String>,
+    pub conflict: indexmap::IndexMap<String, String>,
     /// Whether this is the root `composer.json` package.
     pub is_root: bool,
 }
@@ -218,9 +217,9 @@ pub fn load_packages(working_dir: &Path, locked: bool) -> Result<Vec<PackageInfo
         packages.push(PackageInfo {
             name: pp.name.clone(),
             version: pp.version.clone(),
-            require: BTreeMap::new(),
-            require_dev: BTreeMap::new(),
-            conflict: BTreeMap::new(),
+            require: indexmap::IndexMap::new(),
+            require_dev: indexmap::IndexMap::new(),
+            conflict: indexmap::IndexMap::new(),
             is_root: false,
         });
     }
@@ -230,7 +229,7 @@ pub fn load_packages(working_dir: &Path, locked: bool) -> Result<Vec<PackageInfo
         && let Ok(root) = mozart_core::package::read_from_file(&composer_json_path)
     {
         // Extract conflict from extra_fields if present
-        let conflict: BTreeMap<String, String> = root
+        let conflict = root
             .extra_fields
             .get("conflict")
             .and_then(|v| v.as_object())
@@ -267,7 +266,7 @@ fn load_from_lockfile(lock_path: &Path) -> Result<Vec<PackageInfo>> {
             name: pkg.name.clone(),
             version: pkg.version.clone(),
             require: pkg.require.clone(),
-            require_dev: BTreeMap::new(), // locked packages don't expose require-dev
+            require_dev: indexmap::IndexMap::new(), // locked packages don't expose require-dev
             conflict: pkg.conflict.clone(),
             is_root: false,
         });
@@ -279,7 +278,7 @@ fn load_from_lockfile(lock_path: &Path) -> Result<Vec<PackageInfo>> {
                 name: pkg.name.clone(),
                 version: pkg.version.clone(),
                 require: pkg.require.clone(),
-                require_dev: BTreeMap::new(),
+                require_dev: indexmap::IndexMap::new(),
                 conflict: pkg.conflict.clone(),
                 is_root: false,
             });
@@ -325,7 +324,7 @@ fn load_from_installed(working_dir: &Path) -> Result<Vec<PackageInfo>> {
                 name: p.name.clone(),
                 version: p.version.clone(),
                 require,
-                require_dev: BTreeMap::new(),
+                require_dev: indexmap::IndexMap::new(),
                 conflict,
                 is_root: false,
             }
@@ -367,7 +366,7 @@ fn get_dependents_forward(
     let needle_set: IndexSet<String> = needles.iter().map(|n| n.to_lowercase()).collect();
 
     // Build name→PackageInfo lookup
-    let pkg_map: BTreeMap<String, &PackageInfo> = packages
+    let pkg_map: indexmap::IndexMap<_, _> = packages
         .iter()
         .map(|p| (p.name.to_lowercase(), p))
         .collect();
@@ -448,7 +447,7 @@ fn collect_direct_requires(packages: &[PackageInfo], needle: &str) -> Vec<Depend
 fn recurse_dependents(
     packages: &[PackageInfo],
     needle: &str,
-    pkg_map: &BTreeMap<String, &PackageInfo>,
+    pkg_map: &indexmap::IndexMap<String, &PackageInfo>,
     visited: &mut IndexSet<String>,
     _original_needles: &IndexSet<String>,
 ) -> Vec<DependencyResult> {
@@ -760,7 +759,7 @@ mod tests {
                 .iter()
                 .map(|(k, v)| (k.to_string(), v.to_string()))
                 .collect(),
-            require_dev: BTreeMap::new(),
+            require_dev: indexmap::IndexMap::new(),
             conflict: conflict
                 .iter()
                 .map(|(k, v)| (k.to_string(), v.to_string()))

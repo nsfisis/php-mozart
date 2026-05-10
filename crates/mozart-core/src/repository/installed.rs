@@ -1,7 +1,6 @@
 use crate::installer::HasSuggests;
 use crate::package::to_json_pretty;
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
 use std::fs;
 use std::path::Path;
 
@@ -56,7 +55,7 @@ pub struct InstalledPackageEntry {
     pub support: Option<serde_json::Value>,
 
     #[serde(flatten)]
-    pub extra_fields: BTreeMap<String, serde_json::Value>,
+    pub extra_fields: indexmap::IndexMap<String, serde_json::Value>,
 }
 
 impl HasSuggests for InstalledPackageEntry {
@@ -215,7 +214,7 @@ mod tests {
             aliases: vec![],
             homepage: None,
             support: None,
-            extra_fields: BTreeMap::new(),
+            extra_fields: indexmap::IndexMap::new(),
         }
     }
 

@@ -1803,7 +1803,6 @@ pub async fn run(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::BTreeMap;
 
     fn make_locked_package(name: &str, version: &str) -> lockfile::LockedPackage {
         lockfile::LockedPackage {
@@ -1812,11 +1811,11 @@ mod tests {
             version_normalized: Some(format!("{}.0", version)),
             source: None,
             dist: None,
-            require: BTreeMap::new(),
-            require_dev: BTreeMap::new(),
-            conflict: BTreeMap::new(),
-            provide: BTreeMap::new(),
-            replace: BTreeMap::new(),
+            require: indexmap::IndexMap::new(),
+            require_dev: indexmap::IndexMap::new(),
+            conflict: indexmap::IndexMap::new(),
+            provide: indexmap::IndexMap::new(),
+            replace: indexmap::IndexMap::new(),
             suggest: None,
             package_type: Some("library".to_string()),
             autoload: None,
@@ -1829,7 +1828,7 @@ mod tests {
             support: None,
             funding: None,
             time: None,
-            extra_fields: BTreeMap::new(),
+            extra_fields: indexmap::IndexMap::new(),
         }
     }
 

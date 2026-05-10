@@ -3,7 +3,6 @@ use mozart_core::console::IoInterface;
 use mozart_core::console_writeln;
 use mozart_core::console_writeln_error;
 use mozart_core::installer::{InstalledCandidate, InstalledRepoLite};
-use std::collections::BTreeMap;
 use std::path::Path;
 
 #[derive(Args)]
@@ -75,7 +74,7 @@ pub async fn execute(
     let installed_path = vendor_dir.join("composer/installed.json");
 
     let mut installed_repo = InstalledRepoLite::new();
-    let mut requires: BTreeMap<String, Vec<Link>> = BTreeMap::new();
+    let mut requires = indexmap::IndexMap::new();
 
     if args.lock {
         if !lock_path.exists() {
@@ -141,8 +140,8 @@ pub async fn execute(
             pretty_name: pkg.name,
             version: pkg.version.clone(),
             pretty_version: pkg.version,
-            provides: BTreeMap::new(),
-            replaces: BTreeMap::new(),
+            provides: indexmap::IndexMap::new(),
+            replaces: indexmap::IndexMap::new(),
         });
     }
 
@@ -251,7 +250,7 @@ fn load_lock(
     lock_path: &Path,
     no_dev: bool,
     repo: &mut InstalledRepoLite,
-    requires: &mut BTreeMap<String, Vec<Link>>,
+    requires: &mut indexmap::IndexMap<String, Vec<Link>>,
 ) -> anyhow::Result<()> {
     let lock = mozart_core::repository::lockfile::LockFile::read_from_file(lock_path)?;
 
@@ -282,7 +281,7 @@ fn load_installed(
     installed: &mozart_core::repository::installed::InstalledPackages,
     no_dev: bool,
     repo: &mut InstalledRepoLite,
-    requires: &mut BTreeMap<String, Vec<Link>>,
+    requires: &mut indexmap::IndexMap<String, Vec<Link>>,
 ) {
     let dev_names: indexmap::IndexSet<String> = installed
         .dev_package_names
@@ -334,10 +333,10 @@ fn add_root_as_candidate(
 }
 
 fn string_map_from_extra(
-    extra: &BTreeMap<String, serde_json::Value>,
+    extra: &indexmap::IndexMap<String, serde_json::Value>,
     key: &str,
-) -> BTreeMap<String, String> {
-    let mut out: BTreeMap<String, String> = BTreeMap::new();
+) -> indexmap::IndexMap<String, String> {
+    let mut out = indexmap::IndexMap::new();
     if let Some(val) = extra.get(key)
         && let Some(obj) = val.as_object()
     {
@@ -351,7 +350,7 @@ fn string_map_from_extra(
 }
 
 fn push_platform_link(
-    requires: &mut BTreeMap<String, Vec<Link>>,
+    requires: &mut indexmap::IndexMap<String, Vec<Link>>,
     source: &str,
     target: &str,
     constraint: &str,
@@ -470,7 +469,6 @@ fn print_table(
 mod tests {
     use super::*;
     use mozart_core::console::Console;
-    use std::collections::BTreeMap;
     use tempfile::tempdir;
 
     fn test_console() -> std::sync::Arc<std::sync::Mutex<Box<dyn IoInterface>>> {
@@ -481,22 +479,26 @@ mod tests {
 
     fn write_lock(
         path: &Path,
-        packages: &[(&str, BTreeMap<String, String>)],
-        dev_packages: &[(&str, BTreeMap<String, String>)],
+        packages: &[(&str, indexmap::IndexMap<String, String>)],
+        dev_packages: &[(&str, indexmap::IndexMap<String, String>)],
     ) {
         write_lock_with(path, packages, dev_packages, &[]);
     }
 
     fn write_lock_with(
         path: &Path,
-        packages: &[(&str, BTreeMap<String, String>)],
-        dev_packages: &[(&str, BTreeMap<String, String>)],
-        provides: &[(&str, BTreeMap<String, String>, BTreeMap<String, String>)], // (name, provide, replace)
+        packages: &[(&str, indexmap::IndexMap<String, String>)],
+        dev_packages: &[(&str, indexmap::IndexMap<String, String>)],
+        provides: &[(
+            &str,
+            indexmap::IndexMap<String, String>,
+            indexmap::IndexMap<String, String>,
+        )], // (name, provide, replace)
     ) {
         let make_pkg = |name: &str,
-                        require: BTreeMap<String, String>,
-                        provide: BTreeMap<String, String>,
-                        replace: BTreeMap<String, String>| {
+                        require: indexmap::IndexMap<String, String>,
+                        provide: indexmap::IndexMap<String, String>,
+                        replace: indexmap::IndexMap<String, String>| {
             serde_json::json!({
                 "name": name,
                 "version": "1.0.0",
@@ -508,15 +510,34 @@ mod tests {
 
         let mut pkgs_json: Vec<serde_json::Value> = packages
             .iter()
-            .map(|(name, req)| make_pkg(name, req.clone(), BTreeMap::new(), BTreeMap::new()))
+            .map(|(name, req)| {
+                make_pkg(
+                    name,
+                    req.clone(),
+                    indexmap::IndexMap::new(),
+                    indexmap::IndexMap::new(),
+                )
+            })
             .collect();
         for (name, prov, repl) in provides {
-            pkgs_json.push(make_pkg(name, BTreeMap::new(), prov.clone(), repl.clone()));
+            pkgs_json.push(make_pkg(
+                name,
+                indexmap::IndexMap::new(),
+                prov.clone(),
+                repl.clone(),
+            ));
         }
 
         let dev_pkgs_json: Vec<serde_json::Value> = dev_packages
             .iter()
-            .map(|(name, req)| make_pkg(name, req.clone(), BTreeMap::new(), BTreeMap::new()))
+            .map(|(name, req)| {
+                make_pkg(
+                    name,
+                    req.clone(),
+                    indexmap::IndexMap::new(),
+                    indexmap::IndexMap::new(),
+                )
+            })
             .collect();
 
         let lock_json = serde_json::json!({
@@ -565,7 +586,7 @@ mod tests {
         let dir = tempdir().unwrap();
         let lock_path = dir.path().join("composer.lock");
 
-        let mut pkg_require = BTreeMap::new();
+        let mut pkg_require = indexmap::IndexMap::new();
         pkg_require.insert("php".to_string(), ">=8.1".to_string());
         pkg_require.insert("ext-json".to_string(), "*".to_string());
         pkg_require.insert("monolog/monolog".to_string(), "^3.0".to_string()); // not platform
@@ -573,7 +594,7 @@ mod tests {
         write_lock(&lock_path, &[("vendor/pkg", pkg_require)], &[]);
 
         let mut repo = InstalledRepoLite::new();
-        let mut requires: BTreeMap<String, Vec<Link>> = BTreeMap::new();
+        let mut requires = indexmap::IndexMap::new();
         load_lock(&lock_path, false, &mut repo, &mut requires).unwrap();
 
         assert!(requires.contains_key("php"));
@@ -591,10 +612,10 @@ mod tests {
         let dir = tempdir().unwrap();
         let lock_path = dir.path().join("composer.lock");
 
-        let mut prod_require = BTreeMap::new();
+        let mut prod_require = indexmap::IndexMap::new();
         prod_require.insert("php".to_string(), ">=8.0".to_string());
 
-        let mut dev_require = BTreeMap::new();
+        let mut dev_require = indexmap::IndexMap::new();
         dev_require.insert("ext-xdebug".to_string(), "*".to_string());
 
         write_lock(
@@ -604,13 +625,13 @@ mod tests {
         );
 
         let mut repo = InstalledRepoLite::new();
-        let mut requires: BTreeMap<String, Vec<Link>> = BTreeMap::new();
+        let mut requires = indexmap::IndexMap::new();
         load_lock(&lock_path, true, &mut repo, &mut requires).unwrap();
         assert!(requires.contains_key("php"));
         assert!(!requires.contains_key("ext-xdebug"));
 
         let mut repo2 = InstalledRepoLite::new();
-        let mut requires2: BTreeMap<String, Vec<Link>> = BTreeMap::new();
+        let mut requires2 = indexmap::IndexMap::new();
         load_lock(&lock_path, false, &mut repo2, &mut requires2).unwrap();
         assert!(requires2.contains_key("ext-xdebug"));
     }
@@ -626,10 +647,10 @@ mod tests {
             pretty_name: "vendor/pkg".into(),
             version: "1.0.0".into(),
             pretty_version: "1.0.0".into(),
-            provides: BTreeMap::new(),
-            replaces: BTreeMap::new(),
+            provides: indexmap::IndexMap::new(),
+            replaces: indexmap::IndexMap::new(),
         });
-        let mut polyfill_provides = BTreeMap::new();
+        let mut polyfill_provides = indexmap::IndexMap::new();
         polyfill_provides.insert("ext-mbstring".to_string(), "*".to_string());
         repo.add_candidate(InstalledCandidate {
             name: "symfony/polyfill-mbstring".into(),
@@ -637,7 +658,7 @@ mod tests {
             version: "1.30.0".into(),
             pretty_version: "1.30.0".into(),
             provides: polyfill_provides,
-            replaces: BTreeMap::new(),
+            replaces: indexmap::IndexMap::new(),
         });
 
         let candidates = repo.find_with_replacers_and_providers("ext-mbstring");
@@ -652,7 +673,7 @@ mod tests {
 
     #[test]
     fn test_replacer_candidate_satisfies_require() {
-        let mut replaces = BTreeMap::new();
+        let mut replaces = indexmap::IndexMap::new();
         replaces.insert("ext-mbstring".to_string(), "1.0".to_string());
 
         let mut repo = InstalledRepoLite::new();
@@ -661,7 +682,7 @@ mod tests {
             pretty_name: "vendor/legacy-replacement".into(),
             version: "2.0.0".into(),
             pretty_version: "2.0.0".into(),
-            provides: BTreeMap::new(),
+            provides: indexmap::IndexMap::new(),
             replaces,
         });
 

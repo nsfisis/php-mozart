@@ -8,7 +8,6 @@ use crate::repository::installed::InstalledPackages;
 use crate::repository::lockfile::LockedPackage;
 use indexmap::IndexSet;
 use mozart_class_map_generator::{scan_classmap_dirs, scan_psr_for_classmap};
-use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 // Embed Composer PHP files from the submodule at compile time.
@@ -70,15 +69,15 @@ pub struct AutoloadConfig {
 pub struct AutoloadData {
     /// PSR-4: namespace prefix -> list of directory path expressions.
     /// Each path is a PHP expression string like `$vendorDir . '/psr/log/src'`.
-    pub psr4: BTreeMap<String, Vec<String>>,
+    pub psr4: indexmap::IndexMap<String, Vec<String>>,
     /// PSR-0: namespace prefix -> list of directory path expressions.
     /// (Empty in Phase 2.2, populated in 5.6.)
-    pub psr0: BTreeMap<String, Vec<String>>,
+    pub psr0: indexmap::IndexMap<String, Vec<String>>,
     /// Classmap entries: class name -> file path expression.
     /// (Empty in Phase 2.2, populated in 5.6.)
-    pub classmap: BTreeMap<String, String>,
+    pub classmap: indexmap::IndexMap<String, String>,
     /// Files to include on every request: file_identifier -> path expression.
-    pub files: BTreeMap<String, String>,
+    pub files: indexmap::IndexMap<String, String>,
 }
 
 /// Mirror of `Composer\ClassMapGenerator\ClassMap` — the return value
@@ -92,9 +91,9 @@ pub struct AutoloadData {
 /// summary — once `generate` is refactored to expose the full classmap
 /// these fields will hold the real entries.
 pub struct ClassMap {
-    map: BTreeMap<String, String>,
+    map: indexmap::IndexMap<String, String>,
     psr_violations: Vec<String>,
-    ambiguous_classes: BTreeMap<String, Vec<String>>,
+    ambiguous_classes: indexmap::IndexMap<String, Vec<String>>,
 }
 
 impl ClassMap {
@@ -126,7 +125,7 @@ impl ClassMap {
     }
 
     /// Read access to the underlying map (`getMap()` upstream).
-    pub fn map(&self) -> &BTreeMap<String, String> {
+    pub fn map(&self) -> &indexmap::IndexMap<String, String> {
         &self.map
     }
 
@@ -136,7 +135,7 @@ impl ClassMap {
     }
 
     /// Read access to the ambiguous-class records.
-    pub fn ambiguous_classes(&self) -> &BTreeMap<String, Vec<String>> {
+    pub fn ambiguous_classes(&self) -> &indexmap::IndexMap<String, Vec<String>> {
         &self.ambiguous_classes
     }
 }
@@ -282,9 +281,9 @@ impl AutoloadGeneratorExt for AutoloadGenerator {
             // for now and surface the limitation here rather than
             // silently writing files.
             return Ok(ClassMap {
-                map: BTreeMap::new(),
+                map: indexmap::IndexMap::new(),
                 psr_violations: Vec::new(),
-                ambiguous_classes: BTreeMap::new(),
+                ambiguous_classes: indexmap::IndexMap::new(),
             });
         }
 
@@ -297,7 +296,7 @@ impl AutoloadGeneratorExt for AutoloadGenerator {
         // command code that only branches on `count()` / `has_*()` works
         // today; refactoring `generate` to surface the full map is
         // tracked as follow-up work.
-        let mut map = BTreeMap::new();
+        let mut map = indexmap::IndexMap::new();
         for i in 0..result.class_count {
             map.insert(format!("__mozart_placeholder_{i}"), String::new());
         }
@@ -308,7 +307,7 @@ impl AutoloadGeneratorExt for AutoloadGenerator {
         } else {
             Vec::new()
         };
-        let mut ambiguous_classes = BTreeMap::new();
+        let mut ambiguous_classes = indexmap::IndexMap::new();
         if result.has_ambiguous_classes {
             ambiguous_classes.insert("__mozart_placeholder".to_string(), Vec::new());
         }
@@ -526,16 +525,16 @@ fn collect_autoloads(
     dev_mode: bool,
 ) -> (AutoloadData, AutoloadData) {
     let mut data = AutoloadData {
-        psr4: BTreeMap::new(),
-        psr0: BTreeMap::new(),
-        classmap: BTreeMap::new(),
-        files: BTreeMap::new(),
+        psr4: indexmap::IndexMap::new(),
+        psr0: indexmap::IndexMap::new(),
+        classmap: indexmap::IndexMap::new(),
+        files: indexmap::IndexMap::new(),
     };
     let mut static_data = AutoloadData {
-        psr4: BTreeMap::new(),
-        psr0: BTreeMap::new(),
-        classmap: BTreeMap::new(),
-        files: BTreeMap::new(),
+        psr4: indexmap::IndexMap::new(),
+        psr0: indexmap::IndexMap::new(),
+        classmap: indexmap::IndexMap::new(),
+        files: indexmap::IndexMap::new(),
     };
 
     // Process each installed package
@@ -703,7 +702,7 @@ fn generate_autoload_static(static_data: &AutoloadData, suffix: &str) -> String 
     // $prefixLengthsPsr4 — group by first character of namespace
     if !static_data.psr4.is_empty() {
         // Group namespaces by first character, sorted reverse
-        let mut by_char: BTreeMap<char, Vec<(&String, usize)>> = BTreeMap::new();
+        let mut by_char: indexmap::IndexMap<_, Vec<_>> = indexmap::IndexMap::new();
 
         let mut sorted_ns: Vec<&String> = static_data.psr4.keys().collect();
         sorted_ns.sort_by(|a, b| b.cmp(a));
@@ -1278,11 +1277,11 @@ pub fn generate(config: &AutoloadConfig) -> anyhow::Result<GenerateResult> {
                 version_normalized: p.version_normalized.clone(),
                 source: None,
                 dist: None,
-                require: std::collections::BTreeMap::new(),
-                require_dev: std::collections::BTreeMap::new(),
-                conflict: std::collections::BTreeMap::new(),
-                provide: std::collections::BTreeMap::new(),
-                replace: std::collections::BTreeMap::new(),
+                require: indexmap::IndexMap::new(),
+                require_dev: indexmap::IndexMap::new(),
+                conflict: indexmap::IndexMap::new(),
+                provide: indexmap::IndexMap::new(),
+                replace: indexmap::IndexMap::new(),
                 suggest: None,
                 package_type: p.package_type.clone(),
                 autoload: p.autoload.clone(),
@@ -1295,7 +1294,7 @@ pub fn generate(config: &AutoloadConfig) -> anyhow::Result<GenerateResult> {
                 support: None,
                 funding: None,
                 time: None,
-                extra_fields: std::collections::BTreeMap::new(),
+                extra_fields: indexmap::IndexMap::new(),
             })
             .collect()
     };
@@ -1370,7 +1369,6 @@ pub fn generate(config: &AutoloadConfig) -> anyhow::Result<GenerateResult> {
 mod tests {
     use super::*;
     use crate::repository::installed::{InstalledPackageEntry, InstalledPackages};
-    use std::collections::BTreeMap;
     use tempfile::tempdir;
 
     fn make_installed_pkg(name: &str, version: &str) -> InstalledPackageEntry {
@@ -1386,7 +1384,7 @@ mod tests {
             aliases: vec![],
             homepage: None,
             support: None,
-            extra_fields: BTreeMap::new(),
+            extra_fields: indexmap::IndexMap::new(),
         }
     }
 
@@ -1589,10 +1587,10 @@ mod tests {
     #[test]
     fn test_generate_autoload_psr4_empty() {
         let data = AutoloadData {
-            psr4: BTreeMap::new(),
-            psr0: BTreeMap::new(),
-            classmap: BTreeMap::new(),
-            files: BTreeMap::new(),
+            psr4: indexmap::IndexMap::new(),
+            psr0: indexmap::IndexMap::new(),
+            classmap: indexmap::IndexMap::new(),
+            files: indexmap::IndexMap::new(),
         };
         let output = generate_autoload_psr4(&data);
         assert!(output.contains("return array(\n);"));

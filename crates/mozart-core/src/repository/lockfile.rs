@@ -2,12 +2,12 @@ use super::packagist::{PackagistDist, PackagistSource, PackagistVersion};
 use super::repository::RepositorySet;
 use super::resolver::ResolvedPackage;
 use crate::installer::HasSuggests;
-use crate::package::Package as _;
+use crate::package::PackageInterface as _;
 use crate::package::{Link, RawPackageData, to_json_pretty};
 use indexmap::IndexMap;
 use indexmap::IndexSet;
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::VecDeque;
 use std::fs;
 use std::path::Path;
 
@@ -76,27 +76,27 @@ pub struct LockedPackage {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub dist: Option<LockedDist>,
 
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub require: BTreeMap<String, String>,
+    #[serde(default, skip_serializing_if = "indexmap::IndexMap::is_empty")]
+    pub require: indexmap::IndexMap<String, String>,
 
     #[serde(
         rename = "require-dev",
         default,
-        skip_serializing_if = "BTreeMap::is_empty"
+        skip_serializing_if = "indexmap::IndexMap::is_empty"
     )]
-    pub require_dev: BTreeMap<String, String>,
+    pub require_dev: indexmap::IndexMap<String, String>,
 
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub conflict: BTreeMap<String, String>,
+    #[serde(default, skip_serializing_if = "indexmap::IndexMap::is_empty")]
+    pub conflict: indexmap::IndexMap<String, String>,
 
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub provide: BTreeMap<String, String>,
+    #[serde(default, skip_serializing_if = "indexmap::IndexMap::is_empty")]
+    pub provide: indexmap::IndexMap<String, String>,
 
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub replace: BTreeMap<String, String>,
+    #[serde(default, skip_serializing_if = "indexmap::IndexMap::is_empty")]
+    pub replace: indexmap::IndexMap<String, String>,
 
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub suggest: Option<BTreeMap<String, String>>,
+    pub suggest: Option<indexmap::IndexMap<String, String>>,
 
     #[serde(rename = "type", skip_serializing_if = "Option::is_none")]
     pub package_type: Option<String>,
@@ -133,7 +133,7 @@ pub struct LockedPackage {
 
     /// Catch-all for extra fields we don't explicitly model
     #[serde(flatten)]
-    pub extra_fields: BTreeMap<String, serde_json::Value>,
+    pub extra_fields: indexmap::IndexMap<String, serde_json::Value>,
 }
 
 impl HasSuggests for LockedPackage {
@@ -231,9 +231,9 @@ impl LockFile {
         ];
 
         // Collect relevant keys into a BTreeMap (auto-sorted by key)
-        let mut filtered: BTreeMap<&str, &serde_json::Value> = BTreeMap::new();
-        for key in &relevant_keys {
-            if let Some(v) = obj.get(*key) {
+        let mut filtered = std::collections::BTreeMap::new();
+        for key in relevant_keys {
+            if let Some(v) = obj.get(key) {
                 filtered.insert(key, v);
             }
         }
@@ -396,7 +396,7 @@ pub fn locked_package_branch_aliases(pkg: &LockedPackage) -> Vec<LockAlias> {
 }
 
 fn check_requirement_set(
-    requires: &BTreeMap<String, Link>,
+    requires: &IndexMap<String, Link>,
     description: &str,
     pool: &[LockedSearchEntry],
     messages: &mut Vec<String>,
@@ -626,10 +626,10 @@ fn packagist_dist_to_locked(pd: &PackagistDist) -> LockedDist {
 /// `dev` after stripping the reference are left out (matching the
 /// `'dev' === VersionParser::parseStability(...)` guard in PHP).
 fn extract_root_references(
-    require: &BTreeMap<String, String>,
-    require_dev: &BTreeMap<String, String>,
-) -> BTreeMap<String, String> {
-    let mut out = BTreeMap::new();
+    require: &IndexMap<String, String>,
+    require_dev: &IndexMap<String, String>,
+) -> indexmap::IndexMap<String, String> {
+    let mut out = indexmap::IndexMap::new();
     for (name, raw_constraint) in require.iter().chain(require_dev.iter()) {
         if let Some(reference) = parse_inline_reference(raw_constraint) {
             out.insert(name.to_lowercase(), reference);
@@ -730,7 +730,7 @@ fn rewrite_known_dist_url_reference(url: &str, reference: &str) -> String {
 
 /// Convert a `PackagistVersion` to a `LockedPackage`.
 fn packagist_version_to_locked_package(name: &str, pv: &PackagistVersion) -> LockedPackage {
-    let mut extra_fields: BTreeMap<String, serde_json::Value> = BTreeMap::new();
+    let mut extra_fields = indexmap::IndexMap::new();
 
     if let Some(extra) = &pv.extra {
         extra_fields.insert("extra".to_string(), extra.clone());
@@ -808,8 +808,8 @@ fn packagist_version_to_locked_package(name: &str, pv: &PackagistVersion) -> Loc
 /// declares `provide: { provided/pkg: 1.0.0 }`.
 fn classify_dev_packages(
     resolved: &[ResolvedPackage],
-    require: &BTreeMap<String, String>,
-    _require_dev: &BTreeMap<String, String>,
+    require: &IndexMap<String, String>,
+    _require_dev: &IndexMap<String, String>,
     requires_by_name: &IndexMap<String, Vec<String>>,
     providers_by_name: &IndexMap<String, Vec<String>>,
 ) -> IndexSet<String> {
@@ -874,7 +874,7 @@ fn is_platform_name(name: &str) -> bool {
 ///
 /// Filters the map to include only platform package keys (`php`, `ext-*`, `lib-*`, etc.)
 /// and returns them as a JSON object.
-fn extract_platform_requirements(requirements: &BTreeMap<String, String>) -> serde_json::Value {
+fn extract_platform_requirements(requirements: &IndexMap<String, String>) -> serde_json::Value {
     let map: serde_json::Map<String, serde_json::Value> = requirements
         .iter()
         .filter(|(k, _)| is_platform_name(k))
@@ -920,12 +920,12 @@ pub async fn generate_lock_file(request: &LockFileGenerationRequest) -> anyhow::
     // resolver picked a new commit at the same version label) still get
     // their ref refreshed.
     struct PreservedRelationships {
-        require: BTreeMap<String, String>,
-        require_dev: BTreeMap<String, String>,
-        conflict: BTreeMap<String, String>,
-        provide: BTreeMap<String, String>,
-        replace: BTreeMap<String, String>,
-        suggest: Option<BTreeMap<String, String>>,
+        require: indexmap::IndexMap<String, String>,
+        require_dev: indexmap::IndexMap<String, String>,
+        conflict: indexmap::IndexMap<String, String>,
+        provide: indexmap::IndexMap<String, String>,
+        replace: indexmap::IndexMap<String, String>,
+        suggest: Option<indexmap::IndexMap<String, String>>,
     }
     let mut preserved_rel: IndexMap<String, PreservedRelationships> = IndexMap::new();
     if let Some(prev) = &request.previous_lock {
@@ -1229,11 +1229,11 @@ mod tests {
                 reference: Some("abc123".to_string()),
                 shasum: Some("".to_string()),
             }),
-            require: BTreeMap::new(),
-            require_dev: BTreeMap::new(),
-            conflict: BTreeMap::new(),
-            provide: BTreeMap::new(),
-            replace: BTreeMap::new(),
+            require: indexmap::IndexMap::new(),
+            require_dev: indexmap::IndexMap::new(),
+            conflict: indexmap::IndexMap::new(),
+            provide: indexmap::IndexMap::new(),
+            replace: indexmap::IndexMap::new(),
             suggest: None,
             package_type: Some("library".to_string()),
             autoload: None,
@@ -1246,7 +1246,7 @@ mod tests {
             support: None,
             funding: None,
             time: None,
-            extra_fields: BTreeMap::new(),
+            extra_fields: indexmap::IndexMap::new(),
         });
 
         lock.write_to_file(&path).unwrap();
@@ -1320,15 +1320,15 @@ mod tests {
     fn make_packagist_version(
         version: &str,
         version_normalized: &str,
-        require: BTreeMap<String, String>,
+        require: indexmap::IndexMap<String, String>,
     ) -> PackagistVersion {
         PackagistVersion {
             version: version.to_string(),
             version_normalized: version_normalized.to_string(),
             require,
-            replace: BTreeMap::new(),
-            provide: BTreeMap::new(),
-            conflict: BTreeMap::new(),
+            replace: indexmap::IndexMap::new(),
+            provide: indexmap::IndexMap::new(),
+            conflict: indexmap::IndexMap::new(),
             dist: Some(super::super::packagist::PackagistDist {
                 dist_type: "zip".to_string(),
                 url: format!("https://example.com/{version}.zip"),
@@ -1340,7 +1340,7 @@ mod tests {
                 url: "https://github.com/example/pkg.git".to_string(),
                 reference: Some("deadbeef".to_string()),
             }),
-            require_dev: BTreeMap::new(),
+            require_dev: indexmap::IndexMap::new(),
             suggest: None,
             package_type: Some("library".to_string()),
             autoload: Some(serde_json::json!({"psr-4": {"Example\\": "src/"}})),
@@ -1366,7 +1366,7 @@ mod tests {
 
     #[test]
     fn test_packagist_version_to_locked_package() {
-        let pv = make_packagist_version("1.2.3", "1.2.3.0", BTreeMap::new());
+        let pv = make_packagist_version("1.2.3", "1.2.3.0", indexmap::IndexMap::new());
         let locked = packagist_version_to_locked_package("example/pkg", &pv);
 
         assert_eq!(locked.name, "example/pkg");
@@ -1414,13 +1414,13 @@ mod tests {
         let pv = PackagistVersion {
             version: "1.0.0".to_string(),
             version_normalized: "1.0.0.0".to_string(),
-            require: BTreeMap::new(),
-            replace: BTreeMap::new(),
-            provide: BTreeMap::new(),
-            conflict: BTreeMap::new(),
+            require: indexmap::IndexMap::new(),
+            replace: indexmap::IndexMap::new(),
+            provide: indexmap::IndexMap::new(),
+            conflict: indexmap::IndexMap::new(),
             dist: None,
             source: None,
-            require_dev: BTreeMap::new(),
+            require_dev: indexmap::IndexMap::new(),
             suggest: None,
             package_type: None,
             autoload: None,
@@ -1484,16 +1484,16 @@ mod tests {
             },
         ];
 
-        let mut require = BTreeMap::new();
+        let mut require = indexmap::IndexMap::new();
         require.insert("vendor/a".to_string(), "^1.0".to_string());
 
-        let mut require_dev = BTreeMap::new();
+        let mut require_dev = indexmap::IndexMap::new();
         require_dev.insert("vendor/b".to_string(), "^1.0".to_string());
 
         let mut metadata: IndexMap<String, PackagistVersion> = IndexMap::new();
 
         // A requires C
-        let mut a_require = BTreeMap::new();
+        let mut a_require = indexmap::IndexMap::new();
         a_require.insert("vendor/c".to_string(), "^1.0".to_string());
         metadata.insert(
             "vendor/a".to_string(),
@@ -1501,7 +1501,7 @@ mod tests {
         );
 
         // B requires D
-        let mut b_require = BTreeMap::new();
+        let mut b_require = indexmap::IndexMap::new();
         b_require.insert("vendor/d".to_string(), "^1.0".to_string());
         metadata.insert(
             "vendor/b".to_string(),
@@ -1511,11 +1511,11 @@ mod tests {
         // C and D have no deps
         metadata.insert(
             "vendor/c".to_string(),
-            make_packagist_version("1.0.0", "1.0.0.0", BTreeMap::new()),
+            make_packagist_version("1.0.0", "1.0.0.0", indexmap::IndexMap::new()),
         );
         metadata.insert(
             "vendor/d".to_string(),
-            make_packagist_version("1.0.0", "1.0.0.0", BTreeMap::new()),
+            make_packagist_version("1.0.0", "1.0.0.0", indexmap::IndexMap::new()),
         );
 
         let requires_by_name: IndexMap<String, Vec<String>> = metadata
@@ -1577,16 +1577,16 @@ mod tests {
             },
         ];
 
-        let mut require = BTreeMap::new();
+        let mut require = indexmap::IndexMap::new();
         require.insert("vendor/a".to_string(), "^1.0".to_string());
 
-        let mut require_dev = BTreeMap::new();
+        let mut require_dev = indexmap::IndexMap::new();
         require_dev.insert("vendor/b".to_string(), "^1.0".to_string());
 
         let mut metadata: IndexMap<String, PackagistVersion> = IndexMap::new();
 
         // A requires C
-        let mut a_require = BTreeMap::new();
+        let mut a_require = indexmap::IndexMap::new();
         a_require.insert("vendor/c".to_string(), "^1.0".to_string());
         metadata.insert(
             "vendor/a".to_string(),
@@ -1594,7 +1594,7 @@ mod tests {
         );
 
         // B also requires C
-        let mut b_require = BTreeMap::new();
+        let mut b_require = indexmap::IndexMap::new();
         b_require.insert("vendor/c".to_string(), "^1.0".to_string());
         metadata.insert(
             "vendor/b".to_string(),
@@ -1604,7 +1604,7 @@ mod tests {
         // C has no deps
         metadata.insert(
             "vendor/c".to_string(),
-            make_packagist_version("1.0.0", "1.0.0.0", BTreeMap::new()),
+            make_packagist_version("1.0.0", "1.0.0.0", indexmap::IndexMap::new()),
         );
 
         let requires_by_name: IndexMap<String, Vec<String>> = metadata
@@ -1636,7 +1636,7 @@ mod tests {
 
     #[test]
     fn test_extract_platform_requirements() {
-        let mut requirements = BTreeMap::new();
+        let mut requirements = indexmap::IndexMap::new();
         requirements.insert("php".to_string(), ">=8.1".to_string());
         requirements.insert("ext-json".to_string(), "*".to_string());
         requirements.insert("ext-mbstring".to_string(), "*".to_string());
@@ -1669,7 +1669,7 @@ mod tests {
 
     #[test]
     fn test_extract_platform_requirements_empty() {
-        let requirements = BTreeMap::new();
+        let requirements = indexmap::IndexMap::new();
         let platform = extract_platform_requirements(&requirements);
         assert_eq!(platform, serde_json::json!({}));
     }
@@ -1729,11 +1729,11 @@ mod tests {
                 version_normalized: None,
                 source: None,
                 dist: None,
-                require: BTreeMap::new(),
-                require_dev: BTreeMap::new(),
-                conflict: BTreeMap::new(),
-                provide: BTreeMap::new(),
-                replace: BTreeMap::new(),
+                require: indexmap::IndexMap::new(),
+                require_dev: indexmap::IndexMap::new(),
+                conflict: indexmap::IndexMap::new(),
+                provide: indexmap::IndexMap::new(),
+                replace: indexmap::IndexMap::new(),
                 suggest: None,
                 package_type: None,
                 autoload: None,
@@ -1746,7 +1746,7 @@ mod tests {
                 support: None,
                 funding: None,
                 time: None,
-                extra_fields: BTreeMap::new(),
+                extra_fields: indexmap::IndexMap::new(),
             },
             LockedPackage {
                 name: "vendor/alpha".to_string(),
@@ -1754,11 +1754,11 @@ mod tests {
                 version_normalized: None,
                 source: None,
                 dist: None,
-                require: BTreeMap::new(),
-                require_dev: BTreeMap::new(),
-                conflict: BTreeMap::new(),
-                provide: BTreeMap::new(),
-                replace: BTreeMap::new(),
+                require: indexmap::IndexMap::new(),
+                require_dev: indexmap::IndexMap::new(),
+                conflict: indexmap::IndexMap::new(),
+                provide: indexmap::IndexMap::new(),
+                replace: indexmap::IndexMap::new(),
                 suggest: None,
                 package_type: None,
                 autoload: None,
@@ -1771,7 +1771,7 @@ mod tests {
                 support: None,
                 funding: None,
                 time: None,
-                extra_fields: BTreeMap::new(),
+                extra_fields: indexmap::IndexMap::new(),
             },
         ];
 
@@ -1892,11 +1892,11 @@ mod tests {
             version_normalized: None,
             source: None,
             dist: None,
-            require: BTreeMap::new(),
-            require_dev: BTreeMap::new(),
-            conflict: BTreeMap::new(),
-            provide: BTreeMap::new(),
-            replace: BTreeMap::new(),
+            require: indexmap::IndexMap::new(),
+            require_dev: indexmap::IndexMap::new(),
+            conflict: indexmap::IndexMap::new(),
+            provide: indexmap::IndexMap::new(),
+            replace: indexmap::IndexMap::new(),
             suggest: None,
             package_type: Some("library".to_string()),
             autoload: None,
@@ -1909,7 +1909,7 @@ mod tests {
             support: None,
             funding: None,
             time: None,
-            extra_fields: BTreeMap::new(),
+            extra_fields: indexmap::IndexMap::new(),
         }
     }
 

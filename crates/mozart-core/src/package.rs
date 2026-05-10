@@ -1,13 +1,17 @@
 use serde::de::{Deserializer, MapAccess, SeqAccess, Visitor};
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
 use std::fmt;
 use std::fs;
 use std::path::Path;
 
 pub mod archiver;
+mod complete_package_interface;
 pub mod dumper;
+mod package_interface;
 pub mod version;
+
+pub use complete_package_interface::*;
+pub use package_interface::*;
 
 /// Package stability level.
 /// Higher value = less stable.
@@ -62,8 +66,8 @@ pub struct Author {
 /// Autoload rule sets (PSR-4, PSR-0, classmap, files).
 #[derive(Debug, Clone, Default)]
 pub struct AutoloadRules {
-    pub psr4: BTreeMap<String, Vec<String>>,
-    pub psr0: BTreeMap<String, Vec<String>>,
+    pub psr4: indexmap::IndexMap<String, Vec<String>>,
+    pub psr0: indexmap::IndexMap<String, Vec<String>>,
     pub classmap: Vec<String>,
     pub files: Vec<String>,
 }
@@ -125,19 +129,19 @@ pub struct PackageData {
     pub dist_sha1_checksum: Option<String>,
 
     pub release_date: Option<String>,
-    pub extra: BTreeMap<String, serde_json::Value>,
+    pub extra: indexmap::IndexMap<String, serde_json::Value>,
     pub binaries: Vec<String>,
     pub dev: bool,
     pub stability: Stability,
     pub notification_url: Option<String>,
 
     // dependency links
-    pub requires: BTreeMap<String, Link>,
-    pub conflicts: BTreeMap<String, Link>,
-    pub provides: BTreeMap<String, Link>,
-    pub replaces: BTreeMap<String, Link>,
-    pub dev_requires: BTreeMap<String, Link>,
-    pub suggests: BTreeMap<String, String>,
+    pub requires: indexmap::IndexMap<String, Link>,
+    pub conflicts: indexmap::IndexMap<String, Link>,
+    pub provides: indexmap::IndexMap<String, Link>,
+    pub replaces: indexmap::IndexMap<String, Link>,
+    pub dev_requires: indexmap::IndexMap<String, Link>,
+    pub suggests: indexmap::IndexMap<String, String>,
 
     // autoload
     pub autoload: AutoloadRules,
@@ -157,7 +161,7 @@ pub struct CompletePackageData {
     pub license: Vec<String>,
     pub keywords: Vec<String>,
     pub authors: Vec<Author>,
-    pub scripts: BTreeMap<String, Vec<String>>,
+    pub scripts: indexmap::IndexMap<String, Vec<String>>,
     pub support: Support,
     pub funding: Vec<Funding>,
     pub repositories: Vec<serde_json::Value>,
@@ -175,105 +179,55 @@ pub struct RootPackageData {
 
     pub minimum_stability: Stability,
     pub prefer_stable: bool,
-    pub stability_flags: BTreeMap<String, Stability>,
-    pub config: BTreeMap<String, serde_json::Value>,
-    pub references: BTreeMap<String, String>,
+    pub stability_flags: indexmap::IndexMap<String, Stability>,
+    pub config: indexmap::IndexMap<String, serde_json::Value>,
+    pub references: indexmap::IndexMap<String, String>,
     pub aliases: Vec<VersionAlias>,
-}
-
-/// Accessor for `PackageData` fields.
-/// Corresponds to `Composer\Package\PackageInterface`.
-pub trait Package {
-    fn name(&self) -> &str;
-    fn pretty_name(&self) -> &str;
-    fn version(&self) -> &str;
-    fn pretty_version(&self) -> &str;
-    fn package_type(&self) -> &str;
-    fn target_dir(&self) -> Option<&str>;
-    fn source_type(&self) -> Option<&str>;
-    fn source_url(&self) -> Option<&str>;
-    fn source_reference(&self) -> Option<&str>;
-    fn dist_type(&self) -> Option<&str>;
-    fn dist_url(&self) -> Option<&str>;
-    fn dist_reference(&self) -> Option<&str>;
-    fn dist_sha1_checksum(&self) -> Option<&str>;
-    fn release_date(&self) -> Option<&str>;
-    fn extra(&self) -> &BTreeMap<String, serde_json::Value>;
-    fn binaries(&self) -> &[String];
-    fn is_dev(&self) -> bool;
-    fn stability(&self) -> Stability;
-    fn notification_url(&self) -> Option<&str>;
-    fn requires(&self) -> &BTreeMap<String, Link>;
-    fn conflicts(&self) -> &BTreeMap<String, Link>;
-    fn provides(&self) -> &BTreeMap<String, Link>;
-    fn replaces(&self) -> &BTreeMap<String, Link>;
-    fn dev_requires(&self) -> &BTreeMap<String, Link>;
-    fn suggests(&self) -> &BTreeMap<String, String>;
-    fn autoload(&self) -> &AutoloadRules;
-    fn dev_autoload(&self) -> &AutoloadRules;
-    fn is_default_branch(&self) -> bool;
-}
-
-/// Accessor for `CompletePackageData` fields.
-/// Corresponds to `Composer\Package\CompletePackageInterface`.
-pub trait CompletePackage: Package {
-    fn description(&self) -> Option<&str>;
-    fn homepage(&self) -> Option<&str>;
-    fn license(&self) -> &[String];
-    fn keywords(&self) -> &[String];
-    fn authors(&self) -> &[Author];
-    fn scripts(&self) -> &BTreeMap<String, Vec<String>>;
-    fn support(&self) -> &Support;
-    fn funding(&self) -> &[Funding];
-    fn repositories(&self) -> &[serde_json::Value];
-    fn abandoned(&self) -> Option<&str>;
-    fn archive_name(&self) -> Option<&str>;
-    fn archive_excludes(&self) -> &[String];
 }
 
 /// Accessor for `RootPackageData` fields.
 /// Corresponds to `Composer\Package\RootPackageInterface`.
-pub trait RootPackage: CompletePackage {
+pub trait RootPackage: CompletePackageInterface {
     fn minimum_stability(&self) -> Stability;
     fn prefer_stable(&self) -> bool;
-    fn stability_flags(&self) -> &BTreeMap<String, Stability>;
-    fn config(&self) -> &BTreeMap<String, serde_json::Value>;
-    fn references(&self) -> &BTreeMap<String, String>;
+    fn stability_flags(&self) -> &indexmap::IndexMap<String, Stability>;
+    fn config(&self) -> &indexmap::IndexMap<String, serde_json::Value>;
+    fn references(&self) -> &indexmap::IndexMap<String, String>;
     fn aliases(&self) -> &[VersionAlias];
 }
 
 /// Implements `Package` trait by delegating to an inner `PackageData` field.
 macro_rules! delegate_package {
     ($type:ty => $($path:ident).+) => {
-        impl Package for $type {
-            fn name(&self)               -> &str                                 { &self.$($path).+.name                          }
-            fn pretty_name(&self)        -> &str                                 { &self.$($path).+.pretty_name                   }
-            fn version(&self)            -> &str                                 { &self.$($path).+.version                       }
-            fn pretty_version(&self)     -> &str                                 { &self.$($path).+.pretty_version                }
-            fn package_type(&self)       -> &str                                 { &self.$($path).+.package_type                  }
-            fn target_dir(&self)         -> Option<&str>                         {  self.$($path).+.target_dir.as_deref()         }
-            fn source_type(&self)        -> Option<&str>                         {  self.$($path).+.source_type.as_deref()        }
-            fn source_url(&self)         -> Option<&str>                         {  self.$($path).+.source_url.as_deref()         }
-            fn source_reference(&self)   -> Option<&str>                         {  self.$($path).+.source_reference.as_deref()   }
-            fn dist_type(&self)          -> Option<&str>                         {  self.$($path).+.dist_type.as_deref()          }
-            fn dist_url(&self)           -> Option<&str>                         {  self.$($path).+.dist_url.as_deref()           }
-            fn dist_reference(&self)     -> Option<&str>                         {  self.$($path).+.dist_reference.as_deref()     }
-            fn dist_sha1_checksum(&self) -> Option<&str>                         {  self.$($path).+.dist_sha1_checksum.as_deref() }
-            fn release_date(&self)       -> Option<&str>                         {  self.$($path).+.release_date.as_deref()       }
-            fn extra(&self)              -> &BTreeMap<String, serde_json::Value> { &self.$($path).+.extra                         }
-            fn binaries(&self)           -> &[String]                            { &self.$($path).+.binaries                      }
-            fn is_dev(&self)             -> bool                                 {  self.$($path).+.dev                           }
-            fn stability(&self)          -> Stability                            {  self.$($path).+.stability                     }
-            fn notification_url(&self)   -> Option<&str>                         {  self.$($path).+.notification_url.as_deref()   }
-            fn requires(&self)           -> &BTreeMap<String, Link>              { &self.$($path).+.requires                      }
-            fn conflicts(&self)          -> &BTreeMap<String, Link>              { &self.$($path).+.conflicts                     }
-            fn provides(&self)           -> &BTreeMap<String, Link>              { &self.$($path).+.provides                      }
-            fn replaces(&self)           -> &BTreeMap<String, Link>              { &self.$($path).+.replaces                      }
-            fn dev_requires(&self)       -> &BTreeMap<String, Link>              { &self.$($path).+.dev_requires                  }
-            fn suggests(&self)           -> &BTreeMap<String, String>            { &self.$($path).+.suggests                      }
-            fn autoload(&self)           -> &AutoloadRules                       { &self.$($path).+.autoload                      }
-            fn dev_autoload(&self)       -> &AutoloadRules                       { &self.$($path).+.dev_autoload                  }
-            fn is_default_branch(&self)  -> bool                                 {  self.$($path).+.is_default_branch             }
+        impl PackageInterface for $type {
+            fn name(&self)               -> &str                                           { &self.$($path).+.name                          }
+            fn pretty_name(&self)        -> &str                                           { &self.$($path).+.pretty_name                   }
+            fn version(&self)            -> &str                                           { &self.$($path).+.version                       }
+            fn pretty_version(&self)     -> &str                                           { &self.$($path).+.pretty_version                }
+            fn package_type(&self)       -> &str                                           { &self.$($path).+.package_type                  }
+            fn target_dir(&self)         -> Option<&str>                                   {  self.$($path).+.target_dir.as_deref()         }
+            fn source_type(&self)        -> Option<&str>                                   {  self.$($path).+.source_type.as_deref()        }
+            fn source_url(&self)         -> Option<&str>                                   {  self.$($path).+.source_url.as_deref()         }
+            fn source_reference(&self)   -> Option<&str>                                   {  self.$($path).+.source_reference.as_deref()   }
+            fn dist_type(&self)          -> Option<&str>                                   {  self.$($path).+.dist_type.as_deref()          }
+            fn dist_url(&self)           -> Option<&str>                                   {  self.$($path).+.dist_url.as_deref()           }
+            fn dist_reference(&self)     -> Option<&str>                                   {  self.$($path).+.dist_reference.as_deref()     }
+            fn dist_sha1_checksum(&self) -> Option<&str>                                   {  self.$($path).+.dist_sha1_checksum.as_deref() }
+            fn release_date(&self)       -> Option<&str>                                   {  self.$($path).+.release_date.as_deref()       }
+            fn extra(&self)              -> &indexmap::IndexMap<String, serde_json::Value> { &self.$($path).+.extra                         }
+            fn binaries(&self)           -> &[String]                                      { &self.$($path).+.binaries                      }
+            fn is_dev(&self)             -> bool                                           {  self.$($path).+.dev                           }
+            fn stability(&self)          -> Stability                                      {  self.$($path).+.stability                     }
+            fn notification_url(&self)   -> Option<&str>                                   {  self.$($path).+.notification_url.as_deref()   }
+            fn requires(&self)           -> &indexmap::IndexMap<String, Link>              { &self.$($path).+.requires                      }
+            fn conflicts(&self)          -> &indexmap::IndexMap<String, Link>              { &self.$($path).+.conflicts                     }
+            fn provides(&self)           -> &indexmap::IndexMap<String, Link>              { &self.$($path).+.provides                      }
+            fn replaces(&self)           -> &indexmap::IndexMap<String, Link>              { &self.$($path).+.replaces                      }
+            fn dev_requires(&self)       -> &indexmap::IndexMap<String, Link>              { &self.$($path).+.dev_requires                  }
+            fn suggests(&self)           -> &indexmap::IndexMap<String, String>            { &self.$($path).+.suggests                      }
+            fn autoload(&self)           -> &AutoloadRules                                 { &self.$($path).+.autoload                      }
+            fn dev_autoload(&self)       -> &AutoloadRules                                 { &self.$($path).+.dev_autoload                  }
+            fn is_default_branch(&self)  -> bool                                           {  self.$($path).+.is_default_branch             }
         }
     };
 }
@@ -281,24 +235,24 @@ macro_rules! delegate_package {
 /// Implements `CompletePackage` trait by delegating to an inner `CompletePackageData` field.
 macro_rules! delegate_complete_package {
     ($type:ty => $($path:ident).+) => {
-        impl CompletePackage for $type {
-            fn description(&self)      -> Option<&str>                   {  self.$($path).+.description.as_deref()  }
-            fn homepage(&self)         -> Option<&str>                   {  self.$($path).+.homepage.as_deref()     }
-            fn license(&self)          -> &[String]                      { &self.$($path).+.license                 }
-            fn keywords(&self)         -> &[String]                      { &self.$($path).+.keywords                }
-            fn authors(&self)          -> &[Author]                      { &self.$($path).+.authors                 }
-            fn scripts(&self)          -> &BTreeMap<String, Vec<String>> { &self.$($path).+.scripts                 }
-            fn support(&self)          -> &Support                       { &self.$($path).+.support                 }
-            fn funding(&self)          -> &[Funding]                     { &self.$($path).+.funding                 }
-            fn repositories(&self)     -> &[serde_json::Value]           { &self.$($path).+.repositories            }
-            fn abandoned(&self)        -> Option<&str>                   {  self.$($path).+.abandoned.as_deref()    }
-            fn archive_name(&self)     -> Option<&str>                   {  self.$($path).+.archive_name.as_deref() }
-            fn archive_excludes(&self) -> &[String]                      { &self.$($path).+.archive_excludes        }
+        impl CompletePackageInterface for $type {
+            fn description(&self)      -> Option<&str>                             {  self.$($path).+.description.as_deref()  }
+            fn homepage(&self)         -> Option<&str>                             {  self.$($path).+.homepage.as_deref()     }
+            fn license(&self)          -> &[String]                                { &self.$($path).+.license                 }
+            fn keywords(&self)         -> &[String]                                { &self.$($path).+.keywords                }
+            fn authors(&self)          -> &[Author]                                { &self.$($path).+.authors                 }
+            fn scripts(&self)          -> &indexmap::IndexMap<String, Vec<String>> { &self.$($path).+.scripts                 }
+            fn support(&self)          -> &Support                                 { &self.$($path).+.support                 }
+            fn funding(&self)          -> &[Funding]                               { &self.$($path).+.funding                 }
+            fn repositories(&self)     -> &[serde_json::Value]                     { &self.$($path).+.repositories            }
+            fn abandoned(&self)        -> Option<&str>                             {  self.$($path).+.abandoned.as_deref()    }
+            fn archive_name(&self)     -> Option<&str>                             {  self.$($path).+.archive_name.as_deref() }
+            fn archive_excludes(&self) -> &[String]                                { &self.$($path).+.archive_excludes        }
         }
     };
 }
 
-impl Package for PackageData {
+impl PackageInterface for PackageData {
     fn name(&self) -> &str {
         &self.name
     }
@@ -341,7 +295,7 @@ impl Package for PackageData {
     fn release_date(&self) -> Option<&str> {
         self.release_date.as_deref()
     }
-    fn extra(&self) -> &BTreeMap<String, serde_json::Value> {
+    fn extra(&self) -> &indexmap::IndexMap<String, serde_json::Value> {
         &self.extra
     }
     fn binaries(&self) -> &[String] {
@@ -356,22 +310,22 @@ impl Package for PackageData {
     fn notification_url(&self) -> Option<&str> {
         self.notification_url.as_deref()
     }
-    fn requires(&self) -> &BTreeMap<String, Link> {
+    fn requires(&self) -> &indexmap::IndexMap<String, Link> {
         &self.requires
     }
-    fn conflicts(&self) -> &BTreeMap<String, Link> {
+    fn conflicts(&self) -> &indexmap::IndexMap<String, Link> {
         &self.conflicts
     }
-    fn provides(&self) -> &BTreeMap<String, Link> {
+    fn provides(&self) -> &indexmap::IndexMap<String, Link> {
         &self.provides
     }
-    fn replaces(&self) -> &BTreeMap<String, Link> {
+    fn replaces(&self) -> &indexmap::IndexMap<String, Link> {
         &self.replaces
     }
-    fn dev_requires(&self) -> &BTreeMap<String, Link> {
+    fn dev_requires(&self) -> &indexmap::IndexMap<String, Link> {
         &self.dev_requires
     }
-    fn suggests(&self) -> &BTreeMap<String, String> {
+    fn suggests(&self) -> &indexmap::IndexMap<String, String> {
         &self.suggests
     }
     fn autoload(&self) -> &AutoloadRules {
@@ -385,7 +339,7 @@ impl Package for PackageData {
     }
 }
 
-impl CompletePackage for CompletePackageData {
+impl CompletePackageInterface for CompletePackageData {
     fn description(&self) -> Option<&str> {
         self.description.as_deref()
     }
@@ -401,7 +355,7 @@ impl CompletePackage for CompletePackageData {
     fn authors(&self) -> &[Author] {
         &self.authors
     }
-    fn scripts(&self) -> &BTreeMap<String, Vec<String>> {
+    fn scripts(&self) -> &indexmap::IndexMap<String, Vec<String>> {
         &self.scripts
     }
     fn support(&self) -> &Support {
@@ -431,13 +385,13 @@ impl RootPackage for RootPackageData {
     fn prefer_stable(&self) -> bool {
         self.prefer_stable
     }
-    fn stability_flags(&self) -> &BTreeMap<String, Stability> {
+    fn stability_flags(&self) -> &indexmap::IndexMap<String, Stability> {
         &self.stability_flags
     }
-    fn config(&self) -> &BTreeMap<String, serde_json::Value> {
+    fn config(&self) -> &indexmap::IndexMap<String, serde_json::Value> {
         &self.config
     }
-    fn references(&self) -> &BTreeMap<String, String> {
+    fn references(&self) -> &indexmap::IndexMap<String, String> {
         &self.references
     }
     fn aliases(&self) -> &[VersionAlias] {
@@ -489,23 +443,23 @@ pub struct RawPackageData {
     pub minimum_stability: Option<String>,
 
     #[serde(default)]
-    pub require: BTreeMap<String, String>,
+    pub require: indexmap::IndexMap<String, String>,
 
     #[serde(
         rename = "require-dev",
         default,
-        skip_serializing_if = "BTreeMap::is_empty"
+        skip_serializing_if = "indexmap::IndexMap::is_empty"
     )]
-    pub require_dev: BTreeMap<String, String>,
+    pub require_dev: indexmap::IndexMap<String, String>,
 
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub conflict: BTreeMap<String, String>,
+    #[serde(default, skip_serializing_if = "indexmap::IndexMap::is_empty")]
+    pub conflict: indexmap::IndexMap<String, String>,
 
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub provide: BTreeMap<String, String>,
+    #[serde(default, skip_serializing_if = "indexmap::IndexMap::is_empty")]
+    pub provide: indexmap::IndexMap<String, String>,
 
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub replace: BTreeMap<String, String>,
+    #[serde(default, skip_serializing_if = "indexmap::IndexMap::is_empty")]
+    pub replace: indexmap::IndexMap<String, String>,
 
     /// `repositories` accepts either a JSON array or a JSON object keyed by
     /// repository name. Composer iterates `foreach ($repoConfigs as ...)` in
@@ -525,7 +479,7 @@ pub struct RawPackageData {
     pub bin: Vec<String>,
 
     #[serde(flatten)]
-    pub extra_fields: BTreeMap<String, serde_json::Value>,
+    pub extra_fields: indexmap::IndexMap<String, serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -539,7 +493,7 @@ pub struct RawAuthor {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RawAutoload {
     #[serde(rename = "psr-4")]
-    pub psr4: BTreeMap<String, String>,
+    pub psr4: indexmap::IndexMap<String, String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -653,15 +607,15 @@ impl RawPackageData {
             license: None,
             authors: Vec::new(),
             minimum_stability: None,
-            require: BTreeMap::new(),
-            require_dev: BTreeMap::new(),
-            conflict: BTreeMap::new(),
-            provide: BTreeMap::new(),
-            replace: BTreeMap::new(),
+            require: indexmap::IndexMap::new(),
+            require_dev: indexmap::IndexMap::new(),
+            conflict: indexmap::IndexMap::new(),
+            provide: indexmap::IndexMap::new(),
+            replace: indexmap::IndexMap::new(),
             repositories: Vec::new(),
             autoload: None,
             bin: Vec::new(),
-            extra_fields: BTreeMap::new(),
+            extra_fields: indexmap::IndexMap::new(),
         }
     }
 
@@ -696,9 +650,9 @@ impl RootPackageData {
     pub fn from_raw(raw: RawPackageData) -> Self {
         fn make_links(
             source: &str,
-            deps: BTreeMap<String, String>,
+            deps: indexmap::IndexMap<String, String>,
             description: &str,
-        ) -> BTreeMap<String, Link> {
+        ) -> indexmap::IndexMap<String, Link> {
             deps.into_iter()
                 .map(|(target, constraint)| {
                     let normalized = target.to_lowercase();
@@ -745,7 +699,7 @@ impl RootPackageData {
             })
             .unwrap_or_default();
 
-        let extra: BTreeMap<String, serde_json::Value> = raw
+        let extra: indexmap::IndexMap<String, serde_json::Value> = raw
             .extra_fields
             .get("extra")
             .and_then(|v| v.as_object())
@@ -783,7 +737,7 @@ impl RootPackageData {
             })
             .unwrap_or_default();
 
-        let scripts: BTreeMap<String, Vec<String>> = raw
+        let scripts: indexmap::IndexMap<String, Vec<String>> = raw
             .extra_fields
             .get("scripts")
             .and_then(|v| v.as_object())
@@ -841,7 +795,7 @@ impl RootPackageData {
             })
             .unwrap_or_default();
 
-        let config: BTreeMap<String, serde_json::Value> = raw
+        let config: indexmap::IndexMap<String, serde_json::Value> = raw
             .extra_fields
             .get("config")
             .and_then(|v| v.as_object())
@@ -882,7 +836,7 @@ impl RootPackageData {
             provides,
             replaces,
             dev_requires,
-            suggests: BTreeMap::new(),
+            suggests: indexmap::IndexMap::new(),
             autoload,
             dev_autoload: AutoloadRules::default(),
             is_default_branch: false,
@@ -908,9 +862,9 @@ impl RootPackageData {
             complete: complete_data,
             minimum_stability,
             prefer_stable,
-            stability_flags: BTreeMap::new(),
+            stability_flags: indexmap::IndexMap::new(),
             config,
-            references: BTreeMap::new(),
+            references: indexmap::IndexMap::new(),
             aliases: Vec::new(),
         }
     }
@@ -976,7 +930,7 @@ mod tests {
             security_advisories: None,
         }];
 
-        let mut psr4 = BTreeMap::new();
+        let mut psr4 = indexmap::IndexMap::new();
         psr4.insert("Acme\\Full\\".to_string(), "src/".to_string());
         raw.autoload = Some(RawAutoload { psr4 });
 

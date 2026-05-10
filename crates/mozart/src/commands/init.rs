@@ -425,7 +425,7 @@ async fn build_interactive(
             "Would you like to define your dev dependencies (require-dev) interactively [<comment>yes</comment>]?"
         ))
     {
-        let all_required: BTreeMap<String, String> = require
+        let all_required: indexmap::IndexMap<_, _> = require
             .iter()
             .chain(require_dev.iter())
             .map(|(k, v)| (k.clone(), v.clone()))
@@ -493,7 +493,7 @@ async fn build_interactive(
 /// Returns a map of package name → version constraint selected by the user.
 async fn interactive_search_packages(
     label: &str,
-    already_required: &BTreeMap<String, String>,
+    already_required: &indexmap::IndexMap<String, String>,
     preferred_stability: Stability,
     repo_cache: &mozart_core::repository::cache::Cache,
     io: &std::sync::Arc<std::sync::Mutex<Box<dyn IoInterface>>>,
@@ -749,8 +749,8 @@ fn get_git_config_value(key: &str) -> Option<String> {
     get_git_config().get(key).cloned().filter(|v| !v.is_empty())
 }
 
-fn parse_requirements(reqs: &[String]) -> anyhow::Result<BTreeMap<String, String>> {
-    let mut map = BTreeMap::new();
+fn parse_requirements(reqs: &[String]) -> anyhow::Result<indexmap::IndexMap<String, String>> {
+    let mut map = indexmap::IndexMap::new();
     for req in reqs {
         let (name, version) =
             validation::parse_require_string(req).map_err(|e| anyhow::anyhow!(e))?;
@@ -761,7 +761,7 @@ fn parse_requirements(reqs: &[String]) -> anyhow::Result<BTreeMap<String, String
 
 fn build_autoload(path: &str, package_name: &str) -> Option<RawAutoload> {
     let namespace = validation::namespace_from_package_name(package_name)?;
-    let mut psr4 = BTreeMap::new();
+    let mut psr4 = indexmap::IndexMap::new();
     psr4.insert(format!("{namespace}\\"), path.to_string());
     Some(RawAutoload { psr4 })
 }

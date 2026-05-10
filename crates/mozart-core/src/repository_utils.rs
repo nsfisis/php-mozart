@@ -19,7 +19,7 @@ use std::collections::BTreeSet;
 /// `package_name` only in that case.
 pub trait Required {
     fn package_name(&self) -> &str;
-    fn requires(&self) -> &std::collections::BTreeMap<String, String>;
+    fn requires(&self) -> &indexmap::IndexMap<String, String>;
     fn package_names(&self) -> Option<Vec<&str>> {
         None
     }
@@ -38,8 +38,8 @@ pub trait Required {
 /// discovered, matching PHP's `$bucket[] = $candidate;` push pattern.
 pub fn filter_required_packages<P, V>(
     packages: &[P],
-    requirer_requires: &std::collections::BTreeMap<String, V>,
-    requirer_dev_requires: Option<&std::collections::BTreeMap<String, V>>,
+    requirer_requires: &indexmap::IndexMap<String, V>,
+    requirer_dev_requires: Option<&indexmap::IndexMap<String, V>>,
 ) -> Vec<usize>
 where
     P: Required,
@@ -78,24 +78,23 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::BTreeMap;
 
     struct Pkg {
         name: String,
-        requires: BTreeMap<String, String>,
+        requires: indexmap::IndexMap<String, String>,
     }
 
     impl Required for Pkg {
         fn package_name(&self) -> &str {
             &self.name
         }
-        fn requires(&self) -> &BTreeMap<String, String> {
+        fn requires(&self) -> &indexmap::IndexMap<String, String> {
             &self.requires
         }
     }
 
     fn pkg(name: &str, requires: &[&str]) -> Pkg {
-        let mut r = BTreeMap::new();
+        let mut r = indexmap::IndexMap::new();
         for n in requires {
             r.insert(n.to_string(), "*".to_string());
         }
@@ -105,8 +104,8 @@ mod tests {
         }
     }
 
-    fn root_requires(names: &[&str]) -> BTreeMap<String, String> {
-        let mut m = BTreeMap::new();
+    fn root_requires(names: &[&str]) -> indexmap::IndexMap<String, String> {
+        let mut m = indexmap::IndexMap::new();
         for n in names {
             m.insert(n.to_string(), "*".to_string());
         }
@@ -167,7 +166,7 @@ mod tests {
     #[test]
     fn empty_requires_yields_nothing() {
         let packages = vec![pkg("a/a", &[]), pkg("b/b", &[])];
-        let root: BTreeMap<String, String> = BTreeMap::new();
+        let root: indexmap::IndexMap<_, ()> = indexmap::IndexMap::new();
         let kept = filter_required_packages(&packages, &root, None);
         assert!(kept.is_empty());
     }

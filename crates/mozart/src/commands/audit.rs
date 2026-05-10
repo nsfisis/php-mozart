@@ -194,8 +194,6 @@ fn load_locked_packages(working_dir: &Path, no_dev: bool) -> anyhow::Result<Vec<
 
 #[cfg(test)]
 mod tests {
-    use std::collections::BTreeMap;
-
     use super::*;
     use mozart_core::repository::lockfile::{LockFile, LockedPackage};
 
@@ -242,7 +240,7 @@ mod tests {
             aliases: vec![],
             homepage: None,
             support: None,
-            extra_fields: BTreeMap::new(),
+            extra_fields: indexmap::IndexMap::new(),
         });
         installed.write(&vendor_dir).unwrap();
 
@@ -273,7 +271,7 @@ mod tests {
             aliases: vec![],
             homepage: None,
             support: None,
-            extra_fields: BTreeMap::new(),
+            extra_fields: indexmap::IndexMap::new(),
         });
         installed.upsert(mozart_core::repository::installed::InstalledPackageEntry {
             name: "phpunit/phpunit".to_string(),
@@ -287,7 +285,7 @@ mod tests {
             aliases: vec![],
             homepage: None,
             support: None,
-            extra_fields: BTreeMap::new(),
+            extra_fields: indexmap::IndexMap::new(),
         });
         installed
             .dev_package_names
@@ -315,11 +313,11 @@ mod tests {
                 version_normalized: Some("3.0.0.0".to_string()),
                 source: None,
                 dist: None,
-                require: BTreeMap::new(),
-                require_dev: BTreeMap::new(),
-                conflict: BTreeMap::new(),
-                provide: BTreeMap::new(),
-                replace: BTreeMap::new(),
+                require: indexmap::IndexMap::new(),
+                require_dev: indexmap::IndexMap::new(),
+                conflict: indexmap::IndexMap::new(),
+                provide: indexmap::IndexMap::new(),
+                replace: indexmap::IndexMap::new(),
                 suggest: None,
                 package_type: None,
                 autoload: None,
@@ -332,7 +330,7 @@ mod tests {
                 support: None,
                 funding: None,
                 time: None,
-                extra_fields: BTreeMap::new(),
+                extra_fields: indexmap::IndexMap::new(),
             }],
             packages_dev: None,
             aliases: vec![],
@@ -370,11 +368,11 @@ mod tests {
                 version_normalized: None,
                 source: None,
                 dist: None,
-                require: BTreeMap::new(),
-                require_dev: BTreeMap::new(),
-                conflict: BTreeMap::new(),
-                provide: BTreeMap::new(),
-                replace: BTreeMap::new(),
+                require: indexmap::IndexMap::new(),
+                require_dev: indexmap::IndexMap::new(),
+                conflict: indexmap::IndexMap::new(),
+                provide: indexmap::IndexMap::new(),
+                replace: indexmap::IndexMap::new(),
                 suggest: None,
                 package_type: None,
                 autoload: None,
@@ -387,7 +385,7 @@ mod tests {
                 support: None,
                 funding: None,
                 time: None,
-                extra_fields: BTreeMap::new(),
+                extra_fields: indexmap::IndexMap::new(),
             }],
             packages_dev: Some(vec![LockedPackage {
                 name: "phpunit/phpunit".to_string(),
@@ -395,11 +393,11 @@ mod tests {
                 version_normalized: None,
                 source: None,
                 dist: None,
-                require: BTreeMap::new(),
-                require_dev: BTreeMap::new(),
-                conflict: BTreeMap::new(),
-                provide: BTreeMap::new(),
-                replace: BTreeMap::new(),
+                require: indexmap::IndexMap::new(),
+                require_dev: indexmap::IndexMap::new(),
+                conflict: indexmap::IndexMap::new(),
+                provide: indexmap::IndexMap::new(),
+                replace: indexmap::IndexMap::new(),
                 suggest: None,
                 package_type: None,
                 autoload: None,
@@ -412,7 +410,7 @@ mod tests {
                 support: None,
                 funding: None,
                 time: None,
-                extra_fields: BTreeMap::new(),
+                extra_fields: indexmap::IndexMap::new(),
             }]),
             aliases: vec![],
             minimum_stability: "stable".to_string(),

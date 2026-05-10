@@ -6,7 +6,6 @@ use mozart_core::console_writeln;
 use mozart_core::console_writeln_error;
 use mozart_core::matches_wildcard;
 use mozart_core::platform::is_platform_package;
-use std::collections::BTreeMap;
 use std::path::Path;
 
 #[derive(Default, Args)]
@@ -255,15 +254,15 @@ struct PackageDetail {
     support: Option<serde_json::Value>,
     /// A13: autoload rules.
     autoload: Option<serde_json::Value>,
-    require: BTreeMap<String, String>,
-    require_dev: BTreeMap<String, String>,
+    require: indexmap::IndexMap<String, String>,
+    require_dev: indexmap::IndexMap<String, String>,
     /// A12: conflict links.
-    conflict: BTreeMap<String, String>,
+    conflict: indexmap::IndexMap<String, String>,
     /// A12: provide links.
-    provide: BTreeMap<String, String>,
+    provide: indexmap::IndexMap<String, String>,
     /// A12: replace links.
-    replace: BTreeMap<String, String>,
-    suggest: BTreeMap<String, String>,
+    replace: indexmap::IndexMap<String, String>,
+    suggest: indexmap::IndexMap<String, String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1132,7 +1131,7 @@ async fn print_package_detail(
 /// Print a named section of package links (requires, conflict, etc.).
 fn print_links_section(
     label: &str,
-    links: &BTreeMap<String, String>,
+    links: &indexmap::IndexMap<String, String>,
     io: std::sync::Arc<std::sync::Mutex<Box<dyn IoInterface>>>,
 ) {
     if links.is_empty() {
@@ -2077,7 +2076,7 @@ fn get_installed_release_date(
 fn get_installed_link_map(
     pkg: &mozart_core::repository::installed::InstalledPackageEntry,
     key: &str,
-) -> BTreeMap<String, String> {
+) -> indexmap::IndexMap<String, String> {
     pkg.extra_fields
         .get(key)
         .and_then(|v| v.as_object())
@@ -2092,7 +2091,7 @@ fn get_installed_link_map(
 /// Extract a map of `{package: reason}` from an installed package's suggest field.
 fn get_installed_suggest_map(
     pkg: &mozart_core::repository::installed::InstalledPackageEntry,
-) -> BTreeMap<String, String> {
+) -> indexmap::IndexMap<String, String> {
     pkg.extra_fields
         .get("suggest")
         .and_then(|v| v.as_object())
@@ -2268,8 +2267,7 @@ mod tests {
 
     #[test]
     fn test_get_installed_description_present() {
-        use std::collections::BTreeMap;
-        let mut extra = BTreeMap::new();
+        let mut extra = indexmap::IndexMap::new();
         extra.insert(
             "description".to_string(),
             serde_json::Value::String("A logging library".to_string()),
@@ -2293,7 +2291,6 @@ mod tests {
 
     #[test]
     fn test_get_installed_description_absent() {
-        use std::collections::BTreeMap;
         let pkg = mozart_core::repository::installed::InstalledPackageEntry {
             name: "psr/log".to_string(),
             version: "3.0.0".to_string(),
@@ -2306,15 +2303,14 @@ mod tests {
             aliases: vec![],
             homepage: None,
             support: None,
-            extra_fields: BTreeMap::new(),
+            extra_fields: indexmap::IndexMap::new(),
         };
         assert_eq!(get_installed_description(&pkg), "");
     }
 
     #[test]
     fn test_get_installed_keywords() {
-        use std::collections::BTreeMap;
-        let mut extra = BTreeMap::new();
+        let mut extra = indexmap::IndexMap::new();
         extra.insert(
             "keywords".to_string(),
             serde_json::json!(["log", "psr3", "logging"]),

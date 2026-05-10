@@ -10,7 +10,6 @@ use crate::repository::resolver::{parse_normalized, version_stability};
 use crate::repository::vcs::DriverConfig;
 use crate::vcs::repository::{VcsPackageVersion, VcsRepository};
 use indexmap::IndexMap;
-use std::collections::BTreeMap;
 
 /// Scan all VCS-type repositories and collect package versions.
 ///
@@ -191,7 +190,7 @@ pub fn vcs_to_packagist_version(vpkg: &VcsPackageVersion) -> PackagistVersion {
 }
 
 /// Extract a dependency map from composer.json JSON.
-fn extract_dep_map(json: &serde_json::Value, key: &str) -> BTreeMap<String, String> {
+fn extract_dep_map(json: &serde_json::Value, key: &str) -> indexmap::IndexMap<String, String> {
     json.get(key)
         .and_then(|v| v.as_object())
         .map(|obj| {
