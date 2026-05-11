@@ -146,6 +146,9 @@ pub fn create_config() -> anyhow::Result<Config> {
                 obj.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
             config.merge(&overrides)?;
         }
+        if let Some(repos) = json.get("repositories") {
+            config.merge_repositories(repos);
+        }
     }
 
     Ok(config)

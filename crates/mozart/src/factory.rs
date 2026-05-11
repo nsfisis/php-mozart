@@ -42,6 +42,9 @@ pub fn create_composer(
             .collect();
         config.merge(&overrides)?;
     }
+    if let Some(repos) = value.get("repositories") {
+        config.merge_repositories(repos);
+    }
     resolve_references(&mut config);
 
     let package = RootPackageData::from_raw(read_from_file(composer_json)?);
