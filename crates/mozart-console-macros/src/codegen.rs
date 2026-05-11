@@ -1,9 +1,8 @@
+use crate::parser::Segment;
 use proc_macro2::TokenStream;
 use quote::quote;
 use syn::Expr;
 use syn::punctuated::Punctuated;
-
-use crate::parser::Segment;
 
 /// Returns true if the string contains any format placeholders (`{}`, `{name}`, `{0}`, `{:<10}`, etc.)
 /// but not escaped braces `{{` or `}}`.

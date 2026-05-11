@@ -14,12 +14,11 @@
 //! - Update (downgrade direction): `Downgrading <name> (<oldVersion> => <newVersion>)`
 //! - Uninstall: `Removing <name> (<version>)`
 
-use mozart_semver::Version;
-
 use super::{
     ExecuteContext, InstallerExecutor, PackageOperation, format_full_pretty_alias,
     format_full_pretty_version,
 };
+use mozart_semver::Version;
 
 /// Recording-only executor. Construct with [`TraceRecorderExecutor::new`],
 /// then read [`TraceRecorderExecutor::trace`] after the run completes.

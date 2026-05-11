@@ -13,10 +13,9 @@
 //! Composer's `(string) $operation` byte-for-byte without the executor
 //! having to also reproduce console formatting.
 
-use std::path::PathBuf;
-
 use super::installed::InstalledPackageEntry;
 use super::lockfile::{LockAlias, LockedPackage};
+use std::path::PathBuf;
 
 pub mod filesystem;
 pub mod trace_recorder;

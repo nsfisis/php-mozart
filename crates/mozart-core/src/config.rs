@@ -5,11 +5,10 @@
 //! known properties.  Unknown properties are captured in the `extra` map so
 //! that round-tripping through serde is lossless.
 
+use crate::composer::composer_home;
 use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
-
-use crate::composer::composer_home;
 
 /// Parse a size string like "300MiB", "1GB", "512k", or a plain integer string
 /// into a byte count.  Mirrors Composer's `Config::get('cache-files-maxsize')`.

@@ -1,9 +1,8 @@
-use crate::downloader::DownloadManager;
-
 use super::{
     ArchiveFormat, collect_archivable_files, create_archive, generate_archive_filename,
     parse_composer_excludes, parse_gitattributes, parse_gitignore_pattern, self_exclusion_patterns,
 };
+use crate::downloader::DownloadManager;
 use std::path::{Path, PathBuf};
 
 /// A package to be archived.

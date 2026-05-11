@@ -1,6 +1,5 @@
-use std::path::{Path, PathBuf};
-
 use anyhow::anyhow;
+use std::path::{Path, PathBuf};
 
 pub struct JsonConfigSource {
     path: PathBuf,

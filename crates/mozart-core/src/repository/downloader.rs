@@ -350,7 +350,7 @@ pub async fn install_package(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::Write as IoWrite;
+    use std::io::Write as _;
     use tempfile::tempdir;
 
     /// Build a minimal zip archive in memory.

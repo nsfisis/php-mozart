@@ -8,9 +8,6 @@
 //! EXPECT-LOCK + EXPECT-INSTALLED — the same load-bearing assertions
 //! Composer's PHPUnit suite uses.
 
-use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
-
 use clap::Parser;
 use mozart::commands::{Cli, Commands, install, update};
 use mozart_core::console::{Console, IoInterface};
@@ -18,6 +15,8 @@ use mozart_core::exit_code::MozartError;
 use mozart_core::repository::installer_executor::TraceRecorderExecutor;
 use mozart_core::repository::repository::RepositorySet;
 use mozart_test_harness::{ParsedTest, parse_test_file};
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 use tempfile::TempDir;
 
 fn fixtures_dir() -> PathBuf {

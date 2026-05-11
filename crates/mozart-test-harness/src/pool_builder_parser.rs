@@ -4,11 +4,10 @@
 //! Section bodies are stored as raw strings (typically JSON); the runner is
 //! responsible for interpreting them.
 
+use crate::parser::split_sections;
 use anyhow::{Context as _, Result, bail};
 use std::fs;
 use std::path::Path;
-
-use crate::parser::split_sections;
 
 const VALID_SECTIONS: &[&str] = &[
     "TEST",

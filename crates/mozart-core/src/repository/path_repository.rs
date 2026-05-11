@@ -19,11 +19,10 @@
 //! consumers comparing references against Composer-produced lockfiles see
 //! byte-identical values.
 
-use std::path::{Path, PathBuf};
-
 use crate::package::RawRepository;
-use mozart_php_serialize::{Value as PhpValue, serialize as php_serialize};
+use mozart_php_serialize::{Value, serialize};
 use sha1::{Digest as _, Sha1};
+use std::path::{Path, PathBuf};
 
 /// Translate path repos in `repositories` into synthetic `type: package`
 /// entries. Non-path entries are returned unchanged in original order.
@@ -123,11 +122,11 @@ fn resolve_path(url: &str, base_dir: &Path) -> PathBuf {
 /// flag is the only option Composer's auto-detection populates when the user
 /// supplied no `options` block.
 fn compute_path_reference(json_bytes: &[u8], is_relative: bool) -> String {
-    let options = PhpValue::Array(vec![(
-        PhpValue::String("relative".to_string()),
-        PhpValue::Bool(is_relative),
+    let options = Value::Array(vec![(
+        Value::String("relative".to_string()),
+        Value::Bool(is_relative),
     )]);
-    let serialized = php_serialize(&options);
+    let serialized = serialize(&options);
     let mut hasher = Sha1::new();
     hasher.update(json_bytes);
     hasher.update(serialized.as_bytes());

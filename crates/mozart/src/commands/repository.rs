@@ -1,10 +1,9 @@
+use super::base_config::BaseConfigContext;
+use super::config_helpers::{normalize_repositories, render_value};
 use anyhow::anyhow;
 use clap::Args;
 use mozart_core::console::IoInterface;
 use mozart_core::console_writeln;
-
-use super::base_config::BaseConfigContext;
-use super::config_helpers::{normalize_repositories, render_value};
 
 #[derive(Args)]
 pub struct RepositoryArgs {

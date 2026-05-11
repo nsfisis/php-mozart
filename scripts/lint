@@ -1,0 +1,27 @@
+#!/usr/bin/env ruby
+
+require 'pathname'
+
+LINTERS = [
+  :cargo_workspace_dependencies,
+  :contiguous_use_block,
+  # TODO: re-enable this linter
+  # :no_decorative_section_comment,
+  :no_mod_rs,
+  # TODO: re-enable this linter
+  # :no_std_collections_maps,
+  :no_use_as_alias,
+  :sorted_dependencies,
+]
+
+root_dir = Pathname.new(__dir__).join('..').expand_path
+
+results = LINTERS.map do |linter|
+  require_relative "linters/#{linter}"
+  puts "===== #{linter} ====="
+  ok = send(linter, root_dir)
+  puts "Passed." if ok
+  puts
+  ok
+end
+exit(results.all? ? 0 : 1)

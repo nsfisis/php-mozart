@@ -1,9 +1,8 @@
+use anyhow::{Result, bail};
 use indexmap::IndexMap;
 use std::path::Path;
 use std::process::Command;
 use std::time::{Duration, Instant};
-
-use anyhow::{Result, bail};
 
 /// Output from a process execution.
 #[derive(Debug, Clone)]

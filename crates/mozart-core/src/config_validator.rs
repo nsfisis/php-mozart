@@ -5,12 +5,10 @@
 //! Composer's: `ValidateCommand` and `DiagnoseCommand` each `new
 //! ConfigValidator(...)`; neither depends on the other.
 
+use crate::validation;
+use regex::Regex;
 use std::collections::HashSet;
 use std::sync::LazyLock;
-
-use regex::Regex;
-
-use crate::validation as v;
 
 static DEPRECATED_GPL_OR_LATER_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(?i)^[AL]?GPL-[123](\.[01])?\+$").unwrap());
@@ -113,7 +111,7 @@ fn check_name(obj: &serde_json::Map<String, serde_json::Value>, result: &mut Val
             if name.chars().any(|c| c.is_ascii_uppercase()) {
                 let suggested = name
                     .split('/')
-                    .map(v::sanitize_package_name_component)
+                    .map(validation::sanitize_package_name_component)
                     .collect::<Vec<_>>()
                     .join("/");
                 result.publish_errors.push(format!(
@@ -122,7 +120,7 @@ fn check_name(obj: &serde_json::Map<String, serde_json::Value>, result: &mut Val
                 ));
             }
 
-            if !name.is_empty() && !v::validate_package_name(name) && !name.contains('/') {
+            if !name.is_empty() && !validation::validate_package_name(name) && !name.contains('/') {
                 result.errors.push(format!(
                     "The name \"{name}\" is invalid, it should be in the format \"vendor/package\"."
                 ));
@@ -224,11 +222,11 @@ fn check_license(obj: &serde_json::Map<String, serde_json::Value>, result: &mut 
             continue;
         }
         let to_validate = license.replace("proprietary", "MIT");
-        if v::validate_license(&to_validate) {
+        if validation::validate_license(&to_validate) {
             continue;
         }
         let quoted = serde_json::to_string(license).unwrap_or_else(|_| format!("\"{license}\""));
-        if v::validate_license(to_validate.trim()) {
+        if validation::validate_license(to_validate.trim()) {
             result.warnings.push(format!(
                 "License {quoted} must not contain extra spaces, make sure to trim it."
             ));
@@ -461,7 +459,7 @@ fn check_minimum_stability(
     result: &mut ValidationResult,
 ) {
     if let Some(stability) = obj.get("minimum-stability").and_then(|v| v.as_str())
-        && !v::validate_stability(stability)
+        && !validation::validate_stability(stability)
     {
         result.errors.push(format!(
             "The minimum-stability \"{stability}\" is invalid. \

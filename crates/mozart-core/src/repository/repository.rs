@@ -10,10 +10,9 @@
 //! the live Packagist HTTP repo, [`inline_package_repo`] for `type: package`
 //! entries embedded in `composer.json`, and [`vcs_repo`] for VCS repositories.
 
-use std::collections::BTreeMap;
-
 use super::advisory::{MatchedAdvisory, PackageInfo};
 use super::packagist::{PackagistVersion, SearchResult};
+use std::collections::BTreeMap;
 
 pub mod inline_package_repo;
 pub mod packagist_repo;

@@ -1,5 +1,3 @@
-use std::path::Path;
-
 use crate::composer::Composer;
 use clap::Args;
 use indexmap::IndexMap;
@@ -8,6 +6,7 @@ use mozart_core::console::IoInterface;
 use mozart_core::repository::advisory::{AuditOptions, Auditor, PackageInfo};
 use mozart_core::repository::cache::{Cache, build_cache_config};
 use mozart_core::repository::repository::RepositorySet;
+use std::path::Path;
 
 #[derive(Args)]
 pub struct AuditArgs {

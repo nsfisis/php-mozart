@@ -1,3 +1,4 @@
+use crate::factory::create_download_manager;
 use clap::Args;
 use indexmap::IndexMap;
 use mozart_core::console::IoInterface;
@@ -11,8 +12,6 @@ use mozart_core::repository::resolver::{self, PlatformConfig, ResolveRequest};
 use mozart_core::repository::version;
 use mozart_core::validation;
 use std::path::{Path, PathBuf};
-
-use crate::factory::create_download_manager;
 
 #[derive(Args)]
 pub struct CreateProjectArgs {

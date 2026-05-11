@@ -1,9 +1,8 @@
+use crate::parser::ParsedTest;
 use anyhow::{Context as _, Result};
 use std::path::Path;
 use std::process::Command;
 use tempfile::TempDir;
-
-use crate::parser::ParsedTest;
 
 /// Outcome of running a parsed `.test` against the `mozart` binary.
 ///
